@@ -1,0 +1,74 @@
+# The operator ladder: arithmetic, unary +/-/%, & concatenation, the six comparisons.
+# These carry no `funcs:` — they exercise the evaluator's operator/coercion core, not the registry.
+# Precedence is the Excel ladder (unary minus binds TIGHTER than ^; * / above + -; comparisons last).
+
+[add]
+formula: =1+2
+expect: 3
+
+[precedence-mul-before-add]
+formula: =1+2*3
+expect: 7
+
+[subtract-to-negative]
+formula: =5-8
+expect: -3
+
+[multiply-decimal]
+formula: =4*2.5
+expect: 10
+
+[divide-noninteger]
+formula: =9/2
+expect: 4.5
+
+[power-left-associative]
+formula: =2^3^2
+expect: 64
+
+[percent-unary]
+formula: =50%
+expect: 0.5
+
+[unary-minus-binds-tight]
+formula: =-3+10
+expect: 7
+
+[concat-number-and-text]
+formula: =1&"x"
+expect: "1x"
+
+[concat-bool-and-text]
+formula: =TRUE&"!"
+expect: "TRUE!"
+
+[concat-two-numbers-is-text]
+formula: =1&2
+expect: "12"
+
+[equality-text-is-case-insensitive]
+formula: ="a"="A"
+expect: TRUE
+
+[less-than-cross-type-number-below-text]
+formula: =999<"a"
+expect: TRUE
+
+[blank-cell-equals-zero]
+cell A1: <blank>
+formula: =A1=0
+expect: TRUE
+
+[not-equal]
+formula: =1<>2
+expect: TRUE
+
+[greater-or-equal-boundary]
+formula: =2>=2
+expect: TRUE
+
+[cell-arithmetic]
+cell A1: 10
+cell B1: 3
+formula: =A1-B1
+expect: 7

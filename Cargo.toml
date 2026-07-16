@@ -5,4 +5,4 @@
 # follow (their deny edges land only once those crates exist — docs/architecture.md §1, §5).
 [workspace]
 resolver = "2"
-members = ["charlie-ast", "charlie-model"]
+members = ["charlie-ast", "charlie-model", "conformance"]

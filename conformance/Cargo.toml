@@ -1,0 +1,14 @@
+# The FORMULA-CONFORMANCE runner (W3). A deliberately DUMB grading crate: glob the frozen
+# `formula/` fixture corpus, parse+evaluate each formula through charlie-ast against a deterministic
+# stub `Resolver` built from the fixture's input context, and compare the produced `Value` to the
+# EXTERNALLY-authored EXPECTED value. It depends ONLY on `charlie-ast` (the innermost firewall crate)
+# — never on charlie-model/charlie-cli — so grading the LANGUAGE never drags in the filesystem model.
+# Zero external dependencies (matching the workspace's dep-free ethos): the crumb/anchor is a
+# line-based TSV it writes and reads by hand, and the corpus fingerprint uses a vendored SHA-256.
+[package]
+name = "conformance"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+charlie-ast = { path = "../charlie-ast" }

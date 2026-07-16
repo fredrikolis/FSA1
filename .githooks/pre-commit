@@ -34,11 +34,14 @@ echo "pre-commit: cargo clippy -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
 # annotated-tree annotation + architecture gate (sub-second; rules live in ./.annotated-tree.toml).
-# The frozen W1 encoding corpus (conformance/encoding/) is a graduated CONTRACT, not authored source,
-# so it is excluded here with `-I 'conformance/encoding/**'`. Keep this glob in sync with
-# .github/workflows/annotations.yml and the note in .annotated-tree.toml (annotated-tree's config has
-# no `ignore` key, so exclusion is done at the CALL site). The corpus's `.range`/`.cell` files carry
-# no recognized code extension anyway; the glob covers its migrated `.md` verdict ledgers.
+# Two frozen CORPORA are graduated CONTRACTS, not authored source, so they are excluded here:
+#   -I 'conformance/encoding/**'   the W1 encoding corpus (conformance/encoding/, its PROVENANCE.md)
+#   -I 'conformance/formula/**'    the W3 formula-conformance corpus (.fixtures probes, PROVENANCE.md,
+#                                  MANIFEST.sha256, facts-snapshot.tsv) — the conformance crate's OWN
+#                                  src/**/ and tests/**/ stay annotated (they are authored code).
+# Keep these globs in sync with .github/workflows/annotations.yml and the note in .annotated-tree.toml
+# (annotated-tree's config has no `ignore` key, so exclusion is done at the CALL site). The corpora's
+# data files carry no recognized code extension anyway; the globs cover their migrated `.md` ledgers.
 echo "pre-commit: annotated-tree --strict-check"
 # Resolve annotated-tree robustly (hooks run with a minimal PATH): prefer an installed binary under
 # the npm global prefix or PATH, else fall back to `npx` (fetches it on demand); fail loud otherwise.
@@ -46,27 +49,73 @@ npm_bin="${npm_config_prefix:-$HOME/.npm-global}/bin"
 case ":$PATH:" in *":$npm_bin:"*) ;; *) PATH="$npm_bin:$PATH" ;; esac
 export PATH
 if command -v annotated-tree >/dev/null 2>&1; then
-	annotated-tree --strict-check --include-tests -I 'conformance/encoding/**' .
+	annotated-tree --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' .
 elif command -v npx >/dev/null 2>&1; then
 	# Pinned to an exact version (load-bearing gate; `--yes annotated-tree` alone would fetch
 	# LATEST and could drift --strict-check behavior). Keep in sync with
 	# .github/workflows/annotations.yml. Bump both together, deliberately.
-	npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' .
+	npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' .
 else
 	echo "pre-commit: annotated-tree not found (install: 'npm i -g annotated-tree', or ensure npx is on PATH)" >&2
 	exit 1
 fi
 
 # --- conformance BACKSLIDE state-guard -----------------------------------------------------------
-# W3 wires the conformance backslide state-guard here (cargo run -p conformance -- backslide),
-# branching on its exit code exactly as fanuc's pre-commit does:
-#   0 = no proven fact lost                 -> PASS (growth/improvements are exempt by construction)
+# The fast checks passed. Now verify the commit introduces no FORMULA-CONFORMANCE BACKSLIDE — a
+# fixture that was `Match` in the committed conformance/formula/facts-snapshot.tsv anchor and no
+# longer is. `conformance backslide` does the comparison and encodes the verdict in its EXIT CODE
+# (growth/improvements are exempt BY CONSTRUCTION, so they never block):
+#   0 = no proven fact lost                 -> PASS
 #   1 = >=1 backslide                        -> BLOCK
 #   2 = anchor missing/unreadable            -> BLOCK (fail SAFE: never a false pass when unverifiable)
 #   * = any other exit                       -> BLOCK (fail SAFE)
-# No conformance crate exists until W3, so there is nothing to guard yet — do NOT add a stub that
-# passes vacuously. When the crate lands, port the fanuc branch verbatim (including the
-# $PRECOMMIT_BACKSLIDE_CMD test seam that pre-commit.selftest.sh will drive).
-# -------------------------------------------------------------------------------------------------
+# There is deliberately NO message-based override at commit time: a pre-commit hook cannot read the
+# pending commit message, so there is no `Backslide:`-trailer escape hatch here. A regression is
+# resolved by fixing it OR by consciously re-blessing the baseline with
+# `cargo run -p conformance -- resnapshot` (which has its own --allow-backslide guard) and committing
+# the updated conformance/formula/facts-snapshot.tsv with the reason.
+#
+# $PRECOMMIT_BACKSLIDE_CMD is a TEST-ONLY seam (driven by pre-commit.selftest.sh): if set, it is
+# called INSTEAD of the real cargo command so the self-test can stub the exit code. It is NOT a
+# production knob and NOT a security boundary — like any local hook the whole check is
+# `--no-verify`-class bypassable, so the seam grants nothing a bypass didn't already. cargo was
+# resolved onto PATH above; git runs pre-commit with cwd = the worktree root, so
+# `cargo run -p conformance` resolves the workspace directly (were that untrue, cargo would error ->
+# the *) branch fails SAFE, never a false pass).
+echo "pre-commit: conformance backslide guard (builds + grades the formula corpus vs the committed anchor)..."
+if [ -n "${PRECOMMIT_BACKSLIDE_CMD:-}" ]; then
+	if "$PRECOMMIT_BACKSLIDE_CMD"; then backslide_rc=0; else backslide_rc=$?; fi
+else
+	if cargo run -q -p conformance -- backslide; then backslide_rc=0; else backslide_rc=$?; fi
+fi
 
-echo "pre-commit: OK (fmt + clippy + annotations clean)"
+case "$backslide_rc" in
+0) : ;; # no proven fact lost — improvements and growth never block
+1)
+	{
+		printf '\npre-commit BLOCKED: conformance BACKSLIDE — a fixture left Match (see the guard output above).\n'
+		printf '\nResolve ONE of:\n'
+		printf '  - fix the regression so no fixture loses its Match, OR\n'
+		printf '  - if the new state is the correct baseline, re-bless it:\n'
+		printf '      cargo run -p conformance -- resnapshot   (has its own --allow-backslide conscious guard)\n'
+		printf '    then commit the updated conformance/formula/facts-snapshot.tsv with the reason.\n'
+	} >&2
+	exit 1
+	;;
+2)
+	{
+		printf '\npre-commit BLOCKED: cannot verify conformance — the facts-snapshot.tsv anchor is missing/unreadable (backslide exit 2; see the guard output above).\n'
+		printf '\nFailing SAFE (never a false pass when the anchor cannot be read). Restore/commit the anchor\n'
+		printf '(cargo run -p conformance -- resnapshot) so the guard has a baseline to compare against.\n'
+	} >&2
+	exit 1
+	;;
+*)
+	{
+		printf '\npre-commit BLOCKED: the conformance backslide guard errored (unexpected exit %s) — failing safe (see the guard output above).\n' "$backslide_rc"
+	} >&2
+	exit 1
+	;;
+esac
+
+echo "pre-commit: OK (fmt + clippy + annotations + conformance backslide clean)"

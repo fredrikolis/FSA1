@@ -6,14 +6,18 @@
 # rules, languages (there is NO ignore key — corpus/fixture exclusion is done at the CALL site with
 # `-I` globs in .githooks/pre-commit and .github/workflows/annotations.yml; keep them in sync).
 #
-# ACTIVE EXCLUSION GLOB (kept in sync across both call sites):
+# ACTIVE EXCLUSION GLOBS (kept in sync across both call sites — the hook + annotations.yml):
 #   -I 'conformance/encoding/**'
-# The frozen W1 encoding corpus (conformance/encoding/, see its PROVENANCE.md) is a SANCTIONED
-# graduated contract, not authored source. Its `.range`/`.cell` sheet files carry no recognized code
-# extension (already invisible to the linter), but its migrated `.md` verdict ledgers (EXPECTED.md,
-# FORMAT.md, PROVENANCE.md) ARE markdown and would otherwise be governed by the annotation gate — a
-# frozen contract must not be, so it is excluded at the call site. charlie-model's own
-# tests/encoding_conformance.rs (which GRADES the corpus) is NOT excluded and stays annotated.
+#   -I 'conformance/formula/**'
+# Two frozen conformance corpora are SANCTIONED graduated contracts, not authored source:
+#   - conformance/encoding/ (W1, see its PROVENANCE.md): `.range`/`.cell` sheet files + `.md` ledgers.
+#   - conformance/formula/  (W3, see its PROVENANCE.md): the `.fixtures` value probes, PROVENANCE.md,
+#     MANIFEST.sha256, and the charlie-DERIVED facts-snapshot.tsv anchor.
+# Their data files carry no recognized code extension (already invisible to the linter), but their
+# `.md` ledgers ARE markdown and would otherwise be governed by the annotation gate — a frozen
+# contract must not be, so each corpus is excluded at the call site. The GRADERS are NOT excluded and
+# stay annotated: charlie-model's tests/encoding_conformance.rs and the whole `conformance` crate
+# (its src/**/ + tests/**/ are authored code that must carry annotations).
 
 [rules]
 # Every crate with a Cargo.toml must resolve a concern CHARTER (an annotation on src/lib.rs /

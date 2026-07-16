@@ -1,0 +1,12 @@
+# SHA-256 fingerprints of the ORACLE-INPUT corpus files (the .fixtures value probes + PROVENANCE.md).
+# NOT fingerprinted: facts-snapshot.tsv (charlie-DERIVED output, not an oracle input).
+# Verify:     sha256sum -c MANIFEST.sha256      (run from conformance/formula/)
+# Regenerate after a DELIBERATE corpus edit:
+#   { head -n 6 MANIFEST.sha256; sha256sum *.fixtures PROVENANCE.md; } > MANIFEST.sha256.new && mv MANIFEST.sha256.new MANIFEST.sha256
+# (also gated by conformance/tests/corpus_integrity.rs, which recomputes with the vendored SHA-256).
+11f5175e6cb93015ca64cc26e9e186e5e4f9e1eec158e52d54bd43e36b524eb3  aggregation.fixtures
+b36fca5af93bf139ddf199bb3a696a97f4b22f2c7dd7e6a509145d1dc5bf2774  errors.fixtures
+e3c8c6fd582f4b78ea013fdddc0f4cf2af9aac2c38676c96b02b3b5f987b989f  logic.fixtures
+6f871e960993e07cc74642eaa1bc76256686fc8db86088616980509c4ed06ce4  math.fixtures
+640e16afa508a3a78efa8c1f56090d4254d80c2e17cf61f4d6b0cfe3fa72adec  operators.fixtures
+ce6ae2df3bfd7f54ab955d83257e650bfcb6704604b91b96fc6c9ba1fb6a93e0  PROVENANCE.md

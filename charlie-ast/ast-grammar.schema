@@ -1,0 +1,50 @@
+# charlie-ast formula grammar (generated from the Rust types; provenance elided)
+# schema-version: 1
+
+value =
+  Number(f64)
+  Text(string)
+  Bool(bool)
+  Error(errkind)
+  Array(shape, value*)
+  Blank
+
+errkind = Ref | Div0 | Value | Name | Na | Null | Num | Spill(reserved) | Calc(reserved)
+
+expr =
+  Lit(value)
+  Ref(refnode)
+  Range(rangeref)
+  Unary(unop, expr)
+  Binary(binop, expr, expr)
+  Call(funcid, expr*)
+  ImplicitIntersect(expr)  # reserved: @
+  SpillRef(expr)  # reserved: #
+
+unop = Plus | Neg | Percent
+binop = Add | Sub | Mul | Div | Pow | Concat | Eq | Ne | Lt | Le | Gt | Ge
+
+# operator precedence (binding power; tightest last)
+precedence =
+  comparisons(=,<>,<,<=,>,>=) : 10
+  concat(&) : 20
+  add-sub(+,-) : 30
+  mul-div(*,/) : 40
+  pow(^) : 50
+  percent(%,postfix) : 60
+  unary(-,+,prefix) : 70
+  spill(#,postfix) : 80
+  implicit-intersect(@,prefix) : 85
+  range(:) : 90
+
+# function registry (name : arity)
+functions =
+  SUM : 1+
+  AVERAGE : 1+
+  COUNT : 1+
+  IF : 2-3
+  IFERROR : 2
+  AND : 1+
+  OR : 1+
+  ABS : 1
+  ROUND : 2
