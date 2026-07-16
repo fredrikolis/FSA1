@@ -1,0 +1,4 @@
+# Rebuildable output only (repo-standards.md: never commit build output).
+/target
+**/*.rs.bk
+Cargo.lock.orig

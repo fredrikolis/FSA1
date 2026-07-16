@@ -1,0 +1,4 @@
+# Pinned toolchain for reproducible per-clone builds (repo-standards.md PART 8).
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

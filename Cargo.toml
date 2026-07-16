@@ -1,0 +1,5 @@
+# Workspace root. Exploration-first: ZERO member crates until a proven bet in the project-charlie
+# workspace graduates the first prod-native plan (charlie-v1.md Phase 1 adds `charlie-ast`).
+[workspace]
+resolver = "2"
+members = []
