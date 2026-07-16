@@ -98,3 +98,21 @@ functions =
   DATEDIF : 3
   TODAY : 0
   NOW : 0
+  XLOOKUP : 3-6
+  INDEX : 2-3
+  MATCH : 2-3
+  VLOOKUP : 3-4
+  CHOOSE : 2+
+  ROW : 1
+  COLUMN : 1
+  INDIRECT : 0+
+  OFFSET : 0+
+  ISBLANK : 1
+  ISNUMBER : 1
+  ISTEXT : 1
+  ISERROR : 1
+  NA : 0
+  TYPE : 1
+  PMT : 3-5
+  NPV : 2+
+  IRR : 1-2

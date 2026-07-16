@@ -198,8 +198,10 @@ enum Tok {
 
 /// Case-insensitive Excel wildcard match: `*` any run, `?` one char, `~` escapes the next
 /// `*`/`?`/`~` to a literal (a lone `~` is itself literal). Both sides are ASCII-lowercased so the
-/// match folds case like Excel's criteria.
-fn wildcard_match(pattern: &str, text: &str) -> bool {
+/// match folds case like Excel's criteria. Exposed `pub(crate)` because the lookup family reuses the
+/// EXACT same wildcard grammar for a text needle (`MATCH` mode 0 and `XLOOKUP` match_mode 2), so
+/// there is one wildcard engine, not two.
+pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
     let toks = compile(pattern);
     let t: Vec<char> = text.to_ascii_lowercase().chars().collect();
 

@@ -1,6 +1,6 @@
 charlie-formula-conformance/v1
-# captured_unix=1784199925 git_commit=0dbf7d7d67bd6c63d69a9c10684a7c7b96e61ecf git_dirty=true tool=conformance 0.1.0
-# coverage modeled=59 target=70 registry=59 functions=ABS,AND,AVERAGE,AVERAGEIF,AVERAGEIFS,CEILING,CONCAT,COUNT,COUNTA,COUNTBLANK,COUNTIF,COUNTIFS,DATE,DATEDIF,DAY,EDATE,FIND,FLOOR,IF,IFERROR,IFNA,IFS,INT,LEFT,LEN,LOWER,MAX,MAXIFS,MEDIAN,MID,MIN,MINIFS,MOD,MONTH,NOT,NOW,OR,POWER,PRODUCT,RANK,REPLACE,RIGHT,ROUND,ROUNDDOWN,ROUNDUP,SEARCH,SQRT,SUBSTITUTE,SUM,SUMIF,SUMIFS,SUMPRODUCT,SWITCH,TEXT,TEXTJOIN,TODAY,TRIM,UPPER,YEAR
+# captured_unix=1784208045 git_commit=a29d08acf0aff6993e0f95396e13d5f19be4bc17 git_dirty=true tool=conformance 0.1.0
+# coverage modeled=75 target=70 registry=77 functions=ABS,AND,AVERAGE,AVERAGEIF,AVERAGEIFS,CEILING,CHOOSE,COLUMN,CONCAT,COUNT,COUNTA,COUNTBLANK,COUNTIF,COUNTIFS,DATE,DATEDIF,DAY,EDATE,FIND,FLOOR,IF,IFERROR,IFNA,IFS,INDEX,INT,IRR,ISBLANK,ISERROR,ISNUMBER,ISTEXT,LEFT,LEN,LOWER,MATCH,MAX,MAXIFS,MEDIAN,MID,MIN,MINIFS,MOD,MONTH,NA,NOT,NOW,NPV,OR,PMT,POWER,PRODUCT,RANK,REPLACE,RIGHT,ROUND,ROUNDDOWN,ROUNDUP,ROW,SEARCH,SQRT,SUBSTITUTE,SUM,SUMIF,SUMIFS,SUMPRODUCT,SWITCH,TEXT,TEXTJOIN,TODAY,TRIM,TYPE,UPPER,VLOOKUP,XLOOKUP,YEAR
 # columns: VERDICT<TAB>key[<TAB>detail]
 MATCH	aggregation/average-mixed-range
 MATCH	aggregation/average-no-numbers-is-div0
@@ -88,6 +88,35 @@ MATCH	errors/nonnumeric-text-in-arithmetic-is-value-error
 MATCH	errors/numeric-text-coerces-in-arithmetic
 MATCH	errors/power-overflow-is-num-error
 MATCH	errors/zero-to-negative-power-is-div0
+MATCH	finance/irr-all-positive-no-root-is-num
+MATCH	finance/irr-converges-to-root
+MATCH	finance/npv-discount-from-period-one
+MATCH	finance/npv-error-propagates
+MATCH	finance/npv-over-a-range
+MATCH	finance/npv-with-negative-outflow
+MATCH	finance/pmt-annuity-basic
+MATCH	finance/pmt-nper-zero-is-div0
+MATCH	finance/pmt-rate-zero-linear
+MATCH	finance/pmt-type-annuity-due
+MATCH	finance/pmt-with-future-value
+MATCH	info/isblank-empty-cell
+MATCH	info/isblank-empty-string-is-not-blank
+MATCH	info/isblank-has-number
+MATCH	info/iserror-catches-divzero
+MATCH	info/iserror-catches-na
+MATCH	info/iserror-clean-value-is-false
+MATCH	info/isnumber-error-operand-is-false
+MATCH	info/isnumber-number
+MATCH	info/isnumber-numeric-text-is-false
+MATCH	info/istext-number-is-false
+MATCH	info/istext-text
+MATCH	info/na-produces-na
+MATCH	info/na-propagates-through-arithmetic
+MATCH	info/type-of-array-is-64
+MATCH	info/type-of-error-is-16
+MATCH	info/type-of-logical
+MATCH	info/type-of-number
+MATCH	info/type-of-text
 MATCH	logic/and-all-truthy
 MATCH	logic/and-direct-nonlogical-text-is-value-error
 MATCH	logic/and-error-propagates
@@ -119,6 +148,31 @@ MATCH	logical_v1/switch-expression-error-propagates
 MATCH	logical_v1/switch-matches-second-value
 MATCH	logical_v1/switch-no-match-no-default-is-na
 MATCH	logical_v1/switch-text-match-is-case-insensitive
+MATCH	lookup/choose-basic
+MATCH	lookup/choose-out-of-range-is-value-error
+MATCH	lookup/column-of-cell
+MATCH	lookup/column-of-range-top-left
+MATCH	lookup/index-out-of-bounds-is-ref
+MATCH	lookup/index-scalar
+MATCH	lookup/index-single-column-two-arg
+MATCH	lookup/index-whole-column
+MATCH	lookup/match-approx-ascending-default
+MATCH	lookup/match-approx-descending
+MATCH	lookup/match-exact
+MATCH	lookup/match-exact-miss-is-na
+MATCH	lookup/match-text-wildcard-exact
+MATCH	lookup/row-of-cell
+MATCH	lookup/row-of-non-reference-is-value-error
+MATCH	lookup/row-of-range-top-left
+MATCH	lookup/vlookup-approx-default-between-keys
+MATCH	lookup/vlookup-col-index-out-of-range-is-ref
+MATCH	lookup/vlookup-exact-false
+MATCH	lookup/vlookup-exact-miss-is-na
+MATCH	lookup/xlookup-exact-default
+MATCH	lookup/xlookup-if-not-found
+MATCH	lookup/xlookup-invalid-match-mode-is-value-error
+MATCH	lookup/xlookup-next-larger
+MATCH	lookup/xlookup-next-smaller
 MATCH	math/abs-from-a-cell
 MATCH	math/abs-of-negative
 MATCH	math/abs-of-positive

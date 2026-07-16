@@ -316,6 +316,17 @@ pub(crate) fn value_eq(a: &Value, b: &Value) -> Result<bool, ErrKind> {
     Ok(compare_ord(&a, &b) == std::cmp::Ordering::Equal)
 }
 
+/// The engine's total ordering over two scalar values — the *same* order the comparison operators
+/// read (numbers numerically, text case-*insensitively*, cross-type ranked Number &lt; Text &lt; Bool,
+/// and a lone `Blank` resolved against the other operand's zero). Exposed so the approximate-match
+/// lookup family reuses ONE ordering: `MATCH` modes `±1`, `VLOOKUP`'s sorted-first-column search, and
+/// `XLOOKUP`'s next-smaller/next-larger all rank cells this way, so lookup ordering can never drift
+/// from operator ordering (the batch's cross-type-ordering contract). Callers screen errors/arrays
+/// first; an array/error defensively takes the top rank inside [`compare_ord`].
+pub(crate) fn value_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
+    compare_ord(a, b)
+}
+
 /// The total order the comparison operators read. `Blank` is resolved against the *other* operand's
 /// type before ranking, so `A1=0` is true for a blank `A1`.
 fn compare_ord(l: &Value, r: &Value) -> std::cmp::Ordering {

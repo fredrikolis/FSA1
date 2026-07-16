@@ -1,0 +1,264 @@
+# Lookup & reference batch v1: XLOOKUP INDEX MATCH VLOOKUP CHOOSE ROW COLUMN.
+# EXPECTED values are authored INDEPENDENTLY of charlie by a standalone python3 oracle that models
+# Excel lookup semantics from scratch (cross-type order Number<Text<Bool, case-insensitive text,
+# sorted-vector approximate match, Excel * ? ~ wildcards). See PROVENANCE.md ("Lookup & reference
+# batch"). The oracle's authoring run printed:
+#
+#   INDEX(A1:C2,2,3)=6   INDEX(A1:C2,0,2)={2;5}   INDEX(A1:C2,5,1)=#REF!   INDEX(A1:A3,2)=20
+#   MATCH(25,A1:A4,1)=2  MATCH(30,A1:A4,0)=3      MATCH(31,A1:A4,0)=#N/A   MATCH('BAN*',..,0)=2
+#   MATCH(25,desc,-1)=2
+#   VLOOKUP(2.5,tbl,2)=two  VLOOKUP(3,tbl,2,F)=three  VLOOKUP(2.5,tbl,2,F)=#N/A  VLOOKUP(2,tbl,3)=#REF!
+#   XLOOKUP(2)=b  XLOOKUP(9,,none)=none  XLOOKUP(2.5,,1)=c  XLOOKUP(2.5,,-1)=b
+#   CHOOSE(2,x,y,z)=y  CHOOSE(4,10,20)=#VALUE!
+#   ROW(B3)=3  ROW(C5:E9)=5  ROW(5)=#VALUE!  COLUMN(B3)=2  COLUMN(C5:E9)=3
+#
+# Approximate match is the classic must-be-SORTED rule: VLOOKUP (default) and MATCH (type 1) assume
+# ascending and return the LARGEST key <= needle; MATCH type -1 assumes descending (smallest >=).
+# INDIRECT/OFFSET are reserved reference-returning functions refused at PARSE (reserved-ref-function),
+# so they are on charlie-ast's diag/parser test surface, NOT a value fixture here.
+
+# --- INDEX: 1-based (r,c); r=0 whole column, c=0 whole row; OOB is #REF!; negative is #VALUE! ---
+
+[index-scalar]
+funcs: INDEX
+cell A1: 1
+cell B1: 2
+cell C1: 3
+cell A2: 4
+cell B2: 5
+cell C2: 6
+formula: =INDEX(A1:C2,2,3)
+expect: 6
+
+[index-whole-column]
+funcs: INDEX
+note: r=0 selects the entire c-th column of the 2x3 block -> a 2x1 array {B1;B2}.
+cell A1: 1
+cell B1: 2
+cell C1: 3
+cell A2: 4
+cell B2: 5
+cell C2: 6
+formula: =INDEX(A1:C2,0,2)
+expect: {2;5}
+
+[index-out-of-bounds-is-ref]
+funcs: INDEX
+note: a row index past the array bound is #REF! (the edge/error path).
+cell A1: 1
+cell B1: 2
+cell C1: 3
+cell A2: 4
+cell B2: 5
+cell C2: 6
+formula: =INDEX(A1:C2,5,1)
+expect: #REF!
+
+[index-single-column-two-arg]
+funcs: INDEX
+note: over a single column the sole index selects the ROW.
+cell A1: 10
+cell A2: 20
+cell A3: 30
+formula: =INDEX(A1:A3,2)
+expect: 20
+
+# --- MATCH: modes 1 (approx asc, default), 0 (exact + wildcards), -1 (approx desc) ---
+
+[match-approx-ascending-default]
+funcs: MATCH
+note: largest value <= 25 in the sorted-ascending vector is 20 at position 2.
+cell A1: 10
+cell A2: 20
+cell A3: 30
+cell A4: 40
+formula: =MATCH(25,A1:A4,1)
+expect: 2
+
+[match-exact]
+funcs: MATCH
+cell A1: 10
+cell A2: 20
+cell A3: 30
+cell A4: 40
+formula: =MATCH(30,A1:A4,0)
+expect: 3
+
+[match-exact-miss-is-na]
+funcs: MATCH
+note: exact mode with no equal value is #N/A (the edge/error path).
+cell A1: 10
+cell A2: 20
+cell A3: 30
+cell A4: 40
+formula: =MATCH(31,A1:A4,0)
+expect: #N/A
+
+[match-text-wildcard-exact]
+funcs: MATCH
+note: exact mode wildcards on a text needle, case-insensitively -> BAN* matches banana at 2.
+cell A1: "apple"
+cell A2: "banana"
+formula: =MATCH("BAN*",A1:A2,0)
+expect: 2
+
+[match-approx-descending]
+funcs: MATCH
+note: match_type -1 assumes descending and returns the smallest value >= 25, which is 30 at pos 2.
+cell A1: 40
+cell A2: 30
+cell A3: 20
+cell A4: 10
+formula: =MATCH(25,A1:A4,-1)
+expect: 2
+
+# --- VLOOKUP: approximate BY DEFAULT (the classic sorted bug); exact when the 4th arg is FALSE ---
+
+[vlookup-approx-default-between-keys]
+funcs: VLOOKUP
+note: approximate default -> 2.5 falls to the largest first-column key <= 2.5 (key 2), row "two".
+cell A1: 1
+cell B1: "one"
+cell A2: 2
+cell B2: "two"
+cell A3: 3
+cell B3: "three"
+formula: =VLOOKUP(2.5,A1:B3,2)
+expect: "two"
+
+[vlookup-exact-false]
+funcs: VLOOKUP
+cell A1: 1
+cell B1: "one"
+cell A2: 2
+cell B2: "two"
+cell A3: 3
+cell B3: "three"
+formula: =VLOOKUP(3,A1:B3,2,FALSE)
+expect: "three"
+
+[vlookup-exact-miss-is-na]
+funcs: VLOOKUP
+note: exact (FALSE) with no matching key is #N/A (edge) — contrast the approximate default above.
+cell A1: 1
+cell B1: "one"
+cell A2: 2
+cell B2: "two"
+cell A3: 3
+cell B3: "three"
+formula: =VLOOKUP(2.5,A1:B3,2,FALSE)
+expect: #N/A
+
+[vlookup-col-index-out-of-range-is-ref]
+funcs: VLOOKUP
+note: a col_index past the table width is #REF! (edge/error path).
+cell A1: 1
+cell B1: "one"
+cell A2: 2
+cell B2: "two"
+cell A3: 3
+cell B3: "three"
+formula: =VLOOKUP(2,A1:B3,3)
+expect: #REF!
+
+# --- XLOOKUP: exact BY DEFAULT + if_not_found + match_mode (-1/0/1/2) ---
+
+[xlookup-exact-default]
+funcs: XLOOKUP
+cell A1: 1
+cell A2: 2
+cell A3: 3
+cell B1: "a"
+cell B2: "b"
+cell B3: "c"
+formula: =XLOOKUP(2,A1:A3,B1:B3)
+expect: "b"
+
+[xlookup-if-not-found]
+funcs: XLOOKUP
+note: a miss returns the if_not_found argument instead of #N/A (the edge path).
+cell A1: 1
+cell A2: 2
+cell A3: 3
+cell B1: "a"
+cell B2: "b"
+cell B3: "c"
+formula: =XLOOKUP(9,A1:A3,B1:B3,"none")
+expect: "none"
+
+[xlookup-next-larger]
+funcs: XLOOKUP
+note: match_mode 1 = exact-or-next-larger -> 2.5 resolves to key 3, value "c".
+cell A1: 1
+cell A2: 2
+cell A3: 3
+cell B1: "a"
+cell B2: "b"
+cell B3: "c"
+formula: =XLOOKUP(2.5,A1:A3,B1:B3,"x",1)
+expect: "c"
+
+[xlookup-next-smaller]
+funcs: XLOOKUP
+note: match_mode -1 = exact-or-next-smaller -> 2.5 resolves to key 2, value "b".
+cell A1: 1
+cell A2: 2
+cell A3: 3
+cell B1: "a"
+cell B2: "b"
+cell B3: "c"
+formula: =XLOOKUP(2.5,A1:A3,B1:B3,"x",-1)
+expect: "b"
+
+[xlookup-invalid-match-mode-is-value-error]
+funcs: XLOOKUP
+note: a match_mode outside {-1,0,1,2} is #VALUE! (Excel rejects an out-of-domain mode) -- error path.
+cell A1: 1
+cell A2: 2
+cell A3: 3
+cell B1: "a"
+cell B2: "b"
+cell B3: "c"
+formula: =XLOOKUP(2,A1:A3,B1:B3,"x",5)
+expect: #VALUE!
+
+# --- CHOOSE: 1-based selector; out-of-range is #VALUE! ---
+
+[choose-basic]
+funcs: CHOOSE
+formula: =CHOOSE(2,"x","y","z")
+expect: "y"
+
+[choose-out-of-range-is-value-error]
+funcs: CHOOSE
+note: a selector past the value count is #VALUE! (edge/error path).
+formula: =CHOOSE(4,10,20)
+expect: #VALUE!
+
+# --- ROW / COLUMN: 1-based coordinate of a reference node (top-left of a range) ---
+
+[row-of-cell]
+funcs: ROW
+formula: =ROW(B3)
+expect: 3
+
+[row-of-range-top-left]
+funcs: ROW
+formula: =ROW(C5:E9)
+expect: 5
+
+[row-of-non-reference-is-value-error]
+funcs: ROW
+note: ROW needs a reference; a bare value is #VALUE! (edge/error path).
+formula: =ROW(5)
+expect: #VALUE!
+
+[column-of-cell]
+funcs: COLUMN
+formula: =COLUMN(B3)
+expect: 2
+
+[column-of-range-top-left]
+funcs: COLUMN
+formula: =COLUMN(C5:E9)
+expect: 3

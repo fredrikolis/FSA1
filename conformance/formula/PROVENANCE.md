@@ -80,6 +80,59 @@ The interesting behaviors the seed pins, all from Excel semantics:
   `44927` = `2023-01-01`) whose authoring-run output is pasted at the head of `date.fixtures`, and
   hand-checked — NEVER by running charlie.
 
+- **Lookup & reference batch** (`lookup.fixtures`, the `XLOOKUP INDEX MATCH VLOOKUP CHOOSE ROW
+  COLUMN` family). The EXPECTED values were computed by a standalone python3 oracle that models Excel
+  lookup semantics FROM SCRATCH — cross-type ordering `Number < Text < Bool` with case-insensitive
+  text, the sorted-vector approximate-match rule, and the Excel `* ? ~` wildcard grammar — never by
+  running charlie; its authoring-run output is pasted at the head of `lookup.fixtures`. The load-
+  bearing semantics the fixtures pin: **`MATCH`** modes `1`/`0`/`-1` (approximate ascending — largest
+  key `<=` needle; exact first-hit with wildcards on a text needle; approximate descending — smallest
+  key `>=` needle), a 2-D array or a miss being `#N/A`; **`VLOOKUP`** approximate **by default** (the
+  classic must-be-sorted bug — a needle between two keys lands on the lower key, `2.5 -> "two"`) and
+  exact only when the 4th arg is `FALSE` (`2.5 -> #N/A`), with `col_index` past the width `#REF!`;
+  **`XLOOKUP`** exact **by default** plus an `if_not_found` value returned on a miss and `match_mode`
+  `1`/`-1` for the next-larger/next-smaller key; **`INDEX`** 1-based with `r=0`/`c=0` selecting a whole
+  column/row (an out-of-bounds index `#REF!`, a blank single cell reading as `0`); **`CHOOSE`** a
+  1-based selector (out-of-range `#VALUE!`); **`ROW`/`COLUMN`** the 1-based coordinate of a reference
+  NODE (top-left of a range; a non-reference argument `#VALUE!`). **`INDIRECT`/`OFFSET`** are reserved
+  reference-returning functions REFUSED at parse (the located `reserved-ref-function` DiagCode), so —
+  like every parse-refusal — they are on charlie-ast's `diag`/parser test surface, not a value fixture.
+- **Information batch** (`info.fixtures`, the `ISBLANK ISNUMBER ISTEXT ISERROR NA TYPE` family — the
+  ONE error-TRANSPARENT group in the engine). The EXPECTED values were computed by a standalone python3
+  oracle (`info_oracle.py`, pasted at the head of `info.fixtures`) that models the family FROM SCRATCH:
+  each predicate INSPECTS its operand's kind and REPORTS on it — it does NOT route the operand through
+  the scalarize/coerce path every OTHER function uses, so an error/blank/array operand is examined, not
+  propagated. The load-bearing semantics the fixtures pin: **`ISERROR`** catches ANY error including
+  `#N/A` (`ISERROR(1/0)=TRUE`, never the `#DIV/0!` itself) — the defining transparency case; **`TYPE`**
+  the Excel codes `1/2/4/16/64` (number/text/logical/error/array) with an empty cell reporting `1` and
+  an error operand reporting `16` (transparent, `TYPE(NA())=16` not `#N/A`); **`ISBLANK`** TRUE only for
+  a genuinely empty cell — an empty string `""` is a text value, NOT blank; **`ISNUMBER`/`ISTEXT`** that
+  do not coerce (numeric-looking text `"42"` is not a number); **`NA`** the sole error-PRODUCING member,
+  minting `#N/A` on demand (arity 0) — and the edge that `NA()+1` PROPAGATES `#N/A` because arithmetic,
+  not an info fn, is reading it (contrast `ISERROR(NA())=TRUE`). The array operand is expressed as a
+  range `A1:B1` (v1 has no `{..}` array-constant node); `TYPE(A1:B1)=64` and the IS-predicates return
+  FALSE on it — inspected AS an array, never scalarized into a propagated `#VALUE!`.
+
+- **Financial batch** (`finance.fixtures`, the `PMT NPV IRR` family). The EXPECTED values were computed
+  by a standalone python3 hand-formula oracle (`finance_oracle.py`, its authoring print pasted at the
+  head of `finance.fixtures`) derived FROM the documented cash-flow-time-value math, NOT from charlie.
+  Two bit-exactness disciplines make the irrational-capable results reproducible under the corpus's
+  bit-exact (`to_bits`) equality: (1) the oracle discounts/compounds with the SAME integer-power
+  **multiply loop** the engine's `pow_int` uses — deliberately not libm `pow`/`powi`, whose rounding
+  can differ — so a given f64 op sequence is identical on both sides; (2) the fixtures that CAN be
+  chosen exact are (`PMT(0.5,2,…)` uses `1.5^2 = 2.25`, a dyadic-exact power; `NPV(1,…)` uses `rate=1`
+  so every `(1+rate)^i = 2^i` is exact), landing on exact rationals (`90`, `110`, `60`, `137.5`,
+  `-281.25`). The semantics pinned: **`PMT`** is Excel's sign convention (money out negative) solving
+  the annuity balance equation, degenerating to the LINEAR `-(pv+fv)/nper` at `rate==0`, and returning
+  `#DIV/0!` on a zero denominator (`nper==0`); **`NPV`** discounts `value1` from period **one**
+  (`value1/(1+rate)^1` — the classic "NPV starts one period out" rule), flattening ranges row-major and
+  propagating an error value; **`IRR`** is a Newton root-find (hard-capped) with a bounded bisection
+  fallback and a final `#NUM!` — the convergent fixture's literal (`0.08896339469334992`) is the
+  hand-Newton f64 from guess `0.1`, cross-checked against numpy's polynomial roots
+  (`np.roots = 0.088963394693350…`) to ~`1e-12`, and the all-positive fixture pins the no-sign-change
+  `#NUM!` (the honest "no real IRR" answer, reached WITHOUT any hang because both iteration loops carry
+  hard integer caps).
+
 ## What is NOT here (and why)
 
 - **charlie-produced anything.** `facts-snapshot.tsv` (the backslide anchor) IS charlie-derived —
