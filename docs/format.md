@@ -1,4 +1,4 @@
-<!-- Concern: the LIVING authoritative on-disk encoding contract for charlie-model, AS-BUILT — the filename↔range grammar and canonical-form policy, the body grammar (literal-block vs `=formula` classification and per-token literal lexing), the broadcast-conformance placement rule with its resolved tie-breaks, the overlap rule, the per-file annotation convention, and the single-sourced diagnostic-code registry | Non-concern: the formula LANGUAGE semantics and evaluation (charlie-ast owns lex/parse/eval — a `=formula` body is stored opaque here), xlsx serde and the CLI surface, and the FROZEN provisional snapshot `conformance/encoding/FORMAT.md` that the corpus was authored against (this doc supersedes it as the spec, but that file must not change) | IO: none -->
+<!-- Concern: the LIVING authoritative on-disk encoding contract for charlie-model, AS-BUILT — the filename↔range grammar and canonical-form policy, the body grammar (literal-block vs `=formula` classification and per-token literal lexing), the broadcast-conformance placement rule with its resolved tie-breaks, the overlap rule, the per-file annotation convention, the single-sourced diagnostic-code registry, (§13) the charlie-ast `TEXT()` number-format-code subset (the format codes the TEXT function accepts, and the located refusal for an unsupported LITERAL), and (§14) the charlie-ast date/time function batch and its shared 1900 date-serial epoch/clock convention | Non-concern: the rest of the formula LANGUAGE semantics and evaluation (charlie-ast owns lex/parse/eval — a `=formula` body is stored opaque here; §13 and §14 are the two formula-layer exceptions, documented here because both hang off this doc's *format*-code / date-serial vocabulary), xlsx serde and the CLI surface, and the FROZEN provisional snapshot `conformance/encoding/FORMAT.md` that the corpus was authored against (this doc supersedes it as the spec, but that file must not change) | IO: none -->
 # format.md — the charlie on-disk encoding (LIVING SPEC, as-built)
 
 > **STATUS — authoritative.** This is the **living, authoritative contract** for `charlie-model`'s
@@ -350,3 +350,104 @@ A numeric field becomes a `Number` **only if it parses to a finite `f64`**. `inf
 case), and overflowing magnitudes like `1e999` (which parse to ±∞) do **not** match rule 6 of §4.3 —
 they lex as `Text`, never a non-finite `Number`. This keeps the volatile non-finite float spellings
 out of the number domain entirely.
+
+---
+
+## 13. `TEXT()` number-format subset (the charlie-ast formula layer)
+
+> **Scope note.** §1–§12 above are the `charlie-model` on-disk contract. This section is the ONE
+> formula-layer item this doc owns: the format-code vocabulary the `charlie-ast` `TEXT(value,
+> format)` function accepts. It lives here because `TEXT`'s second argument *is* a format code, and
+> the batch spec places its documentation in `format.md`; the format-code classifier
+> (`func::classify_format`) is the single source of truth that both the parse-time gate and the
+> render path read, so this table and the code cannot drift.
+
+`TEXT(value, format)` renders a value as text under a **deliberately small, documented subset** of
+Excel's format-code language. The subset is enough for the common reporting cases (fixed decimals,
+grouped thousands, percent, an ISO date); everything else is **refused, never guessed** — a
+wrong-format render is worse than an honest refusal.
+
+### 13.1 The supported codes
+
+| Format code | Kind | Example | `TEXT` result |
+|---|---|---|---|
+| `General` (any case) | general text of the value | `TEXT(5, "General")` | `5` |
+| `0`, `00`, `0.00`, `0.000`, … | fixed decimals; leading `0`s set the minimum integer width, trailing `0`s the decimal places | `TEXT(3.14159, "0.00")` | `3.14` |
+| `#,##0`, `#,##0.00`, … | thousands-grouped integer, optional fixed decimals | `TEXT(1234567, "#,##0")` | `1,234,567` |
+| `0%`, `0.00%`, … | percent: value ×100, a `0`-mask, trailing `%` | `TEXT(0.5, "0%")` | `50%` |
+| `yyyy-mm-dd` (any case) | ISO date from a serial (1900 date system) | `TEXT(44927, "yyyy-mm-dd")` | `2023-01-01` |
+
+- **Rounding** is half-away-from-zero (`TEXT(2.5, "0")` → `3`), matching `ROUND`.
+- **A negative value** carries a leading `-`; a value that rounds to zero prints unsigned
+  (`TEXT(-0.001, "0.00")` → `0.00`, never `-0.00`).
+- **Coercion.** A numeric/date/percent format coerces `value` to a number (numeric text parses); a
+  value that cannot coerce (e.g. `TEXT("abc", "0.00")`) is `#VALUE!`. An **error** `value` propagates
+  unchanged (`TEXT(1/0, "0.00")` → `#DIV/0!`).
+
+### 13.2 The date epoch decision (worth a reviewer's eye)
+
+`yyyy-mm-dd` reads the value as an Excel **date serial** in the **1900 date system, and it
+replicates Excel's 1900 leap-year bug** for round-trip fidelity with Excel-authored serials:
+
+- serial `1` = `1900-01-01`; serial `59` = `1900-02-28`;
+- serial `60` = the **fictional `1900-02-29`** (Excel invented this day) — charlie prints it verbatim;
+- serial `61` = `1900-03-01`; from here serials re-align with the real proleptic-Gregorian calendar
+  (so serial `44927` = `2023-01-01`).
+- The integer day is `floor`ed from the serial; a serial `< 1` (before the epoch) is `#VALUE!`
+  (rather than Excel's fictional `1900-01-00`).
+
+### 13.3 Everything else is a located refusal — NOT a guess
+
+Any format string **literal** outside §13.1 — a currency `$#,##0.00`, a scientific `0.00E+00`, a
+custom `[Red]0;…`, a bare `mmm` month name, a fraction `# ?/?` — is **refused at parse time** with the
+named `unsupported-format` diagnostic (`DiagCode::UnsupportedFormat`), located on the `TEXT` call: the
+code is *statically* known-wrong, so we catch it up front rather than mis-render it. The format subset
+is small and knowable, so an unknown *literal* code is a refusal we can locate, not a `#VALUE!` we'd
+have to guess our way into.
+
+A **non-literal** format argument (`TEXT(A1, B1)`) is a different case: v1 cannot vet a *computed*
+format statically, and **rejecting it up front would be a false-reject** — a dynamic format that
+RESOLVES to a supported code (`B1 = "0.00"`) is a formula real Excel accepts and computes, so refusing
+the whole call would diverge from the oracle. So a non-literal format is **accepted at parse and
+deferred to eval**: `text_fn` classifies the *resolved* string and returns `#VALUE!` **iff** it turns
+out unsupported. This is **accept-under-uncertainty** (ast-standards §6 / PART 6, the cardinal rule): a
+false-reject is the cardinal sin, and the deferred gap is only a false-*negative* (an unsupported
+dynamic format surfaces as eval's `#VALUE!`, never a parse refusal). Widening the supported subset is a
+deliberate, tested change to `classify_format` plus this table.
+
+## 14. Date & time functions (the charlie-ast formula layer)
+
+> **Scope note.** Like §13, this is a formula-layer item documented here because the batch spec
+> places the date-epoch decision in `format.md`. The functions live in `charlie-ast` (`func.rs`'s
+> date section); §13.2 already fixes the shared serial↔date mapping, and this section covers the
+> `DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW` batch that reads/writes those serials.
+
+**Epoch (worth a reviewer's eye).** Every date value is an Excel **1900-system date serial** — the
+exact convention §13.2 pins, **including Excel's 1900 leap-year bug** (serial `60` = the fictional
+`1900-02-29`; serials `≥ 61` shift back one day, so `44927` = `2023-01-01`). The bug is replicated
+deliberately for later xlsx round-trip fidelity — a serial authored in Excel maps to the same civil
+date here. `serial_to_ymd` (forward) and `serial_from_ymd` (inverse) are the single home of the bug;
+`DATE`/`EDATE` build serials by day-offset arithmetic in the contiguous serial space, so
+`DATE(1900,2,29)` reproduces the phantom serial `60` with no special case. The valid serial band is
+`[1, 2958465]` (`1900-01-01` … `9999-12-31`); outside it is `#NUM!`.
+
+| Function | Behavior | Excel-semantics call |
+|---|---|---|
+| `DATE(y, m, d)` | serial for the date | truncates args toward zero, **normalizes** out-of-range month/day (roll-over), folds year `0..=1899` by `+1900`; year outside `0..=9999` or a result outside the band is `#NUM!` |
+| `YEAR/MONTH/DAY(serial)` | the date component | `floor`s the serial; leap-bug faithful (`MONTH(60)=2`, `DAY(60)=29`); serial `< 1` is `#NUM!` |
+| `EDATE(start, months)` | date `months` months on | **clamps** the day to the target month's last day (`EDATE(2020-01-31, 1)`=`2020-02-29`) |
+| `DATEDIF(start, end, unit)` | elapsed time | units `"Y"/"M"/"D"` (complete years/months/days) + `"MD"/"YM"/"YD"` (remainders); unit folds case; `start>end` and an unknown unit are `#NUM!` |
+| `TODAY()` | today's integer serial | **VOLATILE**; `floor`s the injected clock |
+| `NOW()` | date+time serial | **VOLATILE**; keeps the time-of-day fraction (noon = `.5`) |
+
+### 14.1 The injectable clock (why TODAY/NOW are reproducible)
+
+`TODAY`/`NOW` are **volatile** — flagged `volatile: true` in the registry — because their value
+depends on the wall clock, not only their (absent) arguments. To keep them from making conformance
+non-deterministic, the engine reads "now" through **one seam**: `Resolver::now_serial()` (surfaced to
+built-ins as `EvalCtx::now_serial`), never `std::time` inline. The trait's **default** reads the real
+system clock (production gets wall-clock time for free); a deterministic resolver — the engine's test
+grid and the conformance stub — **overrides** it to the pinned instant `PINNED_NOW_SERIAL` =
+`44927.5` (`2023-01-01T12:00:00`). So every `TODAY()`/`NOW()` fixture is reproducible, and the `#NUM!`
+volatility never leaks into the corpus. (`TODAY`/`NOW` have no runtime error path — they are nullary
+and total; an over-arity call like `=TODAY(1)` is a *parse-time* refusal, not a value.)

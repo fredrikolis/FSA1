@@ -76,3 +76,25 @@ functions =
   NOT : 1
   IFNA : 2
   SWITCH : 3+
+  CONCAT : 1+
+  TEXTJOIN : 3+
+  LEFT : 1-2
+  RIGHT : 1-2
+  MID : 3
+  LEN : 1
+  FIND : 2-3
+  SEARCH : 2-3
+  SUBSTITUTE : 3-4
+  REPLACE : 4
+  TRIM : 1
+  UPPER : 1
+  LOWER : 1
+  TEXT : 2
+  DATE : 3
+  YEAR : 1
+  MONTH : 1
+  DAY : 1
+  EDATE : 2
+  DATEDIF : 3
+  TODAY : 0
+  NOW : 0

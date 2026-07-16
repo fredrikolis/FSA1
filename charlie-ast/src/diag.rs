@@ -98,6 +98,13 @@ pub enum DiagCode {
     /// eval via the [`crate::Resolver`] (a [`crate::RefNode`]/[`crate::RangeNode`] carries the parsed
     /// sheet name); only the multi-sheet form stays reserved.
     ReservedCrossSheet,
+    /// A `TEXT(value, format)` call whose format is a *literal* string naming no supported v1 code
+    /// (docs/format.md §13). This is a PARSE verdict, not an eval-time value: a wrong-format guess is
+    /// refused up front rather than silently mis-rendered, so the refusal is located and named rather
+    /// than a `#VALUE!` guess. Vetting is only possible when the format is a literal; a NON-LITERAL
+    /// (computed) format is ACCEPTED at parse and deferred to eval (accept-under-uncertainty — v1
+    /// cannot statically vet a computed format, so it does not false-reject a call Excel would compute).
+    UnsupportedFormat,
 
     // --- malformed reference syntax ---
     /// A `'`-quoted sheet name that is not well-formed: it was not closed before end-of-input, or its
@@ -128,6 +135,7 @@ impl DiagCode {
         DiagCode::ReservedDynamicRange,
         DiagCode::ReservedName,
         DiagCode::ReservedCrossSheet,
+        DiagCode::UnsupportedFormat,
         DiagCode::MalformedSheetName,
         DiagCode::RecursionLimit,
     ];
@@ -151,6 +159,7 @@ impl DiagCode {
             DiagCode::ReservedDynamicRange => "reserved-dynamic-range",
             DiagCode::ReservedName => "reserved-name",
             DiagCode::ReservedCrossSheet => "reserved-cross-sheet",
+            DiagCode::UnsupportedFormat => "unsupported-format",
             DiagCode::MalformedSheetName => "malformed-sheet-name",
             DiagCode::RecursionLimit => "recursion-limit",
         }
@@ -178,6 +187,7 @@ impl DiagCode {
             DiagCode::ReservedCrossSheet => {
                 "a 3D / multi-sheet range reference is reserved (not v1)"
             }
+            DiagCode::UnsupportedFormat => "the TEXT format code is not in the supported v1 subset",
             DiagCode::MalformedSheetName => "a quoted sheet name is not well-formed",
             DiagCode::RecursionLimit => "the formula nests deeper than the parser's bound",
         }
@@ -268,11 +278,12 @@ mod tests {
                 | DiagCode::ReservedDynamicRange
                 | DiagCode::ReservedName
                 | DiagCode::ReservedCrossSheet
+                | DiagCode::UnsupportedFormat
                 | DiagCode::MalformedSheetName
                 | DiagCode::RecursionLimit => c.code_str(),
             };
         }
-        assert_eq!(DiagCode::ALL.len(), 17);
+        assert_eq!(DiagCode::ALL.len(), 18);
     }
 
     #[test]

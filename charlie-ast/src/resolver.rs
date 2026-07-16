@@ -1,8 +1,15 @@
-// Concern: the fs↔AST BOUNDARY — the `Resolver` trait that is the engine's ENTIRE view of the outside world (value/range/sheet_id), decoupling the evaluator from any concrete store so the impl is swappable (in-memory, filesystem-backed, xlsx-backed, or a test stub) | Non-concern: any CONCRETE implementation of the trait — charlie-model owns the filesystem impl; this crate ships none | IO: (via impls) a `CellRef`/`RangeRef`/sheet name -> a resolved `Value`/`ArrayView`/`SheetId`
+// Concern: the fs↔AST BOUNDARY — the `Resolver` trait that is the engine's ENTIRE view of the outside world (value/range/sheet_id for cells, plus `now_serial` — the ONE injectable wall-clock seam the VOLATILE TODAY/NOW read, with a system-time default and the `PINNED_NOW_SERIAL` const tests/conformance override it to), decoupling the evaluator from any concrete store/clock so the impl is swappable (in-memory, filesystem-backed, xlsx-backed, or a test stub) | Non-concern: any CONCRETE implementation of the trait — charlie-model owns the filesystem impl; this crate ships none | IO: (via impls) a `CellRef`/`RangeRef`/sheet name -> a resolved `Value`/`ArrayView`/`SheetId`, and (via the default `now_serial`) a read of the system clock
 //! The fs↔AST boundary: the [`Resolver`] trait.
 
 use crate::refs::{CellRef, RangeRef, SheetId};
 use crate::value::{ArrayView, Value};
+
+/// The instant tests and conformance PIN the [`Resolver::now_serial`] clock to: 2023-01-01T12:00:00,
+/// i.e. Excel date-time serial `44927.5` (date serial `44927` = 2023-01-01, `+0.5` = noon). A single
+/// source of truth so the engine's test grid and the conformance stub agree, keeping every
+/// `TODAY()`/`NOW()` fixture deterministic. (`44927` = 2023-01-01 is the same anchor
+/// `docs/format.md` §13.1 uses for the `TEXT` date example.)
+pub const PINNED_NOW_SERIAL: f64 = 44927.5;
 
 /// The engine's entire view of the outside world.
 ///
@@ -27,6 +34,25 @@ pub trait Resolver {
 
     /// Map a sheet name to its id, or `None` if there is no such sheet.
     fn sheet_id(&self, name: &str) -> Option<SheetId>;
+
+    /// The current instant the VOLATILE `TODAY`/`NOW` functions read, as an Excel date-time serial
+    /// (integer part = the 1900-system date serial, fractional part = time of day; noon = `0.5`).
+    ///
+    /// This is the engine's ONE clock seam: `TODAY`/`NOW` read "now" only through here, never
+    /// `std::time` inline, so a deterministic resolver (a test grid, the conformance stub) can PIN it
+    /// — override to a fixed instant, e.g. [`PINNED_NOW_SERIAL`] — and keep every volatile-function
+    /// fixture reproducible. The DEFAULT reads the real system clock, so a production resolver gets
+    /// wall-clock time for free; a resolver that needs determinism OVERRIDES this one method.
+    fn now_serial(&self) -> f64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        // Unix epoch 1970-01-01 is Excel serial 25569; a day is 86_400 s. A clock reported before the
+        // Unix epoch (a `SystemTime` error) falls back to the epoch instant rather than panicking.
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        25569.0 + secs / 86_400.0
+    }
 }
 
 #[cfg(test)]

@@ -29,6 +29,13 @@ impl<'r> EvalCtx<'r> {
         EvalCtx { resolver, depth: 0 }
     }
 
+    /// The "now" instant the VOLATILE `TODAY`/`NOW` built-ins read, as an Excel date-time serial, from
+    /// the resolver's injectable [`Resolver::now_serial`] clock. Routed through the resolver — never
+    /// `std::time` inline in a built-in — so conformance and tests PIN it deterministically.
+    pub(crate) fn now_serial(&self) -> f64 {
+        self.resolver.now_serial()
+    }
+
     /// Evaluate one sub-expression, tracking depth. Registry functions call this on their argument
     /// `Expr`s (so lazy forms like `IF`/`IFERROR` control *which* arguments are evaluated).
     pub fn eval(&mut self, expr: &Expr) -> Value {

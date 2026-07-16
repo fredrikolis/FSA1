@@ -1,0 +1,367 @@
+# v1 text batch: CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE TRIM UPPER LOWER
+# TEXT. (The `&` concat OPERATOR is `operators.fixtures`; CONCAT/TEXTJOIN are the function forms.)
+#
+# EXPECTED values are derived INDEPENDENTLY of charlie — computed by a standalone python3 model of the
+# Excel text semantics (run at authoring time, output pasted into the notes below) and cross-checked
+# by hand against Excel's published behavior — NEVER by running charlie (see PROVENANCE.md).
+#
+# python3 model output (authoring run):
+#   CONCAT("Hello",", ","World")="Hello, World"  ·  CONCAT("Item","",42)="Item42"
+#   TEXTJOIN("-",TRUE,["a","","b"])="a-b"  ·  TEXTJOIN("-",FALSE,["a","","b"])="a--b"
+#   LEFT("hello",2)="he" · LEFT("hi")="h" · LEFT("hi",99)="hi"  ·  RIGHT("hello",3)="llo"
+#   MID("hello",2,3)="ell" · MID("hello",10,3)=""  ·  LEN("hello")=5 · LEN(12.5)=4 · LEN(TRUE)=4
+#   FIND("l","hello")=3 · FIND("l","hello",4)=4 · FIND("o","hello world")=5 · FIND("","abc")=1
+#   SEARCH("H","hello")=1 · SEARCH("l?o","hello")=3 · SEARCH("e*o","hello")=2
+#   SEARCH("h*o*d","hello world")=1 · SEARCH("*a*a*a*z","aaaaaaaa")=#VALUE! (no 'z' → miss)
+#   SUBSTITUTE("a-b-c","-","+")="a+b+c" · SUBSTITUTE("a-b-c","-","+",2)="a-b+c"
+#   SUBSTITUTE("abc","","X")="abc"  ·  REPLACE("abcdef",2,3,"X")="aXef"
+#   REPLACE("2023-01-01",1,4,"2024")="2024-01-01" · REPLACE("ab",9,0,"!")="ab!"
+#   TRIM("  hello   world  ")="hello world"  ·  UPPER("MixEd")="MIXED" · LOWER("MixEd")="mixed"
+#   TEXT(3.14159,"0.00")="3.14" · TEXT(-7,"0.00")="-7.00" · TEXT(1234567,"#,##0")="1,234,567"
+#   TEXT(0.5,"0%")="50%" · TEXT(0.1234,"0.00%")="12.34%" · TEXT(5,"General")="5"
+#   TEXT(44927,"yyyy-mm-dd")="2023-01-01" · TEXT(61,"yyyy-mm-dd")="1900-03-01" (1900 leap bug)
+#   TEXT(1E300,"yyyy-mm-dd")=#VALUE! · TEXT(2958466,"yyyy-mm-dd")=#VALUE! (serial outside the valid
+#     Excel date band [1, 2958465] = 1900-01-01…9999-12-31 has no real civil date → located refusal,
+#     never a wrapped-i64 nonsense date; the exact upper edge TEXT(2958465,…)="9999-12-31" still renders)
+#   TEXT(3.14159,B1="0.00")="3.14" (a DYNAMIC format resolving to a supported code computes — Excel
+#     accepts =TEXT(A1,B1); charlie defers a non-literal format to eval, never a parse false-reject)
+#
+# The Excel-semantics calls pinned here:
+#   * POSITIONS are 1-BASED and count CHARACTERS; LEFT/RIGHT/MID CLAMP an out-of-range count to the
+#     string edge; a NEGATIVE count/start is #VALUE!.
+#   * FIND is CASE-SENSITIVE (no wildcards); SEARCH is CASE-INSENSITIVE with ?/* wildcards; both return
+#     the 1-based START position; a miss is #VALUE!; an empty needle returns start_num.
+#   * SUBSTITUTE replaces the Nth or ALL non-overlapping occurrences (case-sensitive); an empty
+#     old_text returns the text unchanged; instance_num<1 is #VALUE!.
+#   * REPLACE is POSITIONAL (splice num_chars from start_num, insert new_text; clamped).
+#   * TRIM collapses interior ASCII-space runs and strips the ends.
+#   * TEXT renders a SUPPORTED format subset (docs/format.md §13); a value that a numeric format cannot
+#     coerce is #VALUE!, and an error value propagates. The 1900 date system WITH Excel's leap-year bug
+#     is the epoch decision (serial 61 = 1900-03-01).
+
+# ---- CONCAT(text1, ...) ----
+
+[concat-direct-args]
+funcs: CONCAT
+formula: =CONCAT("Hello", ", ", "World")
+expect: "Hello, World"
+
+[concat-coerces-and-flattens-range]
+funcs: CONCAT
+cell A1: "Item"
+cell A2: <blank>
+cell A3: 42
+formula: =CONCAT(A1:A3)
+expect: "Item42"
+
+[concat-range-error-propagates]
+funcs: CONCAT
+cell A1: 1
+cell A2: #DIV/0!
+formula: =CONCAT(A1:A2)
+expect: #DIV/0!
+
+# ---- TEXTJOIN(delimiter, ignore_empty, text1, ...) ----
+
+[textjoin-ignore-empty-drops-blank]
+funcs: TEXTJOIN
+cell A1: "a"
+cell A2: <blank>
+cell A3: "b"
+formula: =TEXTJOIN("-", TRUE, A1:A3)
+expect: "a-b"
+
+[textjoin-keep-empty-doubles-delimiter]
+funcs: TEXTJOIN
+cell A1: "a"
+cell A2: <blank>
+cell A3: "b"
+formula: =TEXTJOIN("-", FALSE, A1:A3)
+expect: "a--b"
+
+[textjoin-error-propagates]
+funcs: TEXTJOIN
+cell A1: "a"
+cell A2: #N/A
+formula: =TEXTJOIN(",", TRUE, A1:A2)
+expect: #N/A
+
+# ---- LEFT(text, [num_chars]) ----
+
+[left-basic]
+funcs: LEFT
+formula: =LEFT("hello", 2)
+expect: "he"
+
+[left-default-one]
+funcs: LEFT
+formula: =LEFT("hi")
+expect: "h"
+
+[left-clamps-overrange]
+funcs: LEFT
+formula: =LEFT("hi", 99)
+expect: "hi"
+
+[left-negative-is-value]
+funcs: LEFT
+formula: =LEFT("hi", -1)
+expect: #VALUE!
+
+# ---- RIGHT(text, [num_chars]) ----
+
+[right-basic]
+funcs: RIGHT
+formula: =RIGHT("hello", 3)
+expect: "llo"
+
+[right-clamps-overrange]
+funcs: RIGHT
+formula: =RIGHT("ab", 5)
+expect: "ab"
+
+[right-negative-is-value]
+funcs: RIGHT
+formula: =RIGHT("ab", -2)
+expect: #VALUE!
+
+# ---- MID(text, start_num, num_chars) ----
+
+[mid-basic]
+funcs: MID
+formula: =MID("hello", 2, 3)
+expect: "ell"
+
+[mid-start-past-end-is-empty]
+funcs: MID
+formula: =MID("hello", 10, 3)
+expect: ""
+
+[mid-start-zero-is-value]
+funcs: MID
+formula: =MID("hi", 0, 1)
+expect: #VALUE!
+
+# ---- LEN(text) ----
+
+[len-basic]
+funcs: LEN
+formula: =LEN("hello")
+expect: 5
+
+[len-of-number-general-text]
+funcs: LEN
+formula: =LEN(12.5)
+expect: 4
+
+[len-of-bool]
+funcs: LEN
+formula: =LEN(TRUE)
+expect: 4
+
+# ---- FIND(find_text, within_text, [start_num]) ----
+
+[find-case-sensitive-position]
+funcs: FIND
+formula: =FIND("l", "hello")
+expect: 3
+
+[find-with-start-num]
+funcs: FIND
+formula: =FIND("l", "hello", 4)
+expect: 4
+
+[find-case-mismatch-not-found-is-value]
+funcs: FIND
+formula: =FIND("H", "hello")
+expect: #VALUE!
+
+[find-empty-needle-returns-start]
+funcs: FIND
+formula: =FIND("", "abc")
+expect: 1
+
+# ---- SEARCH(find_text, within_text, [start_num]) ----
+
+[search-case-insensitive]
+funcs: SEARCH
+formula: =SEARCH("H", "hello")
+expect: 1
+
+[search-question-wildcard]
+funcs: SEARCH
+formula: =SEARCH("l?o", "hello")
+expect: 3
+
+[search-star-wildcard]
+funcs: SEARCH
+formula: =SEARCH("e*o", "hello")
+expect: 2
+
+[search-not-found-is-value]
+funcs: SEARCH
+formula: =SEARCH("z", "hello")
+expect: #VALUE!
+
+[search-multi-star-leftmost-anchor]
+funcs: SEARCH
+formula: =SEARCH("h*o*d", "hello world")
+expect: 1
+
+[search-multi-star-no-match-is-value]
+funcs: SEARCH
+formula: =SEARCH("*a*a*a*z", "aaaaaaaa")
+expect: #VALUE!
+
+# ---- SUBSTITUTE(text, old_text, new_text, [instance_num]) ----
+
+[substitute-all-occurrences]
+funcs: SUBSTITUTE
+formula: =SUBSTITUTE("a-b-c", "-", "+")
+expect: "a+b+c"
+
+[substitute-nth-occurrence]
+funcs: SUBSTITUTE
+formula: =SUBSTITUTE("a-b-c", "-", "+", 2)
+expect: "a-b+c"
+
+[substitute-empty-old-unchanged]
+funcs: SUBSTITUTE
+formula: =SUBSTITUTE("abc", "", "X")
+expect: "abc"
+
+[substitute-instance-zero-is-value]
+funcs: SUBSTITUTE
+formula: =SUBSTITUTE("a-b", "-", "+", 0)
+expect: #VALUE!
+
+# ---- REPLACE(old_text, start_num, num_chars, new_text) ----
+
+[replace-positional-splice]
+funcs: REPLACE
+formula: =REPLACE("abcdef", 2, 3, "X")
+expect: "aXef"
+
+[replace-year-prefix]
+funcs: REPLACE
+formula: =REPLACE("2023-01-01", 1, 4, "2024")
+expect: "2024-01-01"
+
+[replace-start-past-end-appends]
+funcs: REPLACE
+formula: =REPLACE("ab", 9, 0, "!")
+expect: "ab!"
+
+[replace-negative-num-is-value]
+funcs: REPLACE
+formula: =REPLACE("ab", 1, -1, "X")
+expect: #VALUE!
+
+# ---- TRIM(text) ----
+
+[trim-collapses-interior-and-ends]
+funcs: TRIM
+formula: =TRIM("  hello   world  ")
+expect: "hello world"
+
+[trim-clean-string-unchanged]
+funcs: TRIM
+formula: =TRIM("clean")
+expect: "clean"
+
+# ---- UPPER(text) / LOWER(text) ----
+
+[upper-basic]
+funcs: UPPER
+formula: =UPPER("MixEd")
+expect: "MIXED"
+
+[upper-of-number-general-text]
+funcs: UPPER
+formula: =UPPER(1.5)
+expect: "1.5"
+
+[lower-basic]
+funcs: LOWER
+formula: =LOWER("MixEd")
+expect: "mixed"
+
+[lower-error-propagates]
+funcs: LOWER
+cell A1: #REF!
+formula: =LOWER(A1)
+expect: #REF!
+
+# ---- TEXT(value, format_text) ----
+
+[text-fixed-decimals]
+funcs: TEXT
+formula: =TEXT(3.14159, "0.00")
+expect: "3.14"
+
+[text-negative-fixed]
+funcs: TEXT
+formula: =TEXT(-7, "0.00")
+expect: "-7.00"
+
+[text-thousands-grouping]
+funcs: TEXT
+formula: =TEXT(1234567, "#,##0")
+expect: "1,234,567"
+
+[text-percent]
+funcs: TEXT
+formula: =TEXT(0.5, "0%")
+expect: "50%"
+
+[text-percent-decimals]
+funcs: TEXT
+formula: =TEXT(0.1234, "0.00%")
+expect: "12.34%"
+
+[text-general]
+funcs: TEXT
+formula: =TEXT(5, "General")
+expect: "5"
+
+[text-date-ymd]
+funcs: TEXT
+formula: =TEXT(44927, "yyyy-mm-dd")
+expect: "2023-01-01"
+
+[text-date-1900-leap-bug]
+funcs: TEXT
+formula: =TEXT(61, "yyyy-mm-dd")
+expect: "1900-03-01"
+
+[text-date-serial-overflow-is-value]
+funcs: TEXT
+formula: =TEXT(1E300, "yyyy-mm-dd")
+expect: #VALUE!
+
+[text-date-serial-above-max-is-value]
+funcs: TEXT
+formula: =TEXT(2958466, "yyyy-mm-dd")
+expect: #VALUE!
+
+[text-date-serial-upper-edge-renders]
+funcs: TEXT
+formula: =TEXT(2958465, "yyyy-mm-dd")
+expect: "9999-12-31"
+
+[text-error-value-propagates]
+funcs: TEXT
+formula: =TEXT(1/0, "0.00")
+expect: #DIV/0!
+
+[text-nonnumeric-to-numeric-format-is-value]
+funcs: TEXT
+formula: =TEXT("abc", "0.00")
+expect: #VALUE!
+
+[text-dynamic-format-resolves-to-supported]
+funcs: TEXT
+cell A1: 3.14159
+cell B1: "0.00"
+formula: =TEXT(A1, B1)
+expect: "3.14"

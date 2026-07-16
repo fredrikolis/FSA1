@@ -1,4 +1,4 @@
-// Concern: the PRATT PARSER — a `&[Token]` stream -> an `Expr`, applying the exact Excel precedence ladder (`:` range > space-intersection > `,` union > unary `-`/`+` > `%` > `^` > `*`/`/` > `+`/`-` > `&` concat > the six comparisons), folding a STATIC `ref:ref` into `Expr::Range` (carrying a sheet qualifier onto the range), building a first-class SHEET-QUALIFIED reference from a `SheetBang` token (`Sheet1!A1` / `'Quoted'!A1` via `parse_sheet_qualified` → a sheet-tagged `RefNode`/`RangeNode`, while 3D/multi-sheet stays a reserved refusal), parsing-and-PRESERVING the reserved `@`(`ImplicitIntersect`)/`#`(`SpillRef`) nodes, resolving a function name + checking arity against the registry (so eval trusts arity — DbC), and turning every recognized-but-reserved or malformed construct into a LOCATED refusal; nesting past a depth bound (and a total-size bound) is a diagnostic, never a stack overflow | Non-concern: tokenizing (lexer.rs) and evaluating (eval.rs); this module builds the tree and never touches a `Resolver` | IO: (a formula `&str`, via `parse`) -> `Result<Expr, Diag>`
+// Concern: the PRATT PARSER — a `&[Token]` stream -> an `Expr`, applying the exact Excel precedence ladder (`:` range > space-intersection > `,` union > unary `-`/`+` > `%` > `^` > `*`/`/` > `+`/`-` > `&` concat > the six comparisons), folding a STATIC `ref:ref` into `Expr::Range` (carrying a sheet qualifier onto the range), building a first-class SHEET-QUALIFIED reference from a `SheetBang` token (`Sheet1!A1` / `'Quoted'!A1` via `parse_sheet_qualified` → a sheet-tagged `RefNode`/`RangeNode`, while 3D/multi-sheet stays a reserved refusal), parsing-and-PRESERVING the reserved `@`(`ImplicitIntersect`)/`#`(`SpillRef`) nodes, resolving a function name + checking arity against the registry (so eval trusts arity — DbC) then running the row's OPTIONAL per-function static-argument `validate` (TEXT's unsupported-LITERAL-format `UnsupportedFormat` refusal — a non-literal format is accepted and deferred to eval), and turning every recognized-but-reserved or malformed construct into a LOCATED refusal; nesting past a depth bound (and a total-size bound) is a diagnostic, never a stack overflow | Non-concern: tokenizing (lexer.rs) and evaluating (eval.rs); this module builds the tree and never touches a `Resolver` | IO: (a formula `&str`, via `parse`) -> `Result<Expr, Diag>`
 //! The Pratt (precedence-climbing) parser: [`parse`] a formula string into an [`Expr`].
 //!
 //! DbC: this is the one defended boundary (ast-standards PART 5). It never panics; a hole is a
@@ -355,6 +355,11 @@ impl<'t> Parser<'t> {
                 ),
             ));
         }
+        // An optional per-function static-argument check (registry data, not a hand-fork): TEXT vets
+        // its format code here, refusing an unsupported LITERAL at parse rather than mis-rendering it
+        // at eval; a non-literal (computed) format is accepted and deferred to eval (accept-under-
+        // uncertainty, never a false-reject). A `None`-validate row is a no-op.
+        def.validate_args(&args, name_span)?;
         Ok(Expr::Call(fid, args))
     }
 

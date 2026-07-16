@@ -101,4 +101,11 @@ impl Resolver for Grid {
             .position(|s| s.name == name)
             .map(|i| SheetId(i as u32))
     }
+
+    /// PIN the clock so `TODAY()`/`NOW()` are deterministic in every engine test — a wall-clock read
+    /// would make a volatile-function test flap. Matches the conformance stub's pin (single source of
+    /// truth: [`crate::resolver::PINNED_NOW_SERIAL`]).
+    fn now_serial(&self) -> f64 {
+        crate::resolver::PINNED_NOW_SERIAL
+    }
 }

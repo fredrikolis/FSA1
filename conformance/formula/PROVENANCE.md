@@ -49,6 +49,36 @@ The interesting behaviors the seed pins, all from Excel semantics:
   (`-0.0 ≠ 0.0`), a `0`-valued aggregate is authored as `0` and charlie canonicalizes a computed
   `-0.0` (e.g. an empty `SUM`/`SUMPRODUCT`, `[].sum() == -0.0`) to `+0.0` so it does not spuriously
   Diverge.
+- **Text batch** (`text.fixtures`, the `CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE
+  REPLACE TRIM UPPER LOWER TEXT` family). 1-BASED character positions with edge-CLAMPING
+  (`LEFT`/`RIGHT`/`MID`); a negative count/start is `#VALUE!`. `FIND` is case-SENSITIVE, `SEARCH` is
+  case-INSENSITIVE with `?`/`*` wildcards (`~` escapes); both return the match's START and miss with
+  `#VALUE!`, and an empty needle returns `start_num`. `SUBSTITUTE` replaces the Nth or ALL
+  non-overlapping occurrences (an empty `old_text` is a no-op; `instance_num < 1` is `#VALUE!`);
+  `REPLACE` is positional. `TEXT` renders a SUPPORTED format subset only (`docs/format.md §13`) —
+  general / fixed `0.00` / thousands `#,##0` / percent `0%` / date `yyyy-mm-dd`; a value a numeric
+  format cannot coerce is `#VALUE!`, an error value propagates, and the **1900 date system WITH
+  Excel's leap-year bug** is the epoch decision (serial 61 = `1900-03-01`). A **non-literal** (computed)
+  format is ACCEPTED at parse and deferred to eval (`=TEXT(A1, B1)` with `B1="0.00"` computes, exactly
+  as Excel does — accept-under-uncertainty, never a parse false-reject); only an unsupported *literal*
+  is refused. The EXPECTED values were computed by a standalone python3 model (its authoring-run output
+  is pasted at the head of `text.fixtures`) and hand-checked. The TEXT unsupported-*literal*-format
+  refusal is a PARSE verdict (`unsupported-format`), so it is on charlie-ast's `diag`/parser test
+  surface, not a value fixture.
+- **Date/time batch** (`date.fixtures`, the `DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW` family).
+  Every value is an Excel **1900-system date serial** WITH the leap-year bug replicated (serial 60 =
+  the fictional `1900-02-29`; `44927` = `2023-01-01`) — the same epoch decision as `TEXT`'s date
+  render (`docs/format.md §13.2`/§14). `DATE` truncates its args and NORMALIZES out-of-range
+  month/day (with the year `0..=1899` `+1900` fold); `YEAR`/`MONTH`/`DAY` `floor` the serial (`YEAR(60)
+  =1900`, `DAY(60)=29`); `EDATE` CLAMPS the day to the target month's end; `DATEDIF` covers
+  `Y`/`M`/`D` + `MD`/`YM`/`YD` (case-folded unit; `start>end` and an unknown unit are `#NUM!`).
+  `TODAY`/`NOW` are **VOLATILE**: they read the resolver's INJECTABLE clock (`Resolver::now_serial`),
+  PINNED in the conformance stub to `PINNED_NOW_SERIAL` = `44927.5` (`2023-01-01T12:00:00`) so the
+  fixtures are reproducible (production's default reads system time). The EXPECTED values were
+  computed by a standalone python3 model (proleptic-Gregorian via `date.toordinal()`, Excel serial =
+  `toordinal − 693594` for dates on/after `1900-03-01`, cross-checked against the well-known anchor
+  `44927` = `2023-01-01`) whose authoring-run output is pasted at the head of `date.fixtures`, and
+  hand-checked — NEVER by running charlie.
 
 ## What is NOT here (and why)
 
@@ -64,9 +94,10 @@ The interesting behaviors the seed pins, all from Excel semantics:
 ## How the seed was produced, and how it grows (the W3b grind)
 
 The seed covers the foundational functions implemented in W3 (`SUM AVERAGE COUNT · IF IFERROR AND
-OR · ABS ROUND`) plus the operator and error-propagation core. The W3b function grind EXTENDS this
-per function: add fixtures (context + formula + hand-derived expected), regenerate the anchor with
-`cargo run -p conformance -- resnapshot`, and commit. The coverage ratchet (`modeled / target=70`)
+OR · ABS ROUND`) plus the operator and error-propagation core, and the W3b grind has since extended
+it across the criteria, math, stats, logical, and **text** (`text.fixtures`) batches. The function
+grind EXTENDS this per function: add fixtures (context + formula + hand-derived expected), regenerate
+the anchor with `cargo run -p conformance -- resnapshot`, and commit. The coverage ratchet (`modeled / target=70`)
 counts a function as *modeled* only once it is in the live registry AND has a Matching fixture, so
 growth is monotonic under the backslide guard.
 

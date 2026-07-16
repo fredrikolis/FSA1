@@ -105,6 +105,13 @@ impl Resolver for StubResolver {
     fn sheet_id(&self, name: &str) -> Option<SheetId> {
         self.sheet_ids.get(name).copied().map(SheetId)
     }
+
+    /// PIN "now" to the fixed conformance instant so every `TODAY()`/`NOW()` fixture is reproducible
+    /// (a wall-clock read would make the volatile-function fixtures flap). Single source of truth,
+    /// shared with charlie-ast's own test grid: [`charlie_ast::PINNED_NOW_SERIAL`].
+    fn now_serial(&self) -> f64 {
+        charlie_ast::PINNED_NOW_SERIAL
+    }
 }
 
 /// Materialize a rectangular range into a row-major contiguous buffer from the cell store, reading
