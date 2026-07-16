@@ -1,0 +1,2 @@
+# Concern: unit_price joined from Products via XLOOKUP on product_id (exact match; unmatched key P099 yields #N/A) | Non-concern: the INDEX/MATCH cross-check in E and the IFNA-guarded path in G | IO: none
+=XLOOKUP(B2,Products!$A$2:$A$7,Products!$C$2:$C$7)

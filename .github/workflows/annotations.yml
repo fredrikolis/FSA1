@@ -2,9 +2,10 @@ name: annotations
 
 # Enforce the suite-wide first-line annotation convention + the architectural rules in
 # .annotated-tree.toml (require_package_charter, forbid_cycles; the North-Star deny edges +
-# forbid_orphans arrive as crates land). Mirrors .githooks/pre-commit. No -I corpus/fixture globs
-# are needed yet — when one lands, add the excludes here AND keep them in sync with the hook and the
-# .annotated-tree.toml note (annotated-tree's config has no `ignore` key).
+# forbid_orphans arrive as crates land). Mirrors .githooks/pre-commit. The frozen W1 encoding corpus
+# (conformance/encoding/) is a graduated CONTRACT, not authored source, so it is excluded with
+# `-I 'conformance/encoding/**'` — keep this glob in sync with the hook and the .annotated-tree.toml
+# note (annotated-tree's config has no `ignore` key, so exclusion is done at the CALL site).
 #
 # annotated-tree is PINNED to an exact version (`annotated-tree@0.2.1`) — this gate is load-bearing,
 # so a floating `npx --yes annotated-tree` (latest) could change --strict-check behavior and either
@@ -25,4 +26,4 @@ jobs:
           node-version: "20"
       - name: Enforce annotations + architecture rules
         # Pinned version — keep in sync with the .githooks/pre-commit fallback.
-        run: npx --yes annotated-tree@0.2.1 --strict-check --include-tests .
+        run: npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' .

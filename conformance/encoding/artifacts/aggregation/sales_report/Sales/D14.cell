@@ -1,0 +1,2 @@
+# Concern: grand total units across all orders | Non-concern: per-region unit splits | IO: output
+=SUM(D2:D13)

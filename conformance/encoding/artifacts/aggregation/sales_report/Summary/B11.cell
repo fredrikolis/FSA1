@@ -1,0 +1,2 @@
+# Concern: mean revenue across every order (ungrouped) | Non-concern: per-group averages | IO: output
+=AVERAGE(Sales!E2:E13)

@@ -1,0 +1,2 @@
+# Concern: reconciliation total of the per-tier counts (must equal the 12 data rows) | Non-concern: the per-tier breakdown above | IO: output
+=SUM(F2:F4)

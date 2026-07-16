@@ -1,0 +1,4 @@
+# Concern: hand-entered loan terms (principal, annual rate, term) | Non-concern: the derived monthly rate/payment (B5:B6) | IO: input
+20000
+0.06
+12

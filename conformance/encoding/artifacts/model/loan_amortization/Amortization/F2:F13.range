@@ -1,0 +1,2 @@
+# Concern: closing balance = opening balance - principal repaid (drag-fill; reaches ~0 at period 12) | Non-concern: the next period's opening balance (that read lives in B3:B13) | IO: none
+=B2-E2

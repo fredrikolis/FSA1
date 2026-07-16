@@ -1,0 +1,2 @@
+# Concern: first name = text before the first space of the cleaned full name | Non-concern: the last-name remainder (D) | IO: none
+=LEFT(TRIM(A2),FIND(" ",TRIM(A2))-1)

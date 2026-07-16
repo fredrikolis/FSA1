@@ -5,6 +5,15 @@
 # owns only the repo-wide ARCHITECTURAL rules the gate enforces. Valid tables: display, limits,
 # rules, languages (there is NO ignore key — corpus/fixture exclusion is done at the CALL site with
 # `-I` globs in .githooks/pre-commit and .github/workflows/annotations.yml; keep them in sync).
+#
+# ACTIVE EXCLUSION GLOB (kept in sync across both call sites):
+#   -I 'conformance/encoding/**'
+# The frozen W1 encoding corpus (conformance/encoding/, see its PROVENANCE.md) is a SANCTIONED
+# graduated contract, not authored source. Its `.range`/`.cell` sheet files carry no recognized code
+# extension (already invisible to the linter), but its migrated `.md` verdict ledgers (EXPECTED.md,
+# FORMAT.md, PROVENANCE.md) ARE markdown and would otherwise be governed by the annotation gate — a
+# frozen contract must not be, so it is excluded at the call site. charlie-model's own
+# tests/encoding_conformance.rs (which GRADES the corpus) is NOT excluded and stays annotated.
 
 [rules]
 # Every crate with a Cargo.toml must resolve a concern CHARTER (an annotation on src/lib.rs /
@@ -13,20 +22,20 @@ require_package_charter = true
 
 # The internal crate dependency graph stays a DAG with no isolated crates.
 forbid_cycles = true
-# forbid_orphans is OFF while the workspace holds a SINGLE crate: a lone crate has no internal
-# edges in or out and is therefore trivially an "orphan", which would fail the gate for a reason
-# that cannot be fixed until a second crate exists. Re-enable it the moment charlie-model lands
-# (docs/architecture.md §5, W1) and the first `cli -> model -> ast` edge makes orphans a real signal.
-forbid_orphans = false
+# forbid_orphans is ON now that charlie-model has landed: the `charlie-model -> charlie-ast` edge
+# makes an isolated crate a real signal (W0 kept this OFF only because a lone crate is trivially an
+# "orphan" that could not be fixed until a second crate existed — docs/architecture.md §5).
+forbid_orphans = true
 
 # ARCHITECTURAL FIREWALL (populated as crates land — docs/architecture.md §1, §5 W2+).
 # NOTE: a deny pair naming a crate that does not yet exist is a FATAL `unknown_deny_package`
-# violation, so these are added only once both crates exist. The intended invariants:
-#   ["charlie-ast",   "charlie-model"]  # the formula engine must never know the filesystem model
-#   ["charlie-ast",   "charlie-cli"]    # the engine never depends on the binary
-#   ["charlie-model", "charlie-cli"]    # the model never depends on the binary
-#   ["charlie-ast",   "charlie-xlsx"]   # the core never knows xlsx
-#   ["charlie-model", "charlie-xlsx"]   # the core never knows xlsx
+# violation, so each edge is added only once BOTH its crates exist. With charlie-ast + charlie-model
+# present (W2), the single now-valid edge is wired below; the rest land with their crates.
+#   ["charlie-ast",   "charlie-model"]  # WIRED: the formula engine must never know the filesystem model
+#   ["charlie-ast",   "charlie-cli"]    # pending charlie-cli: the engine never depends on the binary
+#   ["charlie-model", "charlie-cli"]    # pending charlie-cli: the model never depends on the binary
+#   ["charlie-ast",   "charlie-xlsx"]   # pending charlie-xlsx: the core never knows xlsx
+#   ["charlie-model", "charlie-xlsx"]   # pending charlie-xlsx: the core never knows xlsx
 # The direction that IS allowed: cli -> model -> ast, and xlsx -> {ast, model}. This encodes the
 # owner's hard rule that the AST impl is swappable behind a narrow boundary.
-deny = []
+deny = [["charlie-ast", "charlie-model"]]

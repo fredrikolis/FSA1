@@ -1,0 +1,11 @@
+[package]
+name = "charlie-model"
+version = "0.1.0"
+edition = "2024"
+
+# The ONLY allowed firewall edge out of the model: `charlie-model -> charlie-ast` (docs/architecture.md
+# §1). The model borrows the AST's ref/value/shape types and the shared A1 grammar; the AST never
+# learns of the filesystem model (enforced by the `["charlie-ast","charlie-model"]` deny edge in
+# ../.annotated-tree.toml).
+[dependencies]
+charlie-ast = { path = "../charlie-ast" }

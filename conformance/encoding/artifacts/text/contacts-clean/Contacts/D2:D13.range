@@ -1,0 +1,2 @@
+# Concern: last name = everything after the first space of the cleaned full name | Non-concern: the first-name token (C) | IO: none
+=MID(TRIM(A2),FIND(" ",TRIM(A2))+1,LEN(TRIM(A2)))

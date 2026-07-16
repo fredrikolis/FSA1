@@ -1,0 +1,2 @@
+# Concern: grand total of raw line totals — deliberately #N/A because the missing-key row poisons the SUM (shows error propagation into an aggregate) | Non-concern: the clean total in H12 | IO: output
+=SUM(F2:F11)

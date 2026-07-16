@@ -1,0 +1,13 @@
+# Concern: hand-entered full names, deliberately dirty (leading/trailing/double spaces, mixed case) | Non-concern: the parsed first/last split (C:D) | IO: input
+  John Smith
+Jane Doe
+Bob  Jones
+Mary Jo Watson
+john smith
+Alice Nguyen
+ Carlos  Ramirez
+Jane Doe
+Priya Patel
+Tom O'Brien
+Alice Nguyen
+Sam Lee

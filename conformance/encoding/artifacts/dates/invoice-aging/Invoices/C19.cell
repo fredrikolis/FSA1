@@ -1,0 +1,2 @@
+# Concern: total outstanding dollars in the 61-90 day bucket | Non-concern: the invoice count (B19) | IO: none
+=SUMIFS(D2:D13,E2:E13,">=61",E2:E13,"<=90")

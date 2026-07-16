@@ -1,0 +1,2 @@
+# Concern: sum of the per-region totals; must equal Sales!E14 grand total | Non-concern: how each region total was derived | IO: output
+=SUM(B2:B4)

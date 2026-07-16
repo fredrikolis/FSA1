@@ -1,0 +1,13 @@
+# Concern: annual spend per customer, with two exact-threshold boundaries (100000, 50000), two fractional boundaries, a negative, and one bad/errored feed (#VALUE!) | Non-concern: the tier label derived in column C | IO: input
+250000
+100001
+100000.5
+100000
+75000
+50001
+50000.5
+50000
+42000
+0
+-5000
+#VALUE!

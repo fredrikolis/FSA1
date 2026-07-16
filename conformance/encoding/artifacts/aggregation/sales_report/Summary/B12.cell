@@ -1,0 +1,2 @@
+# Concern: revenue for the single (region=EMEA AND product=Widget) cell (two-criteria SUMIFS) | Non-concern: single-criteria rollups above | IO: output
+=SUMIFS(Sales!E2:E13, Sales!B2:B13, "EMEA", Sales!C2:C13, "Widget")

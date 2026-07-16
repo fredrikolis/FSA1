@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "charlie-ast"
 version = "0.1.0"
+
+[[package]]
+name = "charlie-model"
+version = "0.1.0"
+dependencies = [
+ "charlie-ast",
+]

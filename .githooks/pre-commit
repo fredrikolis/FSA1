@@ -34,10 +34,11 @@ echo "pre-commit: cargo clippy -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
 # annotated-tree annotation + architecture gate (sub-second; rules live in ./.annotated-tree.toml).
-# No -I corpus/oracle/fixture globs are needed YET — this workspace ships no corpus/fixture
-# territory. When one lands, add the excludes to the call below AND keep them in sync with
-# .github/workflows/annotations.yml and the note in .annotated-tree.toml (annotated-tree's config
-# has no `ignore` key, so exclusion is done at the CALL site).
+# The frozen W1 encoding corpus (conformance/encoding/) is a graduated CONTRACT, not authored source,
+# so it is excluded here with `-I 'conformance/encoding/**'`. Keep this glob in sync with
+# .github/workflows/annotations.yml and the note in .annotated-tree.toml (annotated-tree's config has
+# no `ignore` key, so exclusion is done at the CALL site). The corpus's `.range`/`.cell` files carry
+# no recognized code extension anyway; the glob covers its migrated `.md` verdict ledgers.
 echo "pre-commit: annotated-tree --strict-check"
 # Resolve annotated-tree robustly (hooks run with a minimal PATH): prefer an installed binary under
 # the npm global prefix or PATH, else fall back to `npx` (fetches it on demand); fail loud otherwise.
@@ -45,12 +46,12 @@ npm_bin="${npm_config_prefix:-$HOME/.npm-global}/bin"
 case ":$PATH:" in *":$npm_bin:"*) ;; *) PATH="$npm_bin:$PATH" ;; esac
 export PATH
 if command -v annotated-tree >/dev/null 2>&1; then
-	annotated-tree --strict-check --include-tests .
+	annotated-tree --strict-check --include-tests -I 'conformance/encoding/**' .
 elif command -v npx >/dev/null 2>&1; then
 	# Pinned to an exact version (load-bearing gate; `--yes annotated-tree` alone would fetch
 	# LATEST and could drift --strict-check behavior). Keep in sync with
 	# .github/workflows/annotations.yml. Bump both together, deliberately.
-	npx --yes annotated-tree@0.2.1 --strict-check --include-tests .
+	npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' .
 else
 	echo "pre-commit: annotated-tree not found (install: 'npm i -g annotated-tree', or ensure npx is on PATH)" >&2
 	exit 1

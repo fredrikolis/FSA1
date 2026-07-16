@@ -1,0 +1,3 @@
+# Concern: a 2x3 literal body forced into a 3x3 range — neither an exact match nor broadcastable | Non-concern: the values, which never get placed | IO: input
+1	2	3
+4	5	6

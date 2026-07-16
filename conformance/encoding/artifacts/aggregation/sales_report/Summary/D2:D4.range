@@ -1,0 +1,2 @@
+# Concern: average revenue per region (criteria AVERAGE group-by) | Non-concern: the totals in B | IO: output
+=AVERAGEIFS(Sales!E$2:E$13, Sales!B$2:B$13, A2)

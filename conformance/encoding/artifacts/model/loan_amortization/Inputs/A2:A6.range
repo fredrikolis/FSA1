@@ -1,0 +1,6 @@
+# Concern: parameter labels for the loan | Non-concern: their numeric values in column B | IO: input
+Principal
+Annual Rate
+Term (months)
+Monthly Rate
+Payment

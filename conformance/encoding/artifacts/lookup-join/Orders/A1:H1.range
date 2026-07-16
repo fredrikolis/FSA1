@@ -1,0 +1,2 @@
+# Concern: order-book column headers, including the four enrichment columns joined from Products | Non-concern: the order rows and formulas below | IO: input
+order_id	product_id	qty	unit_price_xlookup	unit_price_index_match	line_total	unit_price_safe	line_total_safe

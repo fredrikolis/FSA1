@@ -1,0 +1,2 @@
+# Concern: a 1x3 row vector authored into a SQUARE 3x3 range to probe the 6.1 orientation disambiguator | Non-concern: what a col vector would do here (see EXPECTED) | IO: input
+1	2	3

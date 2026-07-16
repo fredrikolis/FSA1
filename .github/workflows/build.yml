@@ -29,6 +29,17 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy -D warnings
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: oracle-input purity (frozen corpus fingerprint)
+        # The frozen W1 encoding corpus is a graded ORACLE INPUT: charlie-model is graded AGAINST
+        # these fixtures and their EXPECTED ledgers and must never author/edit/regenerate them
+        # (conformance/encoding/PROVENANCE.md). Re-hash every migrated file against the manifest so a
+        # silent fixture or EXPECTED-ledger rewrite fails CI here — this is the mechanical enforcement
+        # of "oracle-input purity" (the encoding_conformance.rs harness does NOT assert cell VALUES in
+        # the 6 valid workbooks, so editing a literal inside one would otherwise flip no verdict).
+        # Kept out of the crypto-free charlie-model (system sha256sum, per PROVENANCE.md), so it lives
+        # here rather than in a Rust test. Paths in the manifest are relative to the corpus root.
+        working-directory: conformance/encoding
+        run: sha256sum -c MANIFEST.sha256 --quiet
       - name: test (--include-ignored)
         # This is an UNFILTERED workspace run, so the "zero-tests-ran guard" from docs/commit-gate.md
         # (assert `test result: ok. [1-9][0-9]* passed` because `cargo test <filter>` exits 0 when a

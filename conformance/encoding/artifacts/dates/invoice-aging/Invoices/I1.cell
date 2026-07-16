@@ -1,0 +1,2 @@
+# Concern: the FIXED reference date all aging is measured against — pinned constant, NOT volatile TODAY, so ground truth is reproducible | Non-concern: per-invoice dates (column C) | IO: input
+=DATE(2026,3,31)

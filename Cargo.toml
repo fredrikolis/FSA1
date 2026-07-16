@@ -1,6 +1,8 @@
-# Workspace root. Build-out: the first product crate has landed — `charlie-ast`, the formula
-# language contract surface (docs/architecture.md §5, W0). charlie-model and charlie-cli follow
-# (W1+), at which point the `.annotated-tree.toml` deny edges + forbid_orphans are wired.
+# Workspace root. Build-out: two product crates have landed — `charlie-ast` (the formula-language
+# contract surface, W0) and `charlie-model` (the filesystem spreadsheet model, W2), with the
+# `charlie-model -> charlie-ast` firewall edge now real, so `.annotated-tree.toml` re-enables
+# `forbid_orphans` and adds the `["charlie-ast","charlie-model"]` deny edge. charlie-cli/charlie-xlsx
+# follow (their deny edges land only once those crates exist — docs/architecture.md §1, §5).
 [workspace]
 resolver = "2"
-members = ["charlie-ast"]
+members = ["charlie-ast", "charlie-model"]

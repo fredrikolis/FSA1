@@ -1,0 +1,2 @@
+# Concern: residual balance after the final payment (should render ~0, proving the schedule closes) | Non-concern: intermediate balances | IO: output
+=Amortization!F13

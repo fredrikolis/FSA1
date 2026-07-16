@@ -1,0 +1,2 @@
+# Concern: the level monthly payment applied every period (absolute ref, same value all rows) | Non-concern: how that payment splits into interest vs principal | IO: none
+=Inputs!$B$6
