@@ -34,11 +34,14 @@ echo "pre-commit: cargo clippy -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
 # annotated-tree annotation + architecture gate (sub-second; rules live in ./.annotated-tree.toml).
-# Two frozen CORPORA are graduated CONTRACTS, not authored source, so they are excluded here:
+# Three frozen CORPORA are graduated CONTRACTS, not authored source, so they are excluded here:
 #   -I 'conformance/encoding/**'   the W1 encoding corpus (conformance/encoding/, its PROVENANCE.md)
 #   -I 'conformance/formula/**'    the W3 formula-conformance corpus (.fixtures probes, PROVENANCE.md,
 #                                  MANIFEST.sha256, facts-snapshot.tsv) — the conformance crate's OWN
 #                                  src/**/ and tests/**/ stay annotated (they are authored code).
+#   -I 'conformance/render/**'     the W4 rendered-VALUE oracles (oracle/**, PROVENANCE.md,
+#                                  MANIFEST.sha256, facts-snapshot.tsv) — charlie-model's OWN
+#                                  tests/render_conformance.rs stays annotated (it is authored code).
 # Keep these globs in sync with .github/workflows/annotations.yml and the note in .annotated-tree.toml
 # (annotated-tree's config has no `ignore` key, so exclusion is done at the CALL site). The corpora's
 # data files carry no recognized code extension anyway; the globs cover their migrated `.md` ledgers.
@@ -49,12 +52,12 @@ npm_bin="${npm_config_prefix:-$HOME/.npm-global}/bin"
 case ":$PATH:" in *":$npm_bin:"*) ;; *) PATH="$npm_bin:$PATH" ;; esac
 export PATH
 if command -v annotated-tree >/dev/null 2>&1; then
-	annotated-tree --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' .
+	annotated-tree --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' -I 'conformance/render/**' .
 elif command -v npx >/dev/null 2>&1; then
 	# Pinned to an exact version (load-bearing gate; `--yes annotated-tree` alone would fetch
 	# LATEST and could drift --strict-check behavior). Keep in sync with
 	# .github/workflows/annotations.yml. Bump both together, deliberately.
-	npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' .
+	npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' -I 'conformance/render/**' .
 else
 	echo "pre-commit: annotated-tree not found (install: 'npm i -g annotated-tree', or ensure npx is on PATH)" >&2
 	exit 1

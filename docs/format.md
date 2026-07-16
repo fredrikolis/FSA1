@@ -179,8 +179,10 @@ then checked against the declared shape under §6.
 
 Let the **declared shape** ([§2](#2-filename-grammar-the-address-encoding)) be `(R, C)` and the body's
 **result shape** be `(rr, rc)`. For a literal body the result shape is the literal shape (§5); for a
-`=formula` body the result shape needs evaluation (W3) and so **no conformance verdict is produced in
-W2** (the formula is stored opaque, `placement = None`). `classify_placement`
+`=formula` body the result shape needs evaluation and so **no conformance verdict is produced at
+load** (the formula is stored opaque, `placement = None`); the eval layer then either **drag-fills** a
+scalar body per cell or applies this §6 rule to an **array-valued** body — see
+[§10.2](#102-drag-fill-a-multi-cell-formula-range). `classify_placement`
 (`charlie-model/src/conformance.rs`) decides the `Placement`, or a `#SPILL!`-class `non-conforming`
 refusal naming the file, declared shape, and result shape.
 
@@ -257,8 +259,8 @@ sheet name is a `#REF!`-class refusal (a W3 concern — W2 stores the formula op
 
 A `1×4` header `Orders/A1:D1.range` with a one-line literal body is **Exact** (declared `1×4`, literal
 `1×4` — see [R1](#r1-6-tie-break-scalar-fill-exact-rowcol-broadcast)). A `5×1` drag-fill
-`Orders/D2:D6.range` with body `=B2*C2` is stored opaque, `placement = None` (its per-cell offsetting
-is a W3 eval concern). A blank `A1.cell` is a `1×1` `Blank` that scalar-**Fills**.
+`Orders/D2:D6.range` with body `=B2*C2` **drag-fills** (see [§10.2](#102-drag-fill-a-multi-cell-formula-range)):
+D2 = `B2*C2`, D3 = `B3*C3`, …, D6 = `B6*C6`. A blank `A1.cell` is a `1×1` `Blank` that scalar-**Fills**.
 
 ### 10.1 Broadcast (row vector down)
 
@@ -266,6 +268,31 @@ is a W3 eval concern). A blank `A1.cell` is a `1×1` `Blank` that scalar-**Fills
 ⇒ `rc == C == 3` ⇒ **BroadcastDown** (B2:D2 = B3:D3 = B4:D4). The same three values authored one-per-
 line would be a *different file* (a `3×1` col vector) that broadcasts **across** — one file, one
 shape, one verdict.
+
+### 10.2 Drag-fill (a multi-cell `=formula` range)
+
+A multi-cell `.range` whose body is a **single scalar-valued `=formula`** is a **DRAG-FILL**, not an
+eval-once-and-broadcast. The **anchor** (top-left) cell holds the authored formula; **every other cell
+offsets the formula's RELATIVE references by its `(row, col)` delta from the anchor** and evaluates its
+own scalar. This is drag-fill as a first-class range construct — one authored formula, one per cell.
+
+- **`$`-anchoring is honoured per axis** ([§4](#4-body-grammar)'s `$A$1` markers, carried on the AST
+  `RefNode`/range corners): an **absolute** axis (`$A$1`) does **not** shift; a **mixed** ref (`$A1`,
+  `A$1`) shifts only its relative axis. So `Orders/F2:F11.range` with body `=C2*D2` yields
+  F2 = `C2*D2`, F3 = `C3*D3`, …, F11 = `C11*D11`; a body `=A2*B$1` shifts the `A2` down each row but
+  pins `B$1`; a running-total range like `$E$2:E2` grows only its end corner as it fills.
+- **Off-sheet ⇒ `#REF!` for that cell.** A relative reference that a cell's offset would drive off the
+  grid (a coordinate below row 1 / column A) makes **that filled cell** `#REF!` — the rest still fill.
+- **Reconciliation with [§6](#6-broadcast-conformance-dimension-rule).** The broadcast-conformance /
+  `#SPILL!` rule governs **literal blocks** and **ARRAY-valued** `=formula` results (a bare range body
+  like `=A1:A3` that spills/exact-places/broadcasts under §6 — array spill is deferred in v1). A
+  **scalar** `=formula` in a multi-cell range **drag-fills per cell** (each cell a scalar that always
+  `Fill`-conforms), so a scalar drag-fill never raises `#SPILL!`. The two are distinguished by the
+  body's result kind: a top-level bare range is the §6 array case; everything else drags.
+
+(This supersedes the W2-era note that a formula range's placement was "stored opaque, resolved at eval
+`W3`": the eval layer — `charlie-model`'s demand-driven engine — now performs the drag-fill, and each
+rendered cell is computed at most once, memoized by its resolved `(sheet, col, row)`.)
 
 ---
 

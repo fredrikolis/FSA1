@@ -475,6 +475,10 @@ mod tests {
                 start_row: sr,
                 end_col: ec,
                 end_row: er,
+                start_col_abs: false,
+                start_row_abs: false,
+                end_col_abs: false,
+                end_row_abs: false,
                 sheet: None,
             })
         };
@@ -573,6 +577,10 @@ mod tests {
             start_row: 0,
             end_col: 1,
             end_row: 1,
+            start_col_abs: false,
+            start_row_abs: false,
+            end_col_abs: false,
+            end_row_abs: false,
             sheet: None,
         });
         match eval_on(&range, &g) {
@@ -632,6 +640,10 @@ mod tests {
             start_row: 0,
             end_col: 0,
             end_row: 0,
+            start_col_abs: false,
+            start_row_abs: false,
+            end_col_abs: false,
+            end_row_abs: false,
             sheet: None,
         })));
         // A 1x1 range scalarizes -> identity of the single cell, NOT #CALC! (it is scalar).

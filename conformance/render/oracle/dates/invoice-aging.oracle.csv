@@ -1,0 +1,99 @@
+cell,rendered_value,kind,note
+Invoices!A1,InvoiceID,text,header
+Invoices!B1,Customer,text,header
+Invoices!C1,Invoice Date,text,header
+Invoices!D1,Amount,text,header
+Invoices!E1,Days Outstanding,text,header
+Invoices!F1,Bucket,text,header
+Invoices!H1,Reference Date,text,label
+Invoices!I1,46112,number,=DATE(2026,3,31) reference-date serial (2026-03-31)
+Invoices!A2,INV-001,text,
+Invoices!A3,INV-002,text,
+Invoices!A4,INV-003,text,
+Invoices!A5,INV-004,text,
+Invoices!A6,INV-005,text,
+Invoices!A7,INV-006,text,
+Invoices!A8,INV-007,text,
+Invoices!A9,INV-008,text,
+Invoices!A10,INV-009,text,
+Invoices!A11,INV-010,text,
+Invoices!A12,INV-011,text,
+Invoices!A13,INV-012,text,
+Invoices!B2,Acme Corp,text,
+Invoices!B3,Globex,text,
+Invoices!B4,Initech,text,
+Invoices!B5,Umbrella,text,
+Invoices!B6,Soylent,text,
+Invoices!B7,Hooli,text,
+Invoices!B8,Stark Ind,text,
+Invoices!B9,Wayne Ent,text,
+Invoices!B10,Wonka,text,
+Invoices!B11,Cyberdyne,text,
+Invoices!B12,Tyrell,text,
+Invoices!B13,Oscorp,text,
+Invoices!C2,46096,number,date serial 2026-03-15
+Invoices!C3,46112,number,date serial 2026-03-31
+Invoices!C4,46082,number,date serial 2026-03-01
+Invoices!C5,46081,number,date serial 2026-02-28
+Invoices!C6,46068,number,date serial 2026-02-15
+Invoices!C7,46052,number,date serial 2026-01-30
+Invoices!C8,46051,number,date serial 2026-01-29
+Invoices!C9,46037,number,date serial 2026-01-15
+Invoices!C10,46022,number,date serial 2025-12-31
+Invoices!C11,46021,number,date serial 2025-12-30
+Invoices!C12,45992,number,date serial 2025-12-01
+Invoices!C13,45945,number,date serial 2025-10-15
+Invoices!D2,1200,number,
+Invoices!D3,500,number,
+Invoices!D4,3400.5,number,
+Invoices!D5,2750,number,
+Invoices!D6,900,number,
+Invoices!D7,5000,number,
+Invoices!D8,1500,number,
+Invoices!D9,4200.75,number,
+Invoices!D10,620,number,
+Invoices!D11,3300,number,
+Invoices!D12,7800,number,
+Invoices!D13,250,number,
+Invoices!E2,16,number,=DATEDIF(C2,$I$1,"d")
+Invoices!E3,0,number,=DATEDIF(C3,$I$1,"d") edge: same day
+Invoices!E4,30,number,=DATEDIF(C4,$I$1,"d") edge: bucket 0-30 upper
+Invoices!E5,31,number,=DATEDIF(C5,$I$1,"d") edge: bucket 31-60 lower
+Invoices!E6,44,number,=DATEDIF(C6,$I$1,"d")
+Invoices!E7,60,number,=DATEDIF(C7,$I$1,"d") edge: bucket 31-60 upper
+Invoices!E8,61,number,=DATEDIF(C8,$I$1,"d") edge: bucket 61-90 lower
+Invoices!E9,75,number,=DATEDIF(C9,$I$1,"d")
+Invoices!E10,90,number,=DATEDIF(C10,$I$1,"d") edge: bucket 61-90 upper
+Invoices!E11,91,number,=DATEDIF(C11,$I$1,"d") edge: bucket 90+ lower
+Invoices!E12,120,number,=DATEDIF(C12,$I$1,"d")
+Invoices!E13,167,number,=DATEDIF(C13,$I$1,"d")
+Invoices!F2,0-30,text,=IFS(...) bucket
+Invoices!F3,0-30,text,
+Invoices!F4,0-30,text,
+Invoices!F5,31-60,text,
+Invoices!F6,31-60,text,
+Invoices!F7,31-60,text,
+Invoices!F8,61-90,text,
+Invoices!F9,61-90,text,
+Invoices!F10,61-90,text,
+Invoices!F11,90+,text,
+Invoices!F12,90+,text,
+Invoices!F13,90+,text,
+Invoices!A16,Bucket,text,summary header
+Invoices!B16,Count,text,summary header
+Invoices!C16,Total Outstanding,text,summary header
+Invoices!A17,0-30,text,
+Invoices!A18,31-60,text,
+Invoices!A19,61-90,text,
+Invoices!A20,90+,text,
+Invoices!B17,3,number,=COUNTIFS(E2:E13 >=0 <=30)
+Invoices!B18,3,number,=COUNTIFS(E2:E13 >=31 <=60)
+Invoices!B19,3,number,=COUNTIFS(E2:E13 >=61 <=90)
+Invoices!B20,3,number,=COUNTIF(E2:E13 >90)
+Invoices!C17,5100.5,number,=SUMIFS(D >=0 <=30)
+Invoices!C18,8650,number,=SUMIFS(D >=31 <=60)
+Invoices!C19,6320.75,number,=SUMIFS(D >=61 <=90)
+Invoices!C20,11350,number,=SUMIF(E>90 D)
+Invoices!A21,Total,text,
+Invoices!B21,12,number,=SUM(B17:B20)
+Invoices!C21,31421.25,number,=SUM(C17:C20)

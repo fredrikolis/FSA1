@@ -17,6 +17,10 @@ fn col_range(rows: u32) -> Expr {
         start_row: 0,
         end_col: 0,
         end_row: rows - 1,
+        start_col_abs: false,
+        start_row_abs: false,
+        end_col_abs: false,
+        end_row_abs: false,
         sheet: None,
     })
 }
@@ -1522,6 +1526,10 @@ fn row_and_column_read_the_reference_node() {
         start_row: 4,
         end_col: 5,
         end_row: 9,
+        start_col_abs: false,
+        start_row_abs: false,
+        end_col_abs: false,
+        end_row_abs: false,
         sheet: None,
     });
     assert_eq!(eval(&call("ROW", vec![rng.clone()]), &g), n(5.0));

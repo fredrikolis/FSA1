@@ -1,4 +1,4 @@
-// Concern: the fs↔AST BOUNDARY — the `Resolver` trait that is the engine's ENTIRE view of the outside world (value/range/sheet_id for cells, plus `now_serial` — the ONE injectable wall-clock seam the VOLATILE TODAY/NOW read, with a system-time default and the `PINNED_NOW_SERIAL` const tests/conformance override it to), decoupling the evaluator from any concrete store/clock so the impl is swappable (in-memory, filesystem-backed, xlsx-backed, or a test stub) | Non-concern: any CONCRETE implementation of the trait — charlie-model owns the filesystem impl; this crate ships none | IO: (via impls) a `CellRef`/`RangeRef`/sheet name -> a resolved `Value`/`ArrayView`/`SheetId`, and (via the default `now_serial`) a read of the system clock
+// Concern: the fs↔AST BOUNDARY — the `Resolver` trait that is the engine's ENTIRE view of the outside world (value/range/sheet_id for cells, plus `now_serial` — the ONE injectable wall-clock seam the VOLATILE TODAY/NOW read, with a system-time default and the `PINNED_NOW_SERIAL` const tests/conformance override it to), plus the single-homed epoch↔serial conversion re-exported for cross-crate reuse by charlie-model's `Workbook` — the `UNIX_EPOCH_SERIAL` const, `system_now_secs` (the raw clock read), and `unix_secs_to_serial` (the epoch→serial map), decoupling the evaluator from any concrete store/clock so the impl is swappable (in-memory, filesystem-backed, xlsx-backed, or a test stub) | Non-concern: any CONCRETE implementation of the trait — charlie-model owns the filesystem impl; this crate ships none | IO: (via impls) a `CellRef`/`RangeRef`/sheet name -> a resolved `Value`/`ArrayView`/`SheetId`, and (via the default `now_serial`) a read of the system clock
 //! The fs↔AST boundary: the [`Resolver`] trait.
 
 use crate::refs::{CellRef, RangeRef, SheetId};
@@ -10,6 +10,32 @@ use crate::value::{ArrayView, Value};
 /// `TODAY()`/`NOW()` fixture deterministic. (`44927` = 2023-01-01 is the same anchor
 /// `docs/format.md` §13.1 uses for the `TEXT` date example.)
 pub const PINNED_NOW_SERIAL: f64 = 44927.5;
+
+/// The Excel date-time serial of the Unix epoch (1970-01-01T00:00:00). The single source of truth
+/// for the epoch mapping so every impl that must map seconds-since-epoch to a serial — the default
+/// [`Resolver::now_serial`] here, and any concrete resolver that stores its own pinnable clock —
+/// agrees on the constant.
+pub const UNIX_EPOCH_SERIAL: f64 = 25569.0;
+
+/// Map seconds since the Unix epoch to an Excel date-time serial (a day is `86_400` s). Single-homed
+/// here so the `25569 + secs/86_400` mapping is written once; a resolver that stores its own clock
+/// (rather than reading the system one) calls this instead of re-deriving the formula.
+pub fn unix_secs_to_serial(secs: f64) -> f64 {
+    UNIX_EPOCH_SERIAL + secs / 86_400.0
+}
+
+/// Read the system wall clock as seconds since the Unix epoch. A clock reported *before* the epoch
+/// (a `SystemTime` error) falls back to the epoch instant rather than panicking. Single-homed here
+/// so the raw clock read is written once: the [`Resolver::now_serial`] default reads it lazily, and
+/// a resolver that must read the clock EAGERLY (charlie-model's `Workbook` stores `now` so it can be
+/// pinned, and so cannot use the trait default) calls this instead of re-deriving the boilerplate.
+pub fn system_now_secs() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
 
 /// The engine's entire view of the outside world.
 ///
@@ -44,14 +70,9 @@ pub trait Resolver {
     /// fixture reproducible. The DEFAULT reads the real system clock, so a production resolver gets
     /// wall-clock time for free; a resolver that needs determinism OVERRIDES this one method.
     fn now_serial(&self) -> f64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        // Unix epoch 1970-01-01 is Excel serial 25569; a day is 86_400 s. A clock reported before the
-        // Unix epoch (a `SystemTime` error) falls back to the epoch instant rather than panicking.
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0);
-        25569.0 + secs / 86_400.0
+        // The raw clock read is single-homed in [`system_now_secs`] and the epoch->serial mapping in
+        // [`unix_secs_to_serial`]; this default just composes them.
+        unix_secs_to_serial(system_now_secs())
     }
 }
 
@@ -121,5 +142,12 @@ mod tests {
         assert_eq!(view.cells.len(), 2);
         // The view BORROWS the resolver's store rather than copying it: same backing slice.
         assert!(std::ptr::eq(view.cells, r.store.as_slice()));
+    }
+
+    #[test]
+    fn unix_secs_to_serial_maps_the_epoch_and_a_day() {
+        // The epoch itself is the epoch serial; one day later is exactly one serial unit later.
+        assert_eq!(unix_secs_to_serial(0.0), UNIX_EPOCH_SERIAL);
+        assert_eq!(unix_secs_to_serial(86_400.0), UNIX_EPOCH_SERIAL + 1.0);
     }
 }

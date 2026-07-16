@@ -423,13 +423,28 @@ fn fold_range(lhs: Expr, rhs: Expr, span: Span) -> Result<Expr, Diag> {
             ));
         }
     };
-    let (c0, c1) = (a.col.min(b.col), a.col.max(b.col));
-    let (r0, r1) = (a.row.min(b.row), a.row.max(b.row));
+    // Normalize each axis to (min, max) independently, carrying each endpoint's `$`-anchor flag with
+    // the corner it lands on, so a mixed range like `$E$2:E2` keeps "start absolute, end relative"
+    // through the normalization (drag-fill reads these per-corner flags in `RangeNode::offset`).
+    let (start_col, start_col_abs, end_col, end_col_abs) = if a.col <= b.col {
+        (a.col, a.col_abs, b.col, b.col_abs)
+    } else {
+        (b.col, b.col_abs, a.col, a.col_abs)
+    };
+    let (start_row, start_row_abs, end_row, end_row_abs) = if a.row <= b.row {
+        (a.row, a.row_abs, b.row, b.row_abs)
+    } else {
+        (b.row, b.row_abs, a.row, a.row_abs)
+    };
     Ok(Expr::Range(RangeNode {
-        start_col: c0,
-        start_row: r0,
-        end_col: c1,
-        end_row: r1,
+        start_col,
+        start_row,
+        end_col,
+        end_row,
+        start_col_abs,
+        start_row_abs,
+        end_col_abs,
+        end_row_abs,
         sheet,
     }))
 }

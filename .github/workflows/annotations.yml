@@ -2,9 +2,10 @@ name: annotations
 
 # Enforce the suite-wide first-line annotation convention + the architectural rules in
 # .annotated-tree.toml (require_package_charter, forbid_cycles; the North-Star deny edges +
-# forbid_orphans arrive as crates land). Mirrors .githooks/pre-commit. Two frozen conformance corpora
-# are graduated CONTRACTS, not authored source, so each is excluded: `-I 'conformance/encoding/**'`
-# (the W1 encoding corpus) and `-I 'conformance/formula/**'` (the W3 formula-conformance corpus) —
+# forbid_orphans arrive as crates land). Mirrors .githooks/pre-commit. Three frozen conformance
+# corpora are graduated CONTRACTS, not authored source, so each is excluded:
+# `-I 'conformance/encoding/**'` (the W1 encoding corpus), `-I 'conformance/formula/**'` (the W3
+# formula-conformance corpus), and `-I 'conformance/render/**'` (the W4 rendered-VALUE oracles) —
 # keep these globs in sync with the hook and the .annotated-tree.toml note (annotated-tree's config
 # has no `ignore` key, so exclusion is done at the CALL site).
 #
@@ -27,4 +28,4 @@ jobs:
           node-version: "20"
       - name: Enforce annotations + architecture rules
         # Pinned version — keep in sync with the .githooks/pre-commit fallback.
-        run: npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' .
+        run: npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' -I 'conformance/render/**' .

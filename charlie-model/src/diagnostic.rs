@@ -1,4 +1,4 @@
-// Concern: the single-sourced DIAGNOSTIC registry — the stable `Code` enum (one code string + severity + summary + spreadsheet-error class per refusal), the `Loc` a refusal points at (filename byte / body line-col / tab), and the located `Diagnostic` value with an ASCII `Display`; every model refusal is one of these, never a panic or a silent drop | Non-concern: DETECTING any violation (the filename/body/conformance/overlap modules raise these) and the formula-eval error taxonomy (charlie-ast's `ErrKind` owns that; a `Code` only cites the class it belongs to) | IO: (`Code`, `Loc`, message) -> a rendered ASCII refusal
+// Concern: the single-sourced DIAGNOSTIC registry — the stable `Code` enum (one code string + severity + summary + spreadsheet-error class per refusal), the `Loc` a refusal points at (filename byte / body line-col / tab / sheet-qualified file), and the located `Diagnostic` value with an ASCII `Display`; every model refusal is one of these, never a panic or a silent drop | Non-concern: DETECTING any violation (the filename/body/conformance/overlap modules AND the demand-driven eval engine in `workbook.rs` — which raises the cycle/formula-syntax/depth-limit/range-too-large eval-time codes — raise these) and the formula-eval error taxonomy (charlie-ast's `ErrKind` owns that; a `Code` only cites the class it belongs to) | IO: (`Code`, `Loc`, message) -> a rendered ASCII refusal
 //! Diagnostics: [`Code`] (the single-sourced registry), [`Loc`], [`Severity`], [`Diagnostic`].
 
 use charlie_ast::ErrKind;
@@ -43,6 +43,22 @@ pub enum Code {
     NonConforming,
     /// Two files in one tab claim intersecting cells (FORMAT §7).
     Overlap,
+    /// A `=formula` cell depends on itself, directly or through a chain (demand-driven eval, B3) —
+    /// a `#REF!`-class refusal. The evaluator refuses the cycle instead of hanging / overflowing.
+    Cycle,
+    /// A `=formula` body that charlie-ast cannot parse into an expression (demand-driven eval, B3).
+    /// A located refusal, never a silent drop: the cell resolves to `#NAME?`.
+    FormulaSyntax,
+    /// A `=formula` cross-cell dependency CHAIN that is finite but deeper than the model's pull-depth
+    /// bound (demand-driven eval, B3) — a `#NUM!`-class refusal. Distinct from [`Code::Cycle`]: the
+    /// chain terminates, it is merely too long to evaluate by native recursion, so the deepest link
+    /// is refused (never a stack overflow) rather than looping forever.
+    DepthLimit,
+    /// A `=formula` references a rectangular range whose cell-count exceeds the model's
+    /// materialization bound (demand-driven eval, B3) — a `#NUM!`-class refusal. Bounds a reference
+    /// to a syntactically-valid but pathologically-large range (`A2:ZZ100000`) so it refuses with a
+    /// located diagnostic rather than materializing every cell into an OOM abort.
+    RangeTooLarge,
 }
 
 impl Code {
@@ -60,6 +76,10 @@ impl Code {
         Code::RaggedBlock,
         Code::NonConforming,
         Code::Overlap,
+        Code::Cycle,
+        Code::FormulaSyntax,
+        Code::DepthLimit,
+        Code::RangeTooLarge,
     ];
 
     /// The stable kebab-case code string a consumer switches on and a diagnostic renders as
@@ -78,6 +98,10 @@ impl Code {
             Code::RaggedBlock => "ragged-block",
             Code::NonConforming => "non-conforming",
             Code::Overlap => "overlap",
+            Code::Cycle => "cycle",
+            Code::FormulaSyntax => "formula-syntax",
+            Code::DepthLimit => "depth-limit",
+            Code::RangeTooLarge => "range-too-large",
         }
     }
 
@@ -96,6 +120,10 @@ impl Code {
             Code::RaggedBlock => "a literal block's rows must have equal field counts",
             Code::NonConforming => "body shape must match or broadcast to the declared shape",
             Code::Overlap => "two files in a tab claim intersecting cells",
+            Code::Cycle => "a formula cell must not depend on itself (directly or via a chain)",
+            Code::FormulaSyntax => "a formula body must parse into a charlie-ast expression",
+            Code::DepthLimit => "a formula dependency chain must not exceed the pull-depth bound",
+            Code::RangeTooLarge => "a referenced range must not exceed the materialization bound",
         }
     }
 
@@ -106,6 +134,9 @@ impl Code {
         match self {
             Code::RaggedBlock => Some(ErrKind::Value),
             Code::NonConforming => Some(ErrKind::Spill),
+            Code::Cycle => Some(ErrKind::Ref),
+            Code::DepthLimit => Some(ErrKind::Num),
+            Code::RangeTooLarge => Some(ErrKind::Num),
             _ => None,
         }
     }
@@ -127,6 +158,11 @@ pub enum Loc {
     Body { file: String, line: u32, col: u32 },
     /// Anchored on a tab (folder) as a whole.
     Tab { tab: String },
+    /// Anchored on a specific file *within a named tab* — a sheet-qualified cell/range file. Used by
+    /// the eval-time refusals (cycle / depth-limit / range-too-large / non-conforming), where the
+    /// same A1 address (`A1.cell`) can exist on more than one tab, so a bare filename cannot be
+    /// traced back to the offending file.
+    TabFile { tab: String, name: String },
 }
 
 impl Loc {
@@ -157,6 +193,32 @@ impl Loc {
             tab: tab.to_string(),
         }
     }
+
+    /// A sheet-qualified file anchor (`Beta/A1.cell`) — the eval-time refusals' location, so a
+    /// diagnostic can be traced to the offending file even when the same address exists on two tabs.
+    pub fn tab_file(tab: &str, name: &str) -> Loc {
+        Loc::TabFile {
+            tab: tab.to_string(),
+            name: name.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for Loc {
+    /// The located pointer, single-sourced here so both the [`Diagnostic`] renderer and the CLI's
+    /// lint table spell a location the same way.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Loc::File {
+                name,
+                byte: Some(b),
+            } => write!(f, "{name} (byte {b})"),
+            Loc::File { name, byte: None } => write!(f, "{name}"),
+            Loc::Body { file, line, col } => write!(f, "{file}:{line}:{col}"),
+            Loc::Tab { tab } => write!(f, "tab {tab:?}"),
+            Loc::TabFile { tab, name } => write!(f, "{tab}/{name}"),
+        }
+    }
 }
 
 /// A located refusal. Holds only well-formed data; it is never a panic and never a silent drop
@@ -177,15 +239,7 @@ impl Diagnostic {
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "error[{}]: {}", self.code.code_str(), self.message)?;
-        match &self.loc {
-            Loc::File {
-                name,
-                byte: Some(b),
-            } => write!(f, "\n  --> {name} (byte {b})"),
-            Loc::File { name, byte: None } => write!(f, "\n  --> {name}"),
-            Loc::Body { file, line, col } => write!(f, "\n  --> {file}:{line}:{col}"),
-            Loc::Tab { tab } => write!(f, "\n  --> tab {tab:?}"),
-        }
+        write!(f, "\n  --> {}", self.loc)
     }
 }
 
@@ -196,7 +250,7 @@ mod tests {
     #[test]
     fn registry_is_self_consistent() {
         // Every variant appears in ALL exactly once, and code strings are unique.
-        assert_eq!(Code::ALL.len(), 12);
+        assert_eq!(Code::ALL.len(), 16);
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();
         codes.sort_unstable();
         let before = codes.len();
@@ -214,7 +268,25 @@ mod tests {
     fn err_classes_cite_the_ast_taxonomy() {
         assert_eq!(Code::RaggedBlock.err_class(), Some(ErrKind::Value));
         assert_eq!(Code::NonConforming.err_class(), Some(ErrKind::Spill));
+        assert_eq!(Code::Cycle.err_class(), Some(ErrKind::Ref));
+        assert_eq!(Code::DepthLimit.err_class(), Some(ErrKind::Num));
+        assert_eq!(Code::RangeTooLarge.err_class(), Some(ErrKind::Num));
         assert_eq!(Code::MalformedFilename.err_class(), None);
+        assert_eq!(Code::FormulaSyntax.err_class(), None);
+    }
+
+    #[test]
+    fn tab_file_loc_is_sheet_qualified() {
+        // The eval-time anchor spells the tab AND the file, so the same address on two tabs is
+        // unambiguous (`Beta/A1.cell`, not a bare `A1.cell`).
+        let d = Diagnostic::new(
+            Code::Cycle,
+            Loc::tab_file("Beta", "A1.cell"),
+            "circular reference".to_string(),
+        );
+        let s = d.to_string();
+        assert!(s.is_ascii());
+        assert!(s.contains("--> Beta/A1.cell"), "{s}");
     }
 
     #[test]

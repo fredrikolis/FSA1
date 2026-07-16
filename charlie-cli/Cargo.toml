@@ -1,0 +1,19 @@
+# The THIN CLI shell (W4). `charlie-cli` is the binary surface — `render` and `check` — and holds
+# NO spreadsheet logic: it parses argv, asks `charlie-model` for a plain-data render grid or a lint
+# report, and lays that into an ASCII table with `comfy-table` (the presentation layer). The firewall
+# direction is `cli -> model -> ast` (docs/architecture.md §1): it depends on `charlie-model` (which
+# re-exports the `charlie-ast` types it needs) and the core never depends back — enforced by the
+# `["charlie-ast","charlie-cli"]` and `["charlie-model","charlie-cli"]` deny edges in
+# ../.annotated-tree.toml. `comfy-table` is the ONLY external dep, pinned; all logic stays in the model.
+[package]
+name = "charlie-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "charlie"
+path = "src/main.rs"
+
+[dependencies]
+charlie-model = { path = "../charlie-model" }
+comfy-table = "7.2"

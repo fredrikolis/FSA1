@@ -1,5 +1,5 @@
-// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename<->range parser (`filename`), body classification (`body`), the broadcast-conformance validator (`conformance`), the overlap detector (`overlap`), and the single-sourced diagnostic registry (`diagnostic`); `parse_file` ties them into one loaded `ParsedFile`, proving bet B1 (filename<->range encoding + the broadcast-conformance dimension check) | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model stores a formula body OPAQUE), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`
-//! # charlie-model — the filesystem spreadsheet model (W2)
+// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename<->range parser (`filename`), body classification (`body`), the broadcast-conformance validator (`conformance`), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula/annotation strings for the CLI to draw, and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling formula cells through `charlie_ast::eval`, memoized and cycle-safe; a multi-cell scalar `=formula` range DRAG-FILLS (each cell offsets the body's relative refs per §10.2 and is never §6-checked — a scalar drag-fill never raises `#SPILL!`), while only a top-level bare-range ARRAY formula has its evaluated result shape checked against its declared dims under §6 (`#SPILL!`-class on mismatch); `parse_file` ties the W2 parsers into one loaded `ParsedFile` (bet B1), and `Workbook` proves bet B3 (demand-driven eval) | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
+//! # charlie-model — the filesystem spreadsheet model (W2–W4)
 //!
 //! **CHARTER.** `charlie-model` owns the on-disk encoding (`FORMAT.md`): a tab is a folder and a
 //! cell/range is a file whose *name* declares its A1 region and whose *body* is a literal block or
@@ -8,10 +8,18 @@
 //! shape types and the shared A1 grammar (the one allowed firewall edge), and the AST never learns
 //! of the filesystem model (the `["charlie-ast","charlie-model"]` deny edge enforces this).
 //!
-//! It proves **bet B1**: the filename<->range encoding and the broadcast-conformance dimension
-//! check. Everything is a *located refusal* ([`Diagnostic`]) — never a panic, never a silent drop
-//! (ast-standards PART 5). W2 does not evaluate formulas (that is W3); a formula body is stored
-//! verbatim and its result shape is not yet known, so conformance runs only over literal blocks.
+//! It proves **bet B1** (the filename<->range encoding and the broadcast-conformance dimension
+//! check) and **bet B3** (demand-driven eval): [`Workbook`] loads a sheet-directory and implements
+//! [`charlie_ast::Resolver`] over it, so `charlie_ast::eval` PULLS formula cells through the model —
+//! memoized, cycle-safe (a reference cycle is a located `#REF!`-class refusal, never a hang), and
+//! lazy (only transitively-requested cells compute). A formula range-file, opaque in W2, now
+//! evaluates: a multi-cell scalar `=formula` range **drag-fills** (each cell offsets the body's
+//! relative refs per §10.2 and is never §6-checked — a scalar drag-fill never raises `#SPILL!`),
+//! whereas a top-level bare-range **array** formula has its evaluated result shape checked against
+//! the declared range under §6, so a non-conforming array result becomes the static `#SPILL!`-class
+//! refusal — the B1<->engine shape handoff, live.
+//! Everything is a *located refusal* ([`Diagnostic`]) — never a panic, never a silent drop
+//! (ast-standards PART 5).
 //!
 //! The **living authoritative spec** for this encoding layer is `docs/format.md` (the as-built
 //! contract, including the six W2 hardening resolutions). `conformance/encoding/FORMAT.md` is the
@@ -22,12 +30,19 @@ pub mod conformance;
 pub mod diagnostic;
 pub mod filename;
 pub mod overlap;
+pub mod render;
+pub mod workbook;
 
 pub use body::{Body, LiteralBlock, classify_body, lex_literal};
 pub use conformance::{Placement, classify_placement, validate_conformance};
 pub use diagnostic::{Code, Diagnostic, Loc, Severity};
 pub use filename::{FileKind, FileName, parse_filename};
 pub use overlap::{Rect, detect_overlaps};
+pub use render::{
+    MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, display_value, parse_viewport, render,
+    viewport_cell_count,
+};
+pub use workbook::{CellSource, Workbook};
 
 use charlie_ast::Shape;
 

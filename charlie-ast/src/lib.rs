@@ -57,11 +57,13 @@ mod test_support;
 pub use a1::{A1Address, A1Error, format_cell, format_column, parse_a1};
 pub use diag::{Diag, DiagCode, Severity, Span};
 pub use eval::{EvalCtx, eval};
-pub use expr::{BinOp, Expr, FuncId, UnOp};
+pub use expr::{BinOp, Expr, FuncId, UnOp, offset_refs};
 pub use func::FuncDef;
 pub use lexer::{Token, TokenKind, tokenize};
 pub use node::NodeId;
 pub use parser::parse;
 pub use refs::{CellRef, RangeNode, RangeRef, RefNode, SheetId, SheetName};
-pub use resolver::{PINNED_NOW_SERIAL, Resolver};
+pub use resolver::{
+    PINNED_NOW_SERIAL, Resolver, UNIX_EPOCH_SERIAL, system_now_secs, unix_secs_to_serial,
+};
 pub use value::{ArrayView, ErrKind, Shape, Value};

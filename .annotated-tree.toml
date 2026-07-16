@@ -9,15 +9,19 @@
 # ACTIVE EXCLUSION GLOBS (kept in sync across both call sites — the hook + annotations.yml):
 #   -I 'conformance/encoding/**'
 #   -I 'conformance/formula/**'
-# Two frozen conformance corpora are SANCTIONED graduated contracts, not authored source:
+#   -I 'conformance/render/**'
+# Three frozen conformance corpora are SANCTIONED graduated contracts, not authored source:
 #   - conformance/encoding/ (W1, see its PROVENANCE.md): `.range`/`.cell` sheet files + `.md` ledgers.
 #   - conformance/formula/  (W3, see its PROVENANCE.md): the `.fixtures` value probes, PROVENANCE.md,
 #     MANIFEST.sha256, and the charlie-DERIVED facts-snapshot.tsv anchor.
+#   - conformance/render/   (W4, see its PROVENANCE.md): the migrated rendered-VALUE oracles under
+#     oracle/** (`.json`/`.csv` + each `compute_oracle.py` + per-category `.md`), PROVENANCE.md,
+#     MANIFEST.sha256, and the charlie-DERIVED facts-snapshot.tsv anchor.
 # Their data files carry no recognized code extension (already invisible to the linter), but their
-# `.md` ledgers ARE markdown and would otherwise be governed by the annotation gate — a frozen
-# contract must not be, so each corpus is excluded at the call site. The GRADERS are NOT excluded and
-# stay annotated: charlie-model's tests/encoding_conformance.rs and the whole `conformance` crate
-# (its src/**/ + tests/**/ are authored code that must carry annotations).
+# `.md`/`.py` ledgers ARE governed by the annotation gate — a frozen contract must not be, so each
+# corpus is excluded at the call site. The GRADERS are NOT excluded and stay annotated: charlie-model's
+# tests/{encoding,render}_conformance.rs and the whole `conformance` crate (its src/**/ + tests/**/
+# are authored code that must carry annotations).
 
 [rules]
 # Every crate with a Cargo.toml must resolve a concern CHARTER (an annotation on src/lib.rs /
@@ -33,13 +37,17 @@ forbid_orphans = true
 
 # ARCHITECTURAL FIREWALL (populated as crates land — docs/architecture.md §1, §5 W2+).
 # NOTE: a deny pair naming a crate that does not yet exist is a FATAL `unknown_deny_package`
-# violation, so each edge is added only once BOTH its crates exist. With charlie-ast + charlie-model
-# present (W2), the single now-valid edge is wired below; the rest land with their crates.
+# violation, so each edge is added only once BOTH its crates exist. With charlie-ast + charlie-model +
+# charlie-cli present (W4), the three now-valid edges are wired below; the xlsx pair lands with it.
 #   ["charlie-ast",   "charlie-model"]  # WIRED: the formula engine must never know the filesystem model
-#   ["charlie-ast",   "charlie-cli"]    # pending charlie-cli: the engine never depends on the binary
-#   ["charlie-model", "charlie-cli"]    # pending charlie-cli: the model never depends on the binary
+#   ["charlie-ast",   "charlie-cli"]    # WIRED: the engine never depends on the binary
+#   ["charlie-model", "charlie-cli"]    # WIRED: the model never depends on the binary
 #   ["charlie-ast",   "charlie-xlsx"]   # pending charlie-xlsx: the core never knows xlsx
 #   ["charlie-model", "charlie-xlsx"]   # pending charlie-xlsx: the core never knows xlsx
 # The direction that IS allowed: cli -> model -> ast, and xlsx -> {ast, model}. This encodes the
 # owner's hard rule that the AST impl is swappable behind a narrow boundary.
-deny = [["charlie-ast", "charlie-model"]]
+deny = [
+    ["charlie-ast", "charlie-model"],
+    ["charlie-ast", "charlie-cli"],
+    ["charlie-model", "charlie-cli"],
+]

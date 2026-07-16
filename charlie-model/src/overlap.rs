@@ -25,6 +25,13 @@ impl Rect {
         }
     }
 
+    /// Whether the zero-based cell `(col,row)` lies inside this inclusive region. Used by the
+    /// demand-driven evaluator to find the single file (overlaps are rejected at load) that covers a
+    /// requested cell.
+    pub fn contains(&self, col: u32, row: u32) -> bool {
+        self.min_col <= col && col <= self.max_col && self.min_row <= row && row <= self.max_row
+    }
+
     /// The intersection of two regions, or `None` if they are disjoint.
     pub fn intersect(&self, other: &Rect) -> Option<Rect> {
         let min_col = self.min_col.max(other.min_col);
@@ -87,6 +94,17 @@ mod tests {
             max_col,
             max_row,
         }
+    }
+
+    #[test]
+    fn contains_is_inclusive_on_all_corners() {
+        let r = rect(1, 2, 3, 4); // B3:D5
+        assert!(r.contains(1, 2)); // top-left corner
+        assert!(r.contains(3, 4)); // bottom-right corner
+        assert!(r.contains(2, 3)); // interior
+        assert!(!r.contains(0, 2)); // left of region
+        assert!(!r.contains(4, 4)); // right of region
+        assert!(!r.contains(2, 5)); // below region
     }
 
     #[test]
