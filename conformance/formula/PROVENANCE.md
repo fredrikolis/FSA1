@@ -35,6 +35,20 @@ The interesting behaviors the seed pins, all from Excel semantics:
   (`2^3^2 = 64`); `&` concatenation stringifies operands; comparisons are cross-type ranked
   (Number < Text < Bool) and text-equality is case-insensitive.
 - **ROUND** — half away from zero (`2.5 → 3`, `-2.5 → -3`), negative digits to the left of the point.
+- **Criteria mini-language** (`criteria.fixtures`, the `*IF(S)` family) — comparison operators
+  (`">10"`, `"<=5"`, `"<>x"`); case-insensitive text match with wildcards (`*` any run, `?` one
+  char, `~` escape); `">"&ref` CONCATENATED criteria (the `&` folds to a string before the criteria
+  parser runs). The range-conformance call is charlie's own: every criteria range and the value range
+  must share one shape, and a mismatch is a STATIC `#VALUE!` (not Excel's legacy reshape-from-corner).
+  Result-shape calls: `AVERAGEIF(S)` over no match is `#DIV/0!`; `MINIFS`/`MAXIFS` over no match is
+  `0`; `COUNTIF` counts a matching cell of any type while the summing forms take only numbers.
+  A text/wildcard criterion matches TEXT cells ONLY: over a MIXED range a number/bool cell is NEVER
+  coerced to its text form, so `COUNTIF([apple,5,10,pear],"*") = 2` and `COUNTIF([15,25,"1x"],"1*")
+  = 1` (a number/bool only satisfies `<>` against a text pattern, being "not equal" to it).
+- **Canonical zero.** Excel displays every zero as `0`; since `Value`'s `Eq` is bit-exact
+  (`-0.0 ≠ 0.0`), a `0`-valued aggregate is authored as `0` and charlie canonicalizes a computed
+  `-0.0` (e.g. an empty `SUM`/`SUMPRODUCT`, `[].sum() == -0.0`) to `+0.0` so it does not spuriously
+  Diverge.
 
 ## What is NOT here (and why)
 
@@ -42,8 +56,10 @@ The interesting behaviors the seed pins, all from Excel semantics:
   it records what charlie currently evaluates — so it is **not** an oracle input and is **not**
   fingerprinted here. It is the ratchet's memory, not ground truth.
 - **Parse-refusal probes.** This corpus grades VALUES. A formula that charlie refuses to parse
-  (e.g. a cross-sheet ref) grades as a Diverge here (a value was expected, a refusal is not one);
-  the located-refusal contract is charlie-ast's own `diag`/parser test surface, a different axis.
+  (e.g. a bare defined-name, or a 3D multi-sheet range `Sheet1!A1:Sheet2!B2`) grades as a Diverge
+  here (a value was expected, a refusal is not one); the located-refusal contract is charlie-ast's
+  own `diag`/parser test surface, a different axis. (A *single-sheet* cross-sheet reference such as
+  `Data!A1` now parses and evaluates — see `crosssheet.fixtures`.)
 
 ## How the seed was produced, and how it grows (the W3b grind)
 
@@ -60,6 +76,7 @@ growth is monotonic under the backslide guard.
 [fixture-name]           # unique within the file; the key is "<file-stem>/<name>"
 funcs: SUM, AVERAGE      # functions exercised (for the coverage ratchet; optional)
 cell A1: 1               # zero or more context cells; canonical A1 only (no $/lowercase/leading-zero)
+cell Data!A1: 42         # optionally sheet-qualified (`Sheet!A1`) for a cross-sheet reference
 cell A2: "text"          # literals: number | "text" | TRUE/FALSE | #ERR! | <blank> | {r,c;r,c}
 formula: =SUM(A1:A2)     # required; leading = optional
 expect: 3                # required; the EXTERNALLY-derived oracle value

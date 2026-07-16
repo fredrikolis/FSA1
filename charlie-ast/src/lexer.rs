@@ -1,4 +1,4 @@
-// Concern: the formula LEXER — turn a formula string into a flat `Vec<Token>` (each a `TokenKind` + byte `Span`), recognizing numbers (§4.3 finite grammar), `"`-strings (Excel `""` escaping), UPPERCASE-only `TRUE`/`FALSE` and the `#…!` error literals (docs/format.md R5), A1 cell references via `charlie_ast::a1`, the operator/paren/comma vocabulary, function-name-before-`(`, and the reserved `@`/`#`/`!` markers; a hostile byte is a located refusal, never a panic | Non-concern: how tokens NEST into an `Expr` (parser.rs owns precedence/arity/reserved-construct verdicts) and evaluating anything | IO: (a formula `&str`) -> `Result<Vec<Token>, Diag>`
+// Concern: the formula LEXER — turn a formula string into a flat `Vec<Token>` (each a `TokenKind` + byte `Span`), recognizing numbers (§4.3 finite grammar), `"`-strings (Excel `""` escaping), UPPERCASE-only `TRUE`/`FALSE` and the `#…!` error literals (docs/format.md R5), A1 cell references via `charlie_ast::a1`, the operator/paren/comma vocabulary, function-name-before-`(`, the `!` sheet-separator of a cross-sheet reference as a `TokenKind::SheetBang(name)` (bare `Sheet1!` and quoted `'My Sheet'!` names via `lex_quoted_sheet_name`, with `''` escapes and a `MalformedSheetName` refusal on an unterminated/`!`-less name), and the reserved `@`/`#` markers; a hostile byte is a located refusal, never a panic | Non-concern: how tokens NEST into an `Expr` (parser.rs owns precedence/arity/reserved-construct verdicts) and evaluating anything | IO: (a formula `&str`) -> `Result<Vec<Token>, Diag>`
 //! The formula lexer: [`tokenize`] a formula string into [`Token`]s.
 //!
 //! ASCII-oriented and single-pass. It never panics on hostile input — every byte either extends a
@@ -137,6 +137,19 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Diag> {
             continue;
         }
 
+        // A `'`-quoted sheet name of a cross-sheet reference (`'My Sheet'!A1`). The quotes let a
+        // sheet name hold spaces/punctuation an unquoted word cannot; the interior `''` escapes a
+        // literal `'` (Excel convention). A malformed quote is a located refusal, never a panic.
+        if c == b'\'' {
+            let (name, next) = lex_quoted_sheet_name(src, b, i)?;
+            out.push(Token {
+                kind: TokenKind::SheetBang(name),
+                span: Span::new(start, next),
+            });
+            i = next;
+            continue;
+        }
+
         // An identifier-shaped lexeme: `$`, letters, digits (a cell ref, function name, bool, sheet
         // prefix, or bare name). Must start with `$` or an ASCII letter.
         if c == b'$' || c.is_ascii_alphabetic() {
@@ -265,6 +278,43 @@ fn lex_string(src: &str, b: &[u8], i: usize) -> Result<(String, usize), Diag> {
         DiagCode::UnterminatedString,
         Span::new(start, b.len()),
         "a \"-string was not closed before end of formula",
+    ))
+}
+
+/// Lex a `'`-quoted sheet name of a cross-sheet reference, starting at the opening quote. Interior
+/// `''` is an escaped `'`. The closing quote MUST be followed immediately by `!` (a quoted name only
+/// ever qualifies a cross-sheet reference); returns the unescaped name and the index past that `!`.
+/// A missing closing quote or a missing trailing `!` is a located [`DiagCode::MalformedSheetName`].
+fn lex_quoted_sheet_name(src: &str, b: &[u8], i: usize) -> Result<(String, usize), Diag> {
+    let start = i;
+    let mut j = i + 1;
+    let mut name = String::new();
+    while j < b.len() {
+        if b[j] == b'\'' {
+            if j + 1 < b.len() && b[j + 1] == b'\'' {
+                name.push('\'');
+                j += 2;
+                continue;
+            }
+            // Closing quote found — a cross-sheet reference requires the `!` sheet separator next.
+            if j + 1 < b.len() && b[j + 1] == b'!' {
+                return Ok((name, j + 2));
+            }
+            return Err(Diag::new(
+                DiagCode::MalformedSheetName,
+                Span::new(start, j + 1),
+                "a quoted sheet name must be followed by `!` (a cross-sheet reference)",
+            ));
+        }
+        // Copy one whole UTF-8 char so a multi-byte sheet name survives intact.
+        let ch = first_char_at(src, j);
+        name.push(ch);
+        j += ch.len_utf8();
+    }
+    Err(Diag::new(
+        DiagCode::MalformedSheetName,
+        Span::new(start, b.len()),
+        "a '-quoted sheet name was not closed before end of formula",
     ))
 }
 
@@ -455,6 +505,45 @@ mod tests {
                     row_abs: false
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn quoted_sheet_names_lex_with_spaces_and_escapes() {
+        // A quoted name may hold spaces an unquoted word cannot.
+        assert_eq!(
+            kinds("'My Sheet'!A1"),
+            vec![
+                TokenKind::SheetBang("My Sheet".to_string()),
+                TokenKind::CellRef {
+                    col: 0,
+                    row: 0,
+                    col_abs: false,
+                    row_abs: false
+                }
+            ]
+        );
+        // Interior `''` is an escaped `'`.
+        assert_eq!(
+            kinds("'O''Brien'!B2"),
+            vec![
+                TokenKind::SheetBang("O'Brien".to_string()),
+                TokenKind::CellRef {
+                    col: 1,
+                    row: 1,
+                    col_abs: false,
+                    row_abs: false
+                }
+            ]
+        );
+        // Malformed: unterminated, and a closing quote not followed by `!`.
+        assert_eq!(
+            tokenize("'oops").unwrap_err().code,
+            DiagCode::MalformedSheetName
+        );
+        assert_eq!(
+            tokenize("'Sheet'+1").unwrap_err().code,
+            DiagCode::MalformedSheetName
         );
     }
 

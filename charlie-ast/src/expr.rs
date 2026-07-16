@@ -1,7 +1,7 @@
 // Concern: the source-free MEANING layer — the semantic `Expr` node enum (Lit/Ref/Range/Unary/Binary/Call) plus the reserved, round-trip-preserving `ImplicitIntersect`/`SpillRef` nodes, and the operator vocabulary (`UnOp`/`BinOp`) with the `FuncId` registry handle | Non-concern: node identity (`node::NodeId`), provenance/spans/refusals (id-keyed side-channels, later), and evaluation of any of it | IO: none — the tree's value type
 //! Meaning layer: [`Expr`] and its operator/function vocabulary.
 
-use crate::refs::{RangeRef, RefNode};
+use crate::refs::{RangeNode, RefNode};
 use crate::value::Value;
 
 /// A unary operator.
@@ -56,8 +56,8 @@ pub enum Expr {
     Lit(Value),
     /// A single-cell reference (`A1`, `$A$1`, `Sheet1!A1`).
     Ref(RefNode),
-    /// A rectangular range (`A1:B10`).
-    Range(RangeRef),
+    /// A rectangular range (`A1:B10`, `Sheet1!A1:B10`).
+    Range(RangeNode),
     /// A unary operation.
     Unary(UnOp, Box<Expr>),
     /// A binary operation.

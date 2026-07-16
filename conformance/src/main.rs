@@ -15,7 +15,9 @@ use conformance::{Facts, anchor_path, capture, read_anchor};
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let verb = args.first().map(String::as_str).unwrap_or("report");
-    let rest = &args[1..];
+    // Bare invocation (`conformance` with no verb) → `report`: guard the tail slice so an empty argv
+    // does not panic (`&args[1..]` on a 0-length vec is out of range).
+    let rest = args.get(1..).unwrap_or(&[]);
     match verb {
         "report" | "facts" => run_report(),
         "backslide" => run_backslide(),

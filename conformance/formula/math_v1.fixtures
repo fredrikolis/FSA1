@@ -1,0 +1,288 @@
+# v1 math batch: PRODUCT SUMPRODUCT ROUNDUP ROUNDDOWN INT MOD POWER SQRT CEILING FLOOR.
+# EXPECTED values are derived INDEPENDENTLY of charlie (computed by a python3 model of the Excel
+# semantics and its exact f64 arithmetic, then bit-checked against the decimal literal — see the
+# provenance notes below and PROVENANCE.md), never by running charlie.
+#
+# The Excel-semantics calls pinned here:
+#   * MOD's sign FOLLOWS THE DIVISOR:  MOD = n - divisor*FLOOR(n/divisor)  (MOD(7,-3)=-2, MOD(-7,3)=2).
+#   * INT floors toward -inf (INT(-2.5)=-3), NOT toward zero.
+#   * ROUNDUP rounds the magnitude AWAY from zero; ROUNDDOWN TOWARD zero; a negative digit count
+#     shifts the rounding place LEFT of the decimal point (ROUNDUP(1234,-2)=1300).
+#   * SUMPRODUCT multiplies aligned arrays then sums; every array must share ONE shape (a mismatch is
+#     a STATIC #VALUE!, charlie's static-conformance stance), and a NON-NUMERIC cell counts as 0.
+#   * PRODUCT of NO numeric datum is 0 (Excel's empty-product result, not the 1 identity); a direct
+#     bool/numeric-text coerces exactly as it does for SUM.
+#   * SQRT of a negative is #NUM! (Excel raises rather than returning a complex/NaN).
+#   * POWER shares the `^` operator's error mapping: 0^negative = #DIV/0!, a complex/overflowing
+#     power = #NUM!.
+#   * Legacy CEILING/FLOOR round to a multiple of `significance` (CEILING away from zero, FLOOR toward
+#     zero); DIFFERENT-signed arguments are #NUM!; and a ZERO significance is ASYMMETRIC:
+#     CEILING(x,0)=0 but FLOOR(x,0)=#DIV/0!.
+# Bit-exactness of the division-based results (e.g. 1.24, 4.5) against their decimal literals was
+# verified in python (float.hex() equality) so the grader's exact Value::Eq holds.
+
+# ---- PRODUCT(a, b, ...) ----
+
+[product-range-basic]
+funcs: PRODUCT
+cell A1: 2
+cell A2: 3
+cell A3: 4
+formula: =PRODUCT(A1:A3)
+expect: 24
+
+[product-direct-args-coerce]
+funcs: PRODUCT
+formula: =PRODUCT(2, TRUE, "3")
+expect: 6
+
+[product-no-numbers-is-zero]
+funcs: PRODUCT
+cell A1: "x"
+cell A2: <blank>
+formula: =PRODUCT(A1:A2)
+expect: 0
+
+[product-range-error-propagates]
+funcs: PRODUCT
+cell A1: 2
+cell A2: #DIV/0!
+cell A3: 3
+formula: =PRODUCT(A1:A3)
+expect: #DIV/0!
+
+# ---- SUMPRODUCT(array1, [array2], ...) ----
+
+[sumproduct-two-columns]
+funcs: SUMPRODUCT
+cell A1: 1
+cell A2: 2
+cell A3: 3
+cell B1: 4
+cell B2: 5
+cell B3: 6
+formula: =SUMPRODUCT(A1:A3,B1:B3)
+expect: 32
+
+[sumproduct-nonnumeric-counts-as-zero]
+funcs: SUMPRODUCT
+cell A1: 2
+cell A2: "x"
+cell A3: 4
+cell B1: 5
+cell B2: 5
+cell B3: 5
+formula: =SUMPRODUCT(A1:A3,B1:B3)
+expect: 30
+
+[sumproduct-all-nonnumeric-is-canonical-zero]
+funcs: SUMPRODUCT
+note: every cell is non-numeric (counts as 0), so the sum is 0 — pins the canonical +0.0 (Value's Eq is bit-exact; a stray -0.0 aggregate would Diverge from this 0).
+cell A1: "x"
+cell A2: <blank>
+cell A3: TRUE
+formula: =SUMPRODUCT(A1:A3)
+expect: 0
+
+[sumproduct-length-mismatch-is-value-error]
+funcs: SUMPRODUCT
+cell A1: 1
+cell A2: 2
+cell A3: 3
+cell B1: 4
+cell B2: 5
+formula: =SUMPRODUCT(A1:A3,B1:B2)
+expect: #VALUE!
+
+[sumproduct-error-cell-propagates]
+funcs: SUMPRODUCT
+cell A1: 1
+cell A2: #N/A
+cell A3: 3
+cell B1: 4
+cell B2: 5
+cell B3: 6
+formula: =SUMPRODUCT(A1:A3,B1:B3)
+expect: #N/A
+
+# ---- ROUNDUP(x, digits) ----
+
+[roundup-positive-away-from-zero]
+funcs: ROUNDUP
+formula: =ROUNDUP(1.234, 2)
+expect: 1.24
+
+[roundup-negative-away-from-zero]
+funcs: ROUNDUP
+formula: =ROUNDUP(-1.234, 2)
+expect: -1.24
+
+[roundup-negative-digits-left-of-point]
+funcs: ROUNDUP
+formula: =ROUNDUP(1234, -2)
+expect: 1300
+
+[roundup-nonnumeric-is-value-error]
+funcs: ROUNDUP
+formula: =ROUNDUP("x", 2)
+expect: #VALUE!
+
+# ---- ROUNDDOWN(x, digits) ----
+
+[rounddown-positive-toward-zero]
+funcs: ROUNDDOWN
+formula: =ROUNDDOWN(1.789, 2)
+expect: 1.78
+
+[rounddown-negative-toward-zero]
+funcs: ROUNDDOWN
+formula: =ROUNDDOWN(-1.789, 2)
+expect: -1.78
+
+[rounddown-to-integer]
+funcs: ROUNDDOWN
+formula: =ROUNDDOWN(3.99999, 0)
+expect: 3
+
+[rounddown-nonnumeric-is-value-error]
+funcs: ROUNDDOWN
+formula: =ROUNDDOWN("x", 0)
+expect: #VALUE!
+
+# ---- INT(x) ----
+
+[int-positive-truncates-down]
+funcs: INT
+formula: =INT(2.9)
+expect: 2
+
+[int-negative-floors-toward-neg-inf]
+funcs: INT
+formula: =INT(-2.5)
+expect: -3
+
+[int-of-integer-is-identity]
+funcs: INT
+formula: =INT(5)
+expect: 5
+
+[int-error-propagates]
+funcs: INT
+cell A1: #REF!
+formula: =INT(A1)
+expect: #REF!
+
+# ---- MOD(n, divisor) ----
+
+[mod-basic]
+funcs: MOD
+formula: =MOD(7, 3)
+expect: 1
+
+[mod-negative-divisor-sign-follows-divisor]
+funcs: MOD
+formula: =MOD(7, -3)
+expect: -2
+
+[mod-negative-dividend]
+funcs: MOD
+formula: =MOD(-7, 3)
+expect: 2
+
+[mod-by-zero-is-div0]
+funcs: MOD
+formula: =MOD(5, 0)
+expect: #DIV/0!
+
+# ---- POWER(x, y) ----
+
+[power-basic]
+funcs: POWER
+formula: =POWER(2, 10)
+expect: 1024
+
+[power-square-root-via-half-exponent]
+funcs: POWER
+formula: =POWER(9, 0.5)
+expect: 3
+
+[power-negative-base-fractional-is-num]
+funcs: POWER
+formula: =POWER(-8, 0.5)
+expect: #NUM!
+
+[power-zero-to-negative-is-div0]
+funcs: POWER
+formula: =POWER(0, -1)
+expect: #DIV/0!
+
+# ---- SQRT(x) ----
+
+[sqrt-basic]
+funcs: SQRT
+formula: =SQRT(16)
+expect: 4
+
+[sqrt-of-zero]
+funcs: SQRT
+formula: =SQRT(0)
+expect: 0
+
+[sqrt-of-negative-is-num]
+funcs: SQRT
+formula: =SQRT(-4)
+expect: #NUM!
+
+# ---- CEILING(number, significance) ----
+
+[ceiling-basic-away-from-zero]
+funcs: CEILING
+formula: =CEILING(2.5, 1)
+expect: 3
+
+[ceiling-fractional-significance]
+funcs: CEILING
+formula: =CEILING(4.3, 0.5)
+expect: 4.5
+
+[ceiling-negative-both-away-from-zero]
+funcs: CEILING
+formula: =CEILING(-2.5, -2)
+expect: -4
+
+[ceiling-different-signs-is-num]
+funcs: CEILING
+formula: =CEILING(2.5, -1)
+expect: #NUM!
+
+[ceiling-zero-significance-is-zero]
+funcs: CEILING
+formula: =CEILING(5, 0)
+expect: 0
+
+# ---- FLOOR(number, significance) ----
+
+[floor-basic-toward-zero]
+funcs: FLOOR
+formula: =FLOOR(2.5, 1)
+expect: 2
+
+[floor-fractional-significance]
+funcs: FLOOR
+formula: =FLOOR(4.7, 0.5)
+expect: 4.5
+
+[floor-negative-both-toward-zero]
+funcs: FLOOR
+formula: =FLOOR(-2.5, -2)
+expect: -2
+
+[floor-different-signs-is-num]
+funcs: FLOOR
+formula: =FLOOR(2.5, -1)
+expect: #NUM!
+
+[floor-zero-significance-is-div0]
+funcs: FLOOR
+formula: =FLOOR(5, 0)
+expect: #DIV/0!

@@ -1,4 +1,4 @@
-// Concern: the PRATT PARSER — a `&[Token]` stream -> an `Expr`, applying the exact Excel precedence ladder (`:` range > space-intersection > `,` union > unary `-`/`+` > `%` > `^` > `*`/`/` > `+`/`-` > `&` concat > the six comparisons), folding a STATIC `ref:ref` into `Expr::Range`, parsing-and-PRESERVING the reserved `@`(`ImplicitIntersect`)/`#`(`SpillRef`) nodes, resolving a function name + checking arity against the registry (so eval trusts arity — DbC), and turning every recognized-but-reserved or malformed construct into a LOCATED refusal; nesting past a depth bound (and a total-size bound) is a diagnostic, never a stack overflow | Non-concern: tokenizing (lexer.rs) and evaluating (eval.rs); this module builds the tree and never touches a `Resolver` | IO: (a formula `&str`, via `parse`) -> `Result<Expr, Diag>`
+// Concern: the PRATT PARSER — a `&[Token]` stream -> an `Expr`, applying the exact Excel precedence ladder (`:` range > space-intersection > `,` union > unary `-`/`+` > `%` > `^` > `*`/`/` > `+`/`-` > `&` concat > the six comparisons), folding a STATIC `ref:ref` into `Expr::Range` (carrying a sheet qualifier onto the range), building a first-class SHEET-QUALIFIED reference from a `SheetBang` token (`Sheet1!A1` / `'Quoted'!A1` via `parse_sheet_qualified` → a sheet-tagged `RefNode`/`RangeNode`, while 3D/multi-sheet stays a reserved refusal), parsing-and-PRESERVING the reserved `@`(`ImplicitIntersect`)/`#`(`SpillRef`) nodes, resolving a function name + checking arity against the registry (so eval trusts arity — DbC), and turning every recognized-but-reserved or malformed construct into a LOCATED refusal; nesting past a depth bound (and a total-size bound) is a diagnostic, never a stack overflow | Non-concern: tokenizing (lexer.rs) and evaluating (eval.rs); this module builds the tree and never touches a `Resolver` | IO: (a formula `&str`, via `parse`) -> `Result<Expr, Diag>`
 //! The Pratt (precedence-climbing) parser: [`parse`] a formula string into an [`Expr`].
 //!
 //! DbC: this is the one defended boundary (ast-standards PART 5). It never panics; a hole is a
@@ -11,7 +11,7 @@ use crate::diag::{Diag, DiagCode, Span};
 use crate::expr::{BinOp, Expr, UnOp};
 use crate::func;
 use crate::lexer::{Token, TokenKind, tokenize};
-use crate::refs::{CellRef, RangeRef, RefNode};
+use crate::refs::{RangeNode, RefNode, SheetName};
 use crate::value::Value;
 
 /// Maximum nesting depth (parens / prefix operators / call arguments). Beyond this the parser
@@ -234,17 +234,16 @@ impl<'t> Parser<'t> {
                 }
             }
             TokenKind::Func(name) => self.parse_call(name.clone(), span),
-            // A bare defined-name and a cross-sheet reference are recognized but reserved.
+            // A bare defined-name is recognized but reserved.
             TokenKind::Name(n) => Err(Diag::new(
                 DiagCode::ReservedName,
                 span,
                 format!("`{n}` is a defined name — reserved in v1"),
             )),
-            TokenKind::SheetBang(n) => Err(Diag::new(
-                DiagCode::ReservedCrossSheet,
-                span,
-                format!("cross-sheet reference `{n}!…` is reserved in v1"),
-            )),
+            // A cross-sheet prefix `Name!` qualifies the cell reference that must follow it. The
+            // sheet NAME is carried as syntax onto the `RefNode`; resolving it to a `SheetId` is a
+            // `Resolver` (eval-time) act (ast-standards PART 6: no semantics baked into syntax).
+            TokenKind::SheetBang(name) => self.parse_sheet_qualified(name.clone()),
             // A closing paren or an operator with nothing to its left.
             TokenKind::RParen => Err(Diag::new(
                 DiagCode::UnbalancedParen,
@@ -256,6 +255,40 @@ impl<'t> Parser<'t> {
                 span,
                 "expected a value, reference, or ( here",
             )),
+        }
+    }
+
+    /// Parse a cross-sheet reference whose `Name!` prefix (or `'Quoted Name'!`) was just consumed:
+    /// the sheet name qualifies the cell reference that MUST follow. The name is attached to the
+    /// resulting [`RefNode`] as syntax. A prefix on anything other than a cell reference (`Sheet1!5`,
+    /// `Sheet1!SUM(..)`, `Sheet1!` at end-of-input) is a located refusal — the qualified target must
+    /// be an A1 cell.
+    fn parse_sheet_qualified(&mut self, name: String) -> Result<Expr, Diag> {
+        match self.advance() {
+            Some(Token {
+                kind:
+                    TokenKind::CellRef {
+                        col,
+                        row,
+                        col_abs,
+                        row_abs,
+                    },
+                ..
+            }) => Ok(Expr::Ref(RefNode {
+                col: *col,
+                row: *row,
+                col_abs: *col_abs,
+                row_abs: *row_abs,
+                sheet: Some(SheetName::new(name)),
+            })),
+            other => {
+                let span = other.map_or_else(|| self.eof_span(), |t| t.span);
+                Err(Diag::new(
+                    DiagCode::UnexpectedToken,
+                    span,
+                    format!("the sheet prefix `{name}!` must be followed by a cell reference"),
+                ))
+            }
         }
     }
 
@@ -353,34 +386,47 @@ impl<'t> Parser<'t> {
     }
 }
 
-/// Fold `ref : ref` into a static [`Expr::Range`]. Both endpoints must be same-sheet static cell
-/// references; anything else (a dynamic range like `INDEX(...):B2`, or a cross-sheet endpoint) is a
-/// reserved refusal — the dynamic reference operators have no v1 node (scope.md). Corners are
-/// normalized to top-left..bottom-right so a reversed spelling still resolves.
+/// Fold `ref : ref` into a static [`Expr::Range`]. Both endpoints must be static cell references;
+/// anything else (a dynamic range like `INDEX(...):B2`) is a `reserved-dynamic-range` refusal — the
+/// dynamic reference operators have no v1 node (scope.md). Corners are normalized to
+/// top-left..bottom-right so a reversed spelling still resolves.
+///
+/// A single sheet qualifier is carried onto the whole range (Excel: `Sheet1!A1:B2` reads A1:B2 on
+/// Sheet1, so a qualifier on the *left* endpoint with an unqualified right endpoint is the normal
+/// form). A range whose endpoints name *different* sheets, or whose qualifier sits on the right
+/// endpoint only (`A1:Sheet2!B2`), is a 3D / multi-sheet reference — reserved in v1
+/// (`reserved-cross-sheet`).
 fn fold_range(lhs: Expr, rhs: Expr, span: Span) -> Result<Expr, Diag> {
-    match (&lhs, &rhs) {
-        (Expr::Ref(a), Expr::Ref(b)) if a.sheet.is_none() && b.sheet.is_none() => {
-            let (c0, c1) = (a.col.min(b.col), a.col.max(b.col));
-            let (r0, r1) = (a.row.min(b.row), a.row.max(b.row));
-            Ok(Expr::Range(RangeRef {
-                start: CellRef {
-                    col: c0,
-                    row: r0,
-                    sheet: None,
-                },
-                end: CellRef {
-                    col: c1,
-                    row: r1,
-                    sheet: None,
-                },
-            }))
-        }
-        _ => Err(Diag::new(
+    let (Expr::Ref(a), Expr::Ref(b)) = (&lhs, &rhs) else {
+        return Err(Diag::new(
             DiagCode::ReservedDynamicRange,
             span,
             "a `:` range needs two static cell references (dynamic ranges are reserved in v1)",
-        )),
-    }
+        ));
+    };
+    // The sheet qualifier for the whole range: the left endpoint's, with an unqualified right
+    // endpoint inheriting it. A qualifier that appears on the right (or a mismatched pair) is a 3D
+    // reference — reserved in v1.
+    let sheet = match (&a.sheet, &b.sheet) {
+        (left, None) => left.clone(),
+        (Some(x), Some(y)) if x == y => Some(x.clone()),
+        _ => {
+            return Err(Diag::new(
+                DiagCode::ReservedCrossSheet,
+                span,
+                "a 3D / multi-sheet range (endpoints on different sheets) is reserved in v1",
+            ));
+        }
+    };
+    let (c0, c1) = (a.col.min(b.col), a.col.max(b.col));
+    let (r0, r1) = (a.row.min(b.row), a.row.max(b.row));
+    Ok(Expr::Range(RangeNode {
+        start_col: c0,
+        start_row: r0,
+        end_col: c1,
+        end_row: r1,
+        sheet,
+    }))
 }
 
 // --- the precedence ladder (binding powers) --------------------------------------------------
@@ -535,6 +581,37 @@ mod tests {
     }
 
     #[test]
+    fn cross_sheet_refs_parse_and_carry_the_sheet_name() {
+        // `Sheet1!A1` -> a Ref carrying the parsed sheet NAME as syntax (not a resolved id).
+        match parse("=Sheet1!A1").unwrap() {
+            Expr::Ref(r) => {
+                assert_eq!((r.col, r.row), (0, 0));
+                assert_eq!(r.sheet.as_ref().map(SheetName::as_str), Some("Sheet1"));
+            }
+            other => panic!("expected a Ref, got {other:?}"),
+        }
+        // A quoted sheet name with a space survives verbatim.
+        match parse("='My Sheet'!$B$3").unwrap() {
+            Expr::Ref(r) => {
+                assert_eq!((r.col, r.row, r.col_abs, r.row_abs), (1, 2, true, true));
+                assert_eq!(r.sheet.as_ref().map(SheetName::as_str), Some("My Sheet"));
+            }
+            other => panic!("expected a Ref, got {other:?}"),
+        }
+        // `Sheet1!A1:B2` -> a Range whose sheet name qualifies the whole rectangle.
+        match parse("=Sheet1!A1:B2").unwrap() {
+            Expr::Range(rn) => {
+                assert_eq!(
+                    (rn.start_col, rn.start_row, rn.end_col, rn.end_row),
+                    (0, 0, 1, 1)
+                );
+                assert_eq!(rn.sheet.as_ref().map(SheetName::as_str), Some("Sheet1"));
+            }
+            other => panic!("expected a Range, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn reserved_at_and_hash_parse_and_preserve() {
         // `@A1` -> ImplicitIntersect(Ref); `A1#` -> SpillRef(Ref). Parse must PRESERVE them.
         assert!(matches!(parse("=@A1").unwrap(), Expr::ImplicitIntersect(_)));
@@ -552,7 +629,15 @@ mod tests {
         assert_eq!(parse_err("=(1"), DiagCode::UnclosedParen);
         assert_eq!(parse_err("=1,2"), DiagCode::ReservedUnion);
         assert_eq!(parse_err("=A1 B1"), DiagCode::ReservedIntersection);
-        assert_eq!(parse_err("=Sheet1!A1"), DiagCode::ReservedCrossSheet);
+        // A single-sheet cross-sheet ref now PARSES; only a 3D / multi-sheet range stays reserved.
+        assert_eq!(
+            parse_err("=Sheet1!A1:Sheet2!B2"),
+            DiagCode::ReservedCrossSheet
+        );
+        assert_eq!(parse_err("=A1:Sheet2!B2"), DiagCode::ReservedCrossSheet);
+        // A sheet prefix on a non-cell target is a plain unexpected-token refusal.
+        assert_eq!(parse_err("=Sheet1!5"), DiagCode::UnexpectedToken);
+        assert_eq!(parse_err("=Sheet1!"), DiagCode::UnexpectedToken);
         assert_eq!(parse_err("=myname"), DiagCode::ReservedName);
         // A `:` whose left endpoint is not a static ref (here a function result) is reserved.
         assert_eq!(parse_err("=SUM(A1):A2"), DiagCode::ReservedDynamicRange);

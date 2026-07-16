@@ -21,6 +21,15 @@ cell A5: 4
 formula: =SUM(A1:A5)
 expect: 5
 
+[sum-all-nonnumeric-range-is-canonical-zero]
+funcs: SUM
+note: no numeric datum — the total is 0. Pins the canonical +0.0 (Value's Eq is bit-exact, so a stray -0.0 aggregate would Diverge from this 0).
+cell A1: "x"
+cell A2: TRUE
+cell A3: <blank>
+formula: =SUM(A1:A3)
+expect: 0
+
 [sum-direct-args-coerce]
 funcs: SUM
 formula: =SUM(1, TRUE, "2")

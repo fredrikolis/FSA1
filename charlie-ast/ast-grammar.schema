@@ -14,7 +14,7 @@ errkind = Ref | Div0 | Value | Name | Na | Null | Num | Spill(reserved) | Calc(r
 expr =
   Lit(value)
   Ref(refnode)
-  Range(rangeref)
+  Range(rangenode)
   Unary(unop, expr)
   Binary(binop, expr, expr)
   Call(funcid, expr*)
@@ -48,3 +48,31 @@ functions =
   OR : 1+
   ABS : 1
   ROUND : 2
+  SUMIF : 2-3
+  SUMIFS : 3+
+  COUNTIF : 2
+  COUNTIFS : 2+
+  AVERAGEIF : 2-3
+  AVERAGEIFS : 3+
+  MINIFS : 3+
+  MAXIFS : 3+
+  PRODUCT : 1+
+  SUMPRODUCT : 1+
+  ROUNDUP : 2
+  ROUNDDOWN : 2
+  INT : 1
+  MOD : 2
+  POWER : 2
+  SQRT : 1
+  CEILING : 2
+  FLOOR : 2
+  MIN : 1+
+  MAX : 1+
+  MEDIAN : 1+
+  RANK : 2-3
+  COUNTA : 1+
+  COUNTBLANK : 1
+  IFS : 2+
+  NOT : 1
+  IFNA : 2
+  SWITCH : 3+

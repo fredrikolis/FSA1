@@ -1,4 +1,4 @@
-// Concern: charlie-ast — the spreadsheet-formula LANGUAGE, exposed as its contract surface AND its working engine: the source-free semantic AST (`Expr`), first-class `Value`/`ErrKind`, A1 references (`RefNode`/`CellRef`/`RangeRef`) and the shared A1 address grammar (`a1`), the `NodeId` identity key, the `Resolver` boundary that is the engine's entire view of the outside world, and — since W3 — the LEXER, Pratt PARSER, tree-walking EVALUATOR, the data-driven function REGISTRY, the located-refusal diagnostic registry (`diag`), and the schema-from-types emitter (`schema`) | Non-concern: the filesystem/cells-on-disk model, tab/range/overlap layout, xlsx serde, and the CLI surface — charlie-model and charlie-cli own those and the AST never learns of them; the ~70-function grind + criteria/lookup/spill land in W3b | IO: a formula `&str` -> `Result<Expr, Diag>` (`parse`) and (`&Expr`, `&dyn Resolver`) -> `Value` (`eval`), over the AST/`Value`/`Resolver` contract TYPE surface and the A1 grammar (`parse_a1`/`format_cell`); the engine is FILESYSTEM-BLIND — its whole outside world is the `Resolver` it is handed
+// Concern: charlie-ast — the spreadsheet-formula LANGUAGE, exposed as its contract surface AND its working engine: the source-free semantic AST (`Expr`), first-class `Value`/`ErrKind`, A1 references (`RefNode`/`CellRef`/`RangeRef`) and the shared A1 address grammar (`a1`), the `NodeId` identity key, the `Resolver` boundary that is the engine's entire view of the outside world, and — since W3 — the LEXER, Pratt PARSER, tree-walking EVALUATOR, the data-driven function REGISTRY, the located-refusal diagnostic registry (`diag`), the schema-from-types emitter (`schema`), and the `*IF(S)` CRITERIA mini-language (`criteria`) | Non-concern: the filesystem/cells-on-disk model, tab/range/overlap layout, xlsx serde, and the CLI surface — charlie-model and charlie-cli own those and the AST never learns of them; the remaining ~70-function grind (lookup/spill land later) | IO: a formula `&str` -> `Result<Expr, Diag>` (`parse`) and (`&Expr`, `&dyn Resolver`) -> `Value` (`eval`), over the AST/`Value`/`Resolver` contract TYPE surface and the A1 grammar (`parse_a1`/`format_cell`); the engine is FILESYSTEM-BLIND — its whole outside world is the `Resolver` it is handed
 //! # charlie-ast — the formula engine
 //!
 //! **CHARTER.** `charlie-ast` owns the *formula language* inside a cell: how a formula is
@@ -23,15 +23,22 @@
 //! ## W3 scope + escalations
 //!
 //! v1 ships the machinery (lex/parse/eval/registry) plus a *few* foundational functions across
-//! categories (`SUM AVERAGE COUNT · IF IFERROR AND OR · ABS ROUND`) to prove the registry; the
-//! ~70-function grind and the criteria/lookup/spill semantics are W3b. The reserved `@`/`#` nodes
-//! parse-and-preserve (eval deferred to identity / `#CALC!`, scope.md). **Cross-sheet references
-//! `Sheet1!A1` are a located refusal here** (`reserved-cross-sheet`): resolving a sheet name is a
-//! [`Resolver`] (eval-time) act, but [`RefNode`]'s `sheet: Option<SheetId>` has no way to carry a
-//! sheet *name* from parse to eval — closing that gap (a name-carrying ref, or a parse-time resolver
-//! seam) is the one substrate decision W3 defers rather than guessing. See the notes in the plan.
+//! categories (`SUM AVERAGE COUNT · IF IFERROR AND OR · ABS ROUND`) to prove the registry; W3b lands
+//! the `*IF(S)` criteria mini-language (`criteria`) + its reporting family, with the remaining
+//! ~70-function grind and lookup/spill semantics still ahead. The reserved `@`/`#` nodes
+//! parse-and-preserve (eval deferred to identity / `#CALC!`, scope.md).
+//!
+//! **Cross-sheet references `Sheet1!A1` (and `Sheet1!A1:B2`) now PARSE and evaluate.** The W3a
+//! escalation — [`RefNode`] conflating a parsed sheet *name* with a resolved [`SheetId`] — is closed:
+//! the syntactic nodes ([`RefNode`] / [`RangeNode`]) carry the parsed sheet **name** ([`SheetName`],
+//! an owned string, syntax), and resolution name→[`SheetId`] happens at eval through the
+//! [`Resolver::sheet_id`] seam ([`RefNode::resolve`] / [`RangeNode::resolve`] are the one crossing).
+//! The [`CellRef`] / [`RangeRef`] the resolver reads keep the resolved `Option<SheetId>` (semantics).
+//! Only a **3D / multi-sheet** range (`Sheet1!A1:Sheet2!B2`) stays reserved (`reserved-cross-sheet`),
+//! and a malformed quoted name is a located `malformed-sheet-name` refusal.
 
 pub mod a1;
+pub(crate) mod criteria;
 pub mod diag;
 pub mod eval;
 pub mod expr;
@@ -55,6 +62,6 @@ pub use func::FuncDef;
 pub use lexer::{Token, TokenKind, tokenize};
 pub use node::NodeId;
 pub use parser::parse;
-pub use refs::{CellRef, RangeRef, RefNode, SheetId};
+pub use refs::{CellRef, RangeNode, RangeRef, RefNode, SheetId, SheetName};
 pub use resolver::Resolver;
 pub use value::{ArrayView, ErrKind, Shape, Value};

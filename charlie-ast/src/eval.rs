@@ -5,7 +5,7 @@
 
 use crate::expr::{BinOp, Expr, UnOp};
 use crate::func;
-use crate::refs::{CellRef, RefNode};
+use crate::refs::{RangeNode, RefNode};
 use crate::resolver::Resolver;
 use crate::value::{ErrKind, Value};
 
@@ -45,12 +45,7 @@ impl<'r> EvalCtx<'r> {
         match expr {
             Expr::Lit(v) => v.clone(),
             Expr::Ref(r) => self.eval_ref(r),
-            Expr::Range(rr) => {
-                // Materialize the borrowed view into an owned array — the deliberate copy the
-                // architecture blesses (a view cannot live in a returned `Value`).
-                let view = self.resolver.range(*rr);
-                Value::Array(view.shape, view.cells.to_vec())
-            }
+            Expr::Range(rn) => self.eval_range(rn),
             Expr::Unary(op, inner) => self.eval_unary(*op, inner),
             Expr::Binary(op, l, r) => self.eval_binary(*op, l, r),
             Expr::Call(fid, args) => func::dispatch(*fid, self, args),
@@ -70,14 +65,26 @@ impl<'r> EvalCtx<'r> {
     }
 
     fn eval_ref(&self, r: &RefNode) -> Value {
-        // A cross-sheet ref never reaches eval — the parser refuses `Sheet!A1` (reserved). So the
-        // sheet is `None` for every parsed ref; a synthesized cross-sheet ref simply forwards its
-        // `SheetId` to the resolver.
-        self.resolver.value(CellRef {
-            col: r.col,
-            row: r.row,
-            sheet: r.sheet,
-        })
+        // Resolve the syntactic ref to a coordinate the resolver reads: its sheet NAME (if any) is
+        // mapped to a `SheetId` through the resolver's `sheet_id` seam — the one place a parsed name
+        // becomes a semantic handle (ast-standards PART 6). An unknown sheet is `#REF!`.
+        match r.resolve(|name| self.resolver.sheet_id(name)) {
+            Some(cell) => self.resolver.value(cell),
+            None => Value::Error(ErrKind::Ref),
+        }
+    }
+
+    fn eval_range(&self, rn: &RangeNode) -> Value {
+        // Resolve the range's sheet NAME (if any) via the resolver, then materialize the borrowed
+        // view into an owned array — the deliberate copy the architecture blesses (a view cannot
+        // live in a returned `Value`). An unknown sheet is `#REF!`.
+        match rn.resolve(|name| self.resolver.sheet_id(name)) {
+            Some(rr) => {
+                let view = self.resolver.range(rr);
+                Value::Array(view.shape, view.cells.to_vec())
+            }
+            None => Value::Error(ErrKind::Ref),
+        }
     }
 
     fn eval_unary(&mut self, op: UnOp, inner: &Expr) -> Value {
@@ -155,17 +162,8 @@ fn arith(op: BinOp, a: f64, b: f64) -> Value {
             }
             a / b
         }
-        BinOp::Pow => {
-            if a == 0.0 && b < 0.0 {
-                return Value::Error(ErrKind::Div0);
-            }
-            let p = a.powf(b);
-            if !p.is_finite() {
-                // Overflow or a complex result (e.g. `(-8)^0.5`) — Excel raises `#NUM!`.
-                return Value::Error(ErrKind::Num);
-            }
-            p
-        }
+        // The `^` operator and the `POWER` built-in share one exponentiation semantics.
+        BinOp::Pow => return pow(a, b),
         // Non-arithmetic ops are handled before `arith` is reached.
         _ => unreachable!("arith called with a non-arithmetic operator"),
     };
@@ -173,6 +171,21 @@ fn arith(op: BinOp, a: f64, b: f64) -> Value {
         Value::Number(r)
     } else {
         // A finite-operand computation that still overflowed (e.g. `1e300 * 1e300`) -> `#NUM!`.
+        Value::Error(ErrKind::Num)
+    }
+}
+
+/// Excel exponentiation, shared by the `^` operator and the `POWER` built-in so both map the error
+/// conditions identically: `0` to a negative power is `#DIV/0!`; an overflowing or complex result
+/// (e.g. `(-8)^0.5`) is `#NUM!`; otherwise the finite power.
+pub(crate) fn pow(a: f64, b: f64) -> Value {
+    if a == 0.0 && b < 0.0 {
+        return Value::Error(ErrKind::Div0);
+    }
+    let p = a.powf(b);
+    if p.is_finite() {
+        Value::Number(p)
+    } else {
         Value::Error(ErrKind::Num)
     }
 }
@@ -279,6 +292,23 @@ fn compare(op: BinOp, l: Value, r: Value) -> Value {
     Value::Bool(result)
 }
 
+/// Excel `=` equality between two scalar values, the matcher `SWITCH` reads: an error operand
+/// propagates (leftmost — the subject before the candidate), otherwise the two are equal iff they
+/// rank `Equal` under [`compare_ord`] (numbers numerically, text case-*insensitively*, a `Blank`
+/// against the other side's zero, cross-type never equal). Each operand is [`scalarize`]d first so a
+/// 1×1 range compares as its single cell and a multi-cell array is `#VALUE!`.
+pub(crate) fn value_eq(a: &Value, b: &Value) -> Result<bool, ErrKind> {
+    let a = scalarize(a.clone());
+    if let Value::Error(k) = a {
+        return Err(k);
+    }
+    let b = scalarize(b.clone());
+    if let Value::Error(k) = b {
+        return Err(k);
+    }
+    Ok(compare_ord(&a, &b) == std::cmp::Ordering::Equal)
+}
+
 /// The total order the comparison operators read. `Blank` is resolved against the *other* operand's
 /// type before ranking, so `A1=0` is true for a blank `A1`.
 fn compare_ord(l: &Value, r: &Value) -> std::cmp::Ordering {
@@ -329,7 +359,8 @@ fn type_rank(v: &Value) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::refs::{CellRef, RangeRef};
+    use crate::parse;
+    use crate::refs::RangeNode;
     use crate::test_support::Grid;
     use crate::value::Shape;
 
@@ -421,17 +452,12 @@ mod tests {
         // A left RANGE operand that only becomes an error after scalarize must still preempt a
         // *different* explicit error on the right (Excel: leftmost error wins).
         let range = |sc: u32, sr: u32, ec: u32, er: u32| {
-            Expr::Range(RangeRef {
-                start: CellRef {
-                    col: sc,
-                    row: sr,
-                    sheet: None,
-                },
-                end: CellRef {
-                    col: ec,
-                    row: er,
-                    sheet: None,
-                },
+            Expr::Range(RangeNode {
+                start_col: sc,
+                start_row: sr,
+                end_col: ec,
+                end_row: er,
+                sheet: None,
             })
         };
         // A1=#DIV/0!. =(A1:A1)+#REF! -> #DIV/0! (the left cell's error, NOT the right's #REF!).
@@ -524,17 +550,12 @@ mod tests {
             ],
         );
         assert_eq!(eval_on(&cell(1, 1), &g), Value::Number(4.0)); // B2
-        let range = Expr::Range(RangeRef {
-            start: CellRef {
-                col: 0,
-                row: 0,
-                sheet: None,
-            },
-            end: CellRef {
-                col: 1,
-                row: 1,
-                sheet: None,
-            },
+        let range = Expr::Range(RangeNode {
+            start_col: 0,
+            start_row: 0,
+            end_col: 1,
+            end_row: 1,
+            sheet: None,
         });
         match eval_on(&range, &g) {
             Value::Array(shape, cells) => {
@@ -546,22 +567,54 @@ mod tests {
     }
 
     #[test]
+    fn cross_sheet_refs_resolve_through_the_resolver() {
+        // Default sheet `Sheet1` (A1=1), plus a named `Data` sheet (A1=10, A2=20, A3=30).
+        let g = Grid::new(1, vec![Value::Number(1.0)]).with_sheet(
+            "Data",
+            1,
+            vec![
+                Value::Number(10.0),
+                Value::Number(20.0),
+                Value::Number(30.0),
+            ],
+        );
+
+        // A cross-sheet single ref routes to the named sheet (10), NOT the default sheet (1).
+        assert_eq!(eval(&parse("=Data!A1").unwrap(), &g), Value::Number(10.0));
+        // The same address unqualified reads the default sheet — proving the name actually routes.
+        assert_eq!(eval(&parse("=A1").unwrap(), &g), Value::Number(1.0));
+        // `Sheet1!A1` names the default sheet explicitly and agrees with the bare form.
+        assert_eq!(eval(&parse("=Sheet1!A1").unwrap(), &g), Value::Number(1.0));
+
+        // A cross-sheet RANGE sums the named sheet's column.
+        assert_eq!(
+            eval(&parse("=SUM(Data!A1:A3)").unwrap(), &g),
+            Value::Number(60.0)
+        );
+
+        // An UNKNOWN sheet name is `#REF!` (resolution failed) — for a ref and for a range.
+        assert_eq!(
+            eval(&parse("=Nope!A1").unwrap(), &g),
+            Value::Error(ErrKind::Ref)
+        );
+        assert_eq!(
+            eval(&parse("=SUM(Nope!A1:A3)").unwrap(), &g),
+            Value::Error(ErrKind::Ref)
+        );
+    }
+
+    #[test]
     fn reserved_nodes_defer_at_eval() {
         let g = Grid::new(1, vec![Value::Number(7.0)]);
         // @scalar is identity; @array is deferred (#CALC!).
         let ii_scalar = Expr::ImplicitIntersect(Box::new(num(7.0)));
         assert_eq!(eval_on(&ii_scalar, &g), Value::Number(7.0));
-        let ii_arr = Expr::ImplicitIntersect(Box::new(Expr::Range(RangeRef {
-            start: CellRef {
-                col: 0,
-                row: 0,
-                sheet: None,
-            },
-            end: CellRef {
-                col: 0,
-                row: 0,
-                sheet: None,
-            },
+        let ii_arr = Expr::ImplicitIntersect(Box::new(Expr::Range(RangeNode {
+            start_col: 0,
+            start_row: 0,
+            end_col: 0,
+            end_row: 0,
+            sheet: None,
         })));
         // A 1x1 range scalarizes -> identity of the single cell, NOT #CALC! (it is scalar).
         assert_eq!(eval_on(&ii_arr, &g), Value::Number(7.0));

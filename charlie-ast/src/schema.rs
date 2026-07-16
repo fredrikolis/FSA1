@@ -95,7 +95,7 @@ const ERRKIND_VARIANTS: &[&str] = &[
 const EXPR_VARIANTS: &[&str] = &[
     "Lit(value)",
     "Ref(refnode)",
-    "Range(rangeref)",
+    "Range(rangenode)",
     "Unary(unop, expr)",
     "Binary(binop, expr, expr)",
     "Call(funcid, expr*)",

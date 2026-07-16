@@ -1,7 +1,39 @@
-// Concern: the A1 REFERENCE layer — `SheetId` (a cross-sheet handle), `CellRef`/`RangeRef` (resolved coordinates the `Resolver` receives), and `RefNode` (the AST reference node carrying `$`-absolute/relative flags so copy/fill offset math is trivial) | Non-concern: resolving a sheet NAME to a `SheetId` or reading a cell's value (the `Resolver` impl in charlie-model does that) and rendering coordinates back to A1 text (later) | IO: none — coordinate types
-//! Reference layer: [`SheetId`], [`CellRef`], [`RangeRef`], [`RefNode`].
+// Concern: the A1 REFERENCE layer, split cleanly across the syntax/semantics seam (ast-standards PART 6) — the SYNTACTIC AST reference nodes `RefNode`/`RangeNode` (which carry the parsed sheet NAME `SheetName` as written, plus `RefNode`'s `$`-absolute flags so copy/fill offset math is trivial), and the RESOLVED coordinate types `SheetId`/`CellRef`/`RangeRef` the `Resolver` receives (a sheet handle + zero-based col/row); `RefNode`/`RangeNode` carry a `SheetName`, `CellRef`/`RangeRef` carry a `SheetId`, and `resolve` is the one place a name becomes an id | Non-concern: mapping a sheet NAME to a `SheetId` or reading a cell's value (the `Resolver` impl in charlie-model does that; `resolve` only threads a caller-supplied lookup) and rendering coordinates back to A1 text (later) | IO: none — coordinate types
+//! Reference layer: the syntactic [`RefNode`]/[`RangeNode`] (parsed, name-carrying) and the resolved
+//! [`SheetId`]/[`CellRef`]/[`RangeRef`] (what the [`crate::Resolver`] is asked to read).
+//!
+//! The split is the syntax/semantics seam (ast-standards PART 6): a *reference node* holds the sheet
+//! **name** exactly as it was written (`SheetName`, an owned string — syntax), and knows nothing of
+//! any sheet table. Resolving that name to a [`SheetId`] is a [`crate::Resolver`] act performed at
+//! eval; [`RefNode::resolve`] / [`RangeNode::resolve`] are the single seam that maps a syntactic node
+//! to the resolved [`CellRef`]/[`RangeRef`] a resolver reads, threading a caller-supplied name→id
+//! lookup so this module stays filesystem- (and sheet-table-) blind.
 
-/// A handle for a sheet, minted by a [`crate::Resolver`] from a sheet name.
+/// A sheet name exactly as it was parsed from a reference (`Sheet1` in `Sheet1!A1`, or the interior
+/// of a quoted `'My Sheet'!A1`).
+///
+/// This is **syntax**: an owned string carried verbatim from the formula text, *not* a resolved
+/// handle. Equality is exact string equality (two nodes are equal iff they name the same sheet the
+/// same way) — case-folding and name→handle resolution are semantic concerns the [`crate::Resolver`]
+/// owns, never baked into the syntactic node (ast-standards PART 6: "no semantics baked into
+/// syntax"). It is a leaf value, parsed once at the lowering boundary (ast-standards PART 2), never
+/// retained source to re-parse.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SheetName(Box<str>);
+
+impl SheetName {
+    /// Intern a parsed sheet name (owned).
+    pub fn new(name: impl Into<Box<str>>) -> SheetName {
+        SheetName(name.into())
+    }
+
+    /// The name as written.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A handle for a sheet, minted by a [`crate::Resolver`] from a [`SheetName`].
 ///
 /// The `u32` is intentionally `pub`: W0 has no minting authority yet, so the `Resolver` impl (in
 /// charlie-model) constructs these directly. It is a plain newtype, *not* an opaque token — do not
@@ -12,7 +44,9 @@ pub struct SheetId(pub u32);
 
 /// A fully-resolved single-cell coordinate — what the [`crate::Resolver`] is asked to read.
 ///
-/// `col`/`row` are zero-based. `sheet` is `None` for a same-sheet reference.
+/// `col`/`row` are zero-based. `sheet` is a resolved [`SheetId`] (semantics), or `None` for a
+/// same-sheet reference. A [`RefNode`]'s syntactic sheet *name* becomes this `SheetId` only at
+/// [`RefNode::resolve`] time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CellRef {
     pub col: u32,
@@ -20,27 +54,89 @@ pub struct CellRef {
     pub sheet: Option<SheetId>,
 }
 
-/// A fully-resolved rectangular range `start..=end` (inclusive on both corners).
+/// A fully-resolved rectangular range `start..=end` (inclusive on both corners) — what the
+/// [`crate::Resolver`] is asked to read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RangeRef {
     pub start: CellRef,
     pub end: CellRef,
 }
 
-/// The AST node for a cell reference — the *syntactic* form, before it is resolved to a
-/// [`CellRef`].
+/// The AST node for a cell reference — the *syntactic* form, before it is resolved to a [`CellRef`].
 ///
 /// It carries the `$`-anchor flags (`col_abs`/`row_abs`) that distinguish `A1`, `$A1`, `A$1`, and
-/// `$A$1`. These are **meaning** (they change what a copy/fill produces), so they participate in
-/// equality — `A1` and `$A$1` are different references. `col`/`row` are stored zero-based; the
-/// intended internal form makes offset math for copy/fill trivial and renders back to A1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// `$A$1`, and the parsed sheet **name** (`sheet`) for a cross-sheet reference (`Sheet1!A1`). These
+/// are **meaning** (they change what a copy/fill produces, and *which* sheet is named), so they
+/// participate in equality — `A1` and `$A$1` differ, as do `A1` and `Sheet2!A1`. `col`/`row` are
+/// stored zero-based so offset math for copy/fill is trivial and renders back to A1. Because it
+/// carries an owned [`SheetName`], `RefNode` is not `Copy` (unlike the resolved [`CellRef`]).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RefNode {
     pub col: u32,
     pub row: u32,
     pub col_abs: bool,
     pub row_abs: bool,
-    pub sheet: Option<SheetId>,
+    pub sheet: Option<SheetName>,
+}
+
+impl RefNode {
+    /// Resolve this syntactic reference to the [`CellRef`] a [`crate::Resolver`] reads, mapping the
+    /// sheet **name** (if any) to a [`SheetId`] via the caller-supplied `lookup`. Returns `None` iff
+    /// a named sheet is unknown (the evaluator maps that to `#REF!`). A same-sheet ref (`sheet:
+    /// None`) resolves without consulting `lookup`. This is the syntax→semantics crossing for a ref.
+    pub fn resolve(&self, lookup: impl FnOnce(&str) -> Option<SheetId>) -> Option<CellRef> {
+        let sheet = match &self.sheet {
+            None => None,
+            Some(name) => Some(lookup(name.as_str())?),
+        };
+        Some(CellRef {
+            col: self.col,
+            row: self.row,
+            sheet,
+        })
+    }
+}
+
+/// The AST node for a range reference — the *syntactic* form, before it is resolved to a
+/// [`RangeRef`]. The syntactic analogue of [`RefNode`] for `A1:B10` / `Sheet1!A1:B10`.
+///
+/// Corners are stored zero-based and normalized to top-left..bottom-right at fold time, so a reversed
+/// spelling (`B2:A1`) still resolves. The sheet **name** (if any) qualifies the whole range (Excel:
+/// `Sheet1!A1:B2` reads A1:B2 on Sheet1). Like [`RefNode`], the name is syntax; it becomes a
+/// [`SheetId`] only at [`RangeNode::resolve`]. (Range corners intentionally drop the `$`-anchor flags
+/// — a range folds to coordinates; the copy/fill anchoring a single-cell [`RefNode`] preserves has no
+/// per-corner meaning once a static rectangle is fixed.)
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RangeNode {
+    pub start_col: u32,
+    pub start_row: u32,
+    pub end_col: u32,
+    pub end_row: u32,
+    pub sheet: Option<SheetName>,
+}
+
+impl RangeNode {
+    /// Resolve this syntactic range to the [`RangeRef`] a [`crate::Resolver`] reads, mapping the sheet
+    /// **name** (if any) to a [`SheetId`] via `lookup`. Returns `None` iff a named sheet is unknown
+    /// (the evaluator maps that to `#REF!`). Both corners carry the same resolved sheet.
+    pub fn resolve(&self, lookup: impl FnOnce(&str) -> Option<SheetId>) -> Option<RangeRef> {
+        let sheet = match &self.sheet {
+            None => None,
+            Some(name) => Some(lookup(name.as_str())?),
+        };
+        Some(RangeRef {
+            start: CellRef {
+                col: self.start_col,
+                row: self.start_row,
+                sheet,
+            },
+            end: CellRef {
+                col: self.end_col,
+                row: self.end_row,
+                sheet,
+            },
+        })
+    }
 }
 
 #[cfg(test)]
@@ -68,6 +164,67 @@ mod tests {
     }
 
     #[test]
+    fn a_sheet_name_is_meaning_and_participates_in_equality() {
+        let here = RefNode {
+            col: 0,
+            row: 0,
+            col_abs: false,
+            row_abs: false,
+            sheet: None,
+        };
+        let there = RefNode {
+            sheet: Some(SheetName::new("Sheet2")),
+            ..here.clone()
+        };
+        // Same coordinate, a different sheet name => different reference.
+        assert_ne!(here, there);
+        // The name is carried verbatim (exact-equality syntax; case-folding is a Resolver concern).
+        assert_ne!(
+            RefNode {
+                sheet: Some(SheetName::new("SHEET2")),
+                ..here.clone()
+            },
+            there
+        );
+    }
+
+    #[test]
+    fn resolve_maps_a_name_to_a_sheet_id_and_flags_unknown_sheets() {
+        let same = RefNode {
+            col: 3,
+            row: 4,
+            col_abs: false,
+            row_abs: false,
+            sheet: None,
+        };
+        // A same-sheet ref resolves without consulting the lookup.
+        assert_eq!(
+            same.resolve(|_| unreachable!("no name to resolve")),
+            Some(CellRef {
+                col: 3,
+                row: 4,
+                sheet: None,
+            })
+        );
+
+        let cross = RefNode {
+            sheet: Some(SheetName::new("Data")),
+            ..same
+        };
+        // A known sheet name resolves to its id.
+        assert_eq!(
+            cross.resolve(|n| (n == "Data").then_some(SheetId(7))),
+            Some(CellRef {
+                col: 3,
+                row: 4,
+                sheet: Some(SheetId(7)),
+            })
+        );
+        // An unknown sheet name resolves to `None` (the evaluator maps this to `#REF!`).
+        assert_eq!(cross.resolve(|_| None), None);
+    }
+
+    #[test]
     fn cross_sheet_ref_differs_from_same_sheet() {
         let here = CellRef {
             col: 3,
@@ -80,5 +237,21 @@ mod tests {
             sheet: Some(SheetId(1)),
         };
         assert_ne!(here, there);
+    }
+
+    #[test]
+    fn a_range_node_resolves_both_corners_onto_the_named_sheet() {
+        let rn = RangeNode {
+            start_col: 0,
+            start_row: 0,
+            end_col: 1,
+            end_row: 1,
+            sheet: Some(SheetName::new("Data")),
+        };
+        let rr = rn.resolve(|n| (n == "Data").then_some(SheetId(2))).unwrap();
+        assert_eq!(rr.start.sheet, Some(SheetId(2)));
+        assert_eq!(rr.end.sheet, Some(SheetId(2)));
+        // An unknown sheet flags the whole range.
+        assert_eq!(rn.resolve(|_| None), None);
     }
 }

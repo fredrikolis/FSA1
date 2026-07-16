@@ -401,9 +401,9 @@ mod tests {
                 cells: vec![],
             },
             Fixture {
-                key: "agg/median".into(),
-                funcs: vec!["MEDIAN".into()], // not in the registry — never modeled
-                formula: "=MEDIAN(A1:A2)".into(),
+                key: "agg/unimplemented".into(),
+                funcs: vec!["XLOOKUP".into()], // not in the registry — never modeled
+                formula: "=XLOOKUP(A1,A1:A2,B1:B2)".into(),
                 expect: Value::Number(3.0),
                 cells: vec![],
             },
@@ -424,12 +424,12 @@ mod tests {
         ];
         let verdicts = vec![
             Verdict::matched("agg/sum"),
-            Verdict::matched("agg/median"),
+            Verdict::matched("agg/unimplemented"),
             Verdict::diverge("agg/round-bad", "x".into()),
             Verdict::matched("agg/mislabeled"),
         ];
         let cov = Coverage::compute(&fixtures, &verdicts);
-        // Only SUM: MEDIAN is not in the registry, ROUND's only fixture diverges, and the
+        // Only SUM: XLOOKUP is not in the registry, ROUND's only fixture diverges, and the
         // `funcs: ABS` label on `=1+1` is dropped by the call cross-check (the formula never calls
         // ABS) so a mislabeled fixture cannot inflate the numerator.
         assert_eq!(cov.functions, vec!["SUM"]);

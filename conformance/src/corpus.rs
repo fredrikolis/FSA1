@@ -21,8 +21,10 @@ pub struct Fixture {
     pub formula: String,
     /// The EXPECTED value — the oracle. Authored by hand from the spec, never charlie-produced.
     pub expect: Value,
-    /// The input context: `(col, row, value)` cells the formula's refs/ranges resolve against.
-    pub cells: Vec<(u32, u32, Value)>,
+    /// The input context: `(sheet, col, row, value)` cells the formula's refs/ranges resolve
+    /// against. `sheet` is `None` for the default (unqualified) sheet, or `Some(name)` for a cell on
+    /// a named sheet (`cell Data!A1: 5`) that a cross-sheet reference resolves.
+    pub cells: Vec<(Option<String>, u32, u32, Value)>,
 }
 
 /// The corpus directory: `<crate>/formula`, anchored to the manifest dir so it resolves from any cwd.
@@ -76,7 +78,7 @@ struct Pending {
     funcs: Vec<String>,
     formula: Option<String>,
     expect: Option<Value>,
-    cells: Vec<(u32, u32, Value)>,
+    cells: Vec<(Option<String>, u32, u32, Value)>,
 }
 
 /// Parse one `.fixtures` file's records into `out`. Grammar (line-based):
@@ -85,7 +87,8 @@ struct Pending {
 /// - `funcs: A, B` → the exercised functions (uppercased);
 /// - `formula: =…` → the formula (required);
 /// - `expect: <literal>` → the EXPECTED value (required);
-/// - `cell <A1>: <literal>` → one context cell (canonical A1 only — no `$`/lowercase/leading-zero);
+/// - `cell <A1>: <literal>` → one context cell (canonical A1 only — no `$`/lowercase/leading-zero),
+///   optionally sheet-qualified as `cell <Sheet>!<A1>: <literal>` for a cross-sheet reference;
 /// - `note: …` → a free-form author note (ignored by the grader).
 fn parse_file(category: &str, text: &str, out: &mut Vec<Fixture>) -> Result<(), String> {
     let mut pending: Option<Pending> = None;
@@ -122,9 +125,9 @@ fn parse_file(category: &str, text: &str, out: &mut Vec<Fixture>) -> Result<(), 
             let (addr, lit) = rest
                 .split_once(':')
                 .ok_or_else(|| at("a `cell` line needs `cell <A1>: <literal>`".to_string()))?;
-            let (col, row) = parse_cell_addr(addr.trim()).map_err(&at)?;
+            let (sheet, col, row) = parse_cell_addr(addr.trim()).map_err(&at)?;
             let value = literal::parse(lit).map_err(&at)?;
-            rec.cells.push((col, row, value));
+            rec.cells.push((sheet, col, row, value));
             continue;
         }
 
@@ -172,10 +175,23 @@ fn finish(category: &str, p: Pending) -> Result<Fixture, String> {
     })
 }
 
-/// Parse a canonical A1 cell address into zero-based `(col, row)`, rejecting the non-canonical forms
-/// (a context cell is authored, so `$`/lowercase/leading-zero is a corpus error, not a value to keep).
-fn parse_cell_addr(addr: &str) -> Result<(u32, u32), String> {
-    let a = parse_a1(addr).map_err(|e| format!("bad cell address {addr:?}: {e:?}"))?;
+/// Parse an optionally sheet-qualified canonical A1 cell address into `(sheet, col, row)`
+/// (zero-based col/row), rejecting the non-canonical forms (a context cell is authored, so
+/// `$`/lowercase/leading-zero is a corpus error, not a value to keep). A `Sheet!A1` prefix places the
+/// cell on a named sheet a cross-sheet reference resolves; the sheet name is unquoted (corpus authors
+/// pick names without spaces) and must be non-empty.
+fn parse_cell_addr(addr: &str) -> Result<(Option<String>, u32, u32), String> {
+    let (sheet, cell_addr) = match addr.split_once('!') {
+        Some((name, rest)) => {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err(format!("context cell {addr:?} has an empty sheet name"));
+            }
+            (Some(name.to_string()), rest.trim())
+        }
+        None => (None, addr),
+    };
+    let a = parse_a1(cell_addr).map_err(|e| format!("bad cell address {addr:?}: {e:?}"))?;
     if a.col_abs || a.row_abs {
         return Err(format!("context cell {addr:?} must not use `$`"));
     }
@@ -187,7 +203,7 @@ fn parse_cell_addr(addr: &str) -> Result<(u32, u32), String> {
             "context cell {addr:?} must not have a leading-zero row"
         ));
     }
-    Ok((a.col, a.row))
+    Ok((sheet, a.col, a.row))
 }
 
 #[cfg(test)]
@@ -221,7 +237,26 @@ expect: 6
         assert_eq!(f.formula, "=SUM(A1:A3)");
         assert_eq!(f.expect, Value::Number(6.0));
         assert_eq!(f.cells.len(), 3);
-        assert_eq!(f.cells[0], (0, 0, Value::Number(1.0)));
+        assert_eq!(f.cells[0], (None, 0, 0, Value::Number(1.0)));
+    }
+
+    #[test]
+    fn parses_sheet_qualified_context_cells() {
+        let text = "\
+[cross-sheet]
+cell A1: 1
+cell Data!A1: 42
+formula: =Data!A1
+expect: 42
+";
+        let fx = parse_one("crosssheet", text).unwrap();
+        assert_eq!(fx.len(), 1);
+        let f = &fx[0];
+        assert_eq!(f.cells[0], (None, 0, 0, Value::Number(1.0)));
+        assert_eq!(
+            f.cells[1],
+            (Some("Data".to_string()), 0, 0, Value::Number(42.0))
+        );
     }
 
     #[test]

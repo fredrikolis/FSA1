@@ -92,10 +92,17 @@ pub enum DiagCode {
     /// A bare defined-name (an identifier that is neither a cell reference, `TRUE`/`FALSE`, nor a
     /// function call) — named ranges are reserved in v1 (scope.md).
     ReservedName,
-    /// A cross-sheet reference `Sheet1!A1` — reserved *here*: resolving a sheet name to a `SheetId`
-    /// is a [`crate::Resolver`] (eval-time) act, but the parse tree has no field to carry the name
-    /// to eval, so v1 refuses it (see the crate charter's escalation note). Deferred, not dropped.
+    /// A 3D / multi-sheet range whose two endpoints name *different* sheets (`Sheet1!A1:Sheet2!B2`),
+    /// or whose sheet qualifier sits on the wrong endpoint (`A1:Sheet2!B2`) — reserved in v1. A
+    /// *single-sheet* cross-sheet reference (`Sheet1!A1`, `Sheet1!A1:B2`) now PARSES and resolves at
+    /// eval via the [`crate::Resolver`] (a [`crate::RefNode`]/[`crate::RangeNode`] carries the parsed
+    /// sheet name); only the multi-sheet form stays reserved.
     ReservedCrossSheet,
+
+    // --- malformed reference syntax ---
+    /// A `'`-quoted sheet name that is not well-formed: it was not closed before end-of-input, or its
+    /// closing quote is not followed by the `!` a cross-sheet reference requires (`'My Sheet' + 1`).
+    MalformedSheetName,
 
     // --- resource bound ---
     /// Nesting exceeded the parser's depth bound — a diagnostic, never a stack overflow
@@ -121,6 +128,7 @@ impl DiagCode {
         DiagCode::ReservedDynamicRange,
         DiagCode::ReservedName,
         DiagCode::ReservedCrossSheet,
+        DiagCode::MalformedSheetName,
         DiagCode::RecursionLimit,
     ];
 
@@ -143,6 +151,7 @@ impl DiagCode {
             DiagCode::ReservedDynamicRange => "reserved-dynamic-range",
             DiagCode::ReservedName => "reserved-name",
             DiagCode::ReservedCrossSheet => "reserved-cross-sheet",
+            DiagCode::MalformedSheetName => "malformed-sheet-name",
             DiagCode::RecursionLimit => "recursion-limit",
         }
     }
@@ -166,7 +175,10 @@ impl DiagCode {
             }
             DiagCode::ReservedDynamicRange => "a dynamic : range is reserved (not v1)",
             DiagCode::ReservedName => "a bare defined-name is reserved (not v1)",
-            DiagCode::ReservedCrossSheet => "a cross-sheet reference is reserved (not v1)",
+            DiagCode::ReservedCrossSheet => {
+                "a 3D / multi-sheet range reference is reserved (not v1)"
+            }
+            DiagCode::MalformedSheetName => "a quoted sheet name is not well-formed",
             DiagCode::RecursionLimit => "the formula nests deeper than the parser's bound",
         }
     }
@@ -256,10 +268,11 @@ mod tests {
                 | DiagCode::ReservedDynamicRange
                 | DiagCode::ReservedName
                 | DiagCode::ReservedCrossSheet
+                | DiagCode::MalformedSheetName
                 | DiagCode::RecursionLimit => c.code_str(),
             };
         }
-        assert_eq!(DiagCode::ALL.len(), 16);
+        assert_eq!(DiagCode::ALL.len(), 17);
     }
 
     #[test]

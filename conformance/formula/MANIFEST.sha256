@@ -4,9 +4,14 @@
 # Regenerate after a DELIBERATE corpus edit:
 #   { head -n 6 MANIFEST.sha256; sha256sum *.fixtures PROVENANCE.md; } > MANIFEST.sha256.new && mv MANIFEST.sha256.new MANIFEST.sha256
 # (also gated by conformance/tests/corpus_integrity.rs, which recomputes with the vendored SHA-256).
-11f5175e6cb93015ca64cc26e9e186e5e4f9e1eec158e52d54bd43e36b524eb3  aggregation.fixtures
+764e2f378302fe45393e088597f360d2b625da928137985a47094725301abec8  aggregation.fixtures
+3f53be9a0f202858e31103a8c670e0c805e7893afbe2bb51b47b891447129561  criteria.fixtures
+185bff6b4c3d6e5288625f31229be465ed56f86685ab78e0b2dcb2b3412398d6  crosssheet.fixtures
 b36fca5af93bf139ddf199bb3a696a97f4b22f2c7dd7e6a509145d1dc5bf2774  errors.fixtures
+c8511a94ad8ba807f44f5cdaccbca2551ed1eed79b831958a69759371ef158ef  logical_v1.fixtures
 e3c8c6fd582f4b78ea013fdddc0f4cf2af9aac2c38676c96b02b3b5f987b989f  logic.fixtures
 6f871e960993e07cc74642eaa1bc76256686fc8db86088616980509c4ed06ce4  math.fixtures
+340a7ed8b99fc78748dd9516584d68433376b3c087c7f289cc24d31fdf2b4f22  math_v1.fixtures
 640e16afa508a3a78efa8c1f56090d4254d80c2e17cf61f4d6b0cfe3fa72adec  operators.fixtures
-ce6ae2df3bfd7f54ab955d83257e650bfcb6704604b91b96fc6c9ba1fb6a93e0  PROVENANCE.md
+b8c4e979f781bd0bc060b2c0133e5b8c20aa455025a78d247df03e620ed3136a  stats_v1.fixtures
+b3b128af2e1d0f2a310a64d334258b6d0e2c619ae6a1f318fb2b957f9ccc325f  PROVENANCE.md

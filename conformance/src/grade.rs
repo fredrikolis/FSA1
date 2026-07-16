@@ -48,7 +48,12 @@ mod tests {
     use crate::snapshot::VerdictKind;
     use charlie_ast::{ErrKind, Value};
 
-    fn fx(key: &str, formula: &str, expect: Value, cells: Vec<(u32, u32, Value)>) -> Fixture {
+    fn fx(
+        key: &str,
+        formula: &str,
+        expect: Value,
+        cells: Vec<(Option<String>, u32, u32, Value)>,
+    ) -> Fixture {
         Fixture {
             key: key.to_string(),
             funcs: vec![],
@@ -76,9 +81,22 @@ mod tests {
 
     #[test]
     fn a_parse_refusal_is_a_diverge_not_a_panic() {
-        // A cross-sheet ref is a parse-time refusal in charlie-ast — grading it as a value diverges.
-        let d = grade(&fx("t/refuse", "=Sheet1!A1", Value::Number(1.0), vec![]));
+        // A bare defined-name is a parse-time refusal in charlie-ast — grading it as a value
+        // diverges. (A single cross-sheet ref now PARSES, so it is no longer a refusal example.)
+        let d = grade(&fx("t/refuse", "=myname", Value::Number(1.0), vec![]));
         assert_eq!(d.kind, VerdictKind::Diverge);
         assert!(d.detail.contains("refused to parse"), "{}", d.detail);
+    }
+
+    #[test]
+    fn a_cross_sheet_fixture_grades_a_value() {
+        // A single cross-sheet reference now parses and evaluates against a named-sheet context.
+        let m = grade(&fx(
+            "t/cross",
+            "=Data!A1",
+            Value::Number(42.0),
+            vec![(Some("Data".to_string()), 0, 0, Value::Number(42.0))],
+        ));
+        assert_eq!(m.kind, VerdictKind::Match);
     }
 }
