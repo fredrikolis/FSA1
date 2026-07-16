@@ -1,4 +1,4 @@
-// Concern: the tree-walking EVALUATOR — `Expr` + a `&dyn Resolver` -> a first-class `Value`, with full left-to-right error propagation (an operand `Error` short-circuits to that error), the operator semantics (arithmetic/`%`/`^`/`&` concat/the six comparisons), the numeric/boolean/text COERCION rules, reference & range resolution through the `Resolver` (a range materializes its borrowed `ArrayView` into an owned `Value::Array`), and the deferred identity/`#CALC!` handling of the reserved `@`/`#` nodes; errors are values, never panics | Non-concern: PARSING text into an `Expr` (parser.rs) and the per-FUNCTION semantics (func.rs owns the registry impls; this module only dispatches a `Call` to them) | IO: (an `&Expr`, an `&dyn Resolver`) -> a `Value`
+// Concern: the tree-walking EVALUATOR — `Expr` + a `&dyn Resolver` -> a first-class `Value`, with full left-to-right error propagation (an operand `Error` short-circuits to that error), the operator semantics (arithmetic/`%`/`^`/`&` concat/the six comparisons) applied ELEMENT-WISE with Excel array broadcasting (a scalar and a multi-cell array, or two equal-shaped arrays, zip cell-by-cell via `binary_broadcast`/`unop_scalar` — the `--(cond)` / `(condA)*(condB)` SUMPRODUCT idioms — instead of demoting an array in operator position to `#VALUE!`), the numeric/boolean/text COERCION rules, reference & range resolution through the `Resolver` (a range materializes its borrowed `ArrayView` into an owned `Value::Array`), and the deferred identity/`#CALC!` handling of the reserved `@`/`#` nodes; errors are values, never panics | Non-concern: PARSING text into an `Expr` (parser.rs) and the per-FUNCTION semantics (func.rs owns the registry impls; this module only dispatches a `Call` to them) | IO: (an `&Expr`, an `&dyn Resolver`) -> a `Value`
 //! The evaluator: [`EvalCtx`] and [`eval`]. Synchronous over a pre-loaded [`Resolver`] (no lazy
 //! per-cell I/O — see the resolver contract). Every failure is a first-class [`Value::Error`]; the
 //! evaluator never panics and never returns a [`crate::Diag`] (refusals are a parse-time concern).
@@ -95,59 +95,109 @@ impl<'r> EvalCtx<'r> {
     }
 
     fn eval_unary(&mut self, op: UnOp, inner: &Expr) -> Value {
-        let v = scalarize(self.eval(inner));
-        if let Value::Error(k) = v {
-            return Value::Error(k);
-        }
-        match coerce_num(&v) {
-            Err(k) => Value::Error(k),
-            Ok(n) => match op {
-                UnOp::Plus => Value::Number(n),
-                UnOp::Neg => Value::Number(-n),
-                UnOp::Percent => Value::Number(n / 100.0),
-            },
+        // A unary operator maps ELEMENT-WISE over an array (Excel array arithmetic): `-{TRUE;FALSE}`
+        // coerces each cell (`TRUE→1`, `FALSE→0`) then applies the op, giving `{-1;0}`. This is the
+        // engine half of the classic `--(cond)` idiom — the inner comparison yields a boolean array
+        // and the double-unary coerces it to a 1/0 number array. A 1×1 array collapses to a plain
+        // scalar first; a bare `Error` propagates whole.
+        match collapse_1x1(self.eval(inner)) {
+            Value::Error(k) => Value::Error(k),
+            Value::Array(shape, cells) => {
+                let mapped = cells.iter().map(|c| unop_scalar(op, c)).collect();
+                Value::Array(shape, mapped)
+            }
+            scalar => unop_scalar(op, &scalar),
         }
     }
 
     fn eval_binary(&mut self, op: BinOp, l: &Expr, r: &Expr) -> Value {
         // Left-to-right error short-circuit: an explicit `Error` operand wins, leftmost first
-        // (ast-standards: "an operand Error short-circuits to that Error"). Each operand is
-        // collapsed to a scalar FIRST, before the other is even evaluated, so an error that only
-        // surfaces on scalarize — a 1×1 range whose single cell is an error, or a multi-cell array
-        // in scalar position (`#VALUE!`) — still preempts the right operand. Scalarizing the raw
-        // value (a bare `Error` passes through unchanged) is what makes the leftmost rule hold for a
-        // range/array operand, not only for a plain `Error` value.
-        let lv = scalarize(self.eval(l));
+        // (ast-standards: "an operand Error short-circuits to that Error"). Each operand is collapsed
+        // FIRST — a 1×1 range/array becomes its single cell (so a lone-cell error still preempts the
+        // right operand, evaluated only after the left passes). A GENUINELY multi-cell array is left
+        // intact (not turned into `#VALUE!` as `scalarize` would): an operator broadcasts over it
+        // element-wise below, the engine half of the `--(cond)` / `(condA)*(condB)` idioms.
+        let lv = collapse_1x1(self.eval(l));
         if let Value::Error(k) = lv {
             return Value::Error(k);
         }
-        let rv = scalarize(self.eval(r));
+        let rv = collapse_1x1(self.eval(r));
         if let Value::Error(k) = rv {
             return Value::Error(k);
         }
+        binary_broadcast(op, lv, rv)
+    }
+}
 
-        match op {
-            BinOp::Concat => match (to_text(&lv), to_text(&rv)) {
-                (Err(k), _) | (_, Err(k)) => Value::Error(k),
-                (Ok(a), Ok(b)) => Value::Text(a + &b),
-            },
-            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                compare(op, lv, rv)
+/// Apply a binary operator with Excel array broadcasting: two equal-shaped arrays zip element-wise,
+/// a scalar and an array broadcast the scalar over every cell, and two scalars apply directly. A
+/// shape mismatch between two arrays is a static `#VALUE!` (the same static-conformance stance as
+/// `SUMPRODUCT` / the `*IFS` family). Both operands have already been [`collapse_1x1`]'d and screened
+/// for a bare `Error`, so a remaining `Array` is genuinely multi-cell.
+fn binary_broadcast(op: BinOp, lv: Value, rv: Value) -> Value {
+    match (lv, rv) {
+        (Value::Array(ls, lc), Value::Array(rs, rc)) => {
+            if ls != rs {
+                return Value::Error(ErrKind::Value);
             }
-            // Arithmetic — coerce both to numbers (leftmost coercion error wins). Both operands are
-            // already scalar here, so `coerce_num` sees a scalar directly.
-            _ => {
-                let a = match coerce_num(&lv) {
-                    Ok(a) => a,
-                    Err(k) => return Value::Error(k),
-                };
-                let b = match coerce_num(&rv) {
-                    Ok(b) => b,
-                    Err(k) => return Value::Error(k),
-                };
-                arith(op, a, b)
-            }
+            let cells = lc
+                .iter()
+                .zip(rc.iter())
+                .map(|(a, b)| binop_scalar(op, a, b))
+                .collect();
+            Value::Array(ls, cells)
         }
+        (Value::Array(ls, lc), rv) => {
+            let cells = lc.iter().map(|a| binop_scalar(op, a, &rv)).collect();
+            Value::Array(ls, cells)
+        }
+        (lv, Value::Array(rs, rc)) => {
+            let cells = rc.iter().map(|b| binop_scalar(op, &lv, b)).collect();
+            Value::Array(rs, cells)
+        }
+        (lv, rv) => binop_scalar(op, &lv, &rv),
+    }
+}
+
+/// One scalar binary operation — the leaf every broadcast cell (and the scalar/scalar case) runs
+/// through, so the operator semantics live in ONE place. `&` concatenates the text forms; the six
+/// comparisons rank via [`compare`]; every other op coerces both sides to numbers (leftmost coercion
+/// error wins) and applies [`arith`]. A per-cell `Error` operand propagates through the same
+/// coercion/compare paths, so an error cell of an array becomes an error cell of the result.
+fn binop_scalar(op: BinOp, l: &Value, r: &Value) -> Value {
+    match op {
+        BinOp::Concat => match (to_text(l), to_text(r)) {
+            (Err(k), _) | (_, Err(k)) => Value::Error(k),
+            (Ok(a), Ok(b)) => Value::Text(a + &b),
+        },
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+            compare(op, l.clone(), r.clone())
+        }
+        _ => {
+            let a = match coerce_num(l) {
+                Ok(a) => a,
+                Err(k) => return Value::Error(k),
+            };
+            let b = match coerce_num(r) {
+                Ok(b) => b,
+                Err(k) => return Value::Error(k),
+            };
+            arith(op, a, b)
+        }
+    }
+}
+
+/// One scalar unary operation (the leaf [`eval_unary`](EvalCtx::eval_unary) maps over an array or
+/// applies to a scalar): coerce to a number — a boolean coerces `TRUE→1` / `FALSE→0`, the crux of the
+/// `--(cond)` idiom — then apply the sign / percent, or propagate a coercion error.
+fn unop_scalar(op: UnOp, v: &Value) -> Value {
+    match coerce_num(v) {
+        Err(k) => Value::Error(k),
+        Ok(n) => match op {
+            UnOp::Plus => Value::Number(n),
+            UnOp::Neg => Value::Number(-n),
+            UnOp::Percent => Value::Number(n / 100.0),
+        },
     }
 }
 
@@ -197,9 +247,26 @@ pub(crate) fn pow(a: f64, b: f64) -> Value {
     }
 }
 
-/// Collapse a value to a scalar for a scalar operator position: a 1×1 array is its single cell;
-/// a larger array cannot be used in scalar-only v1 (broadcasting is deferred to W3b) -> `#VALUE!`.
-/// Non-array values pass through unchanged.
+/// Collapse ONLY a degenerate 1×1 array to its single cell, leaving a scalar or a genuinely
+/// multi-cell array unchanged. Unlike [`scalarize`], a multi-cell array is NOT demoted to `#VALUE!`
+/// here — the operator layer broadcasts over it element-wise (Excel array arithmetic: `-(A1:A5>2)`),
+/// so the multi-cell shape must survive collapse to reach the broadcast step. The shared front-door
+/// the unary/binary operators use to normalize an operand before the leftmost-error screen.
+pub(crate) fn collapse_1x1(v: Value) -> Value {
+    match v {
+        Value::Array(shape, mut cells) if shape.rows == 1 && shape.cols == 1 => {
+            cells.pop().unwrap_or(Value::Blank)
+        }
+        other => other,
+    }
+}
+
+/// Collapse a value to a scalar for a scalar-ONLY position — a function argument that takes one value
+/// (`ABS`, `ROUND`, a `VLOOKUP` needle, …) and the [`compare`]/[`value_eq`] operands: a 1×1 array is
+/// its single cell; a genuinely multi-cell array is `#VALUE!` (it cannot occupy a scalar-only slot).
+/// Non-array values pass through unchanged. Operators do NOT route through here — they use
+/// [`collapse_1x1`] and broadcast a genuinely multi-cell array element-wise (`binary_broadcast` /
+/// `unop_scalar`) instead of demoting it to `#VALUE!`.
 pub(crate) fn scalarize(v: Value) -> Value {
     match v {
         Value::Array(shape, mut cells) if shape.rows == 1 && shape.cols == 1 => {
@@ -259,16 +326,93 @@ pub(crate) fn to_text(v: &Value) -> Result<String, ErrKind> {
     }
 }
 
-/// Render a number the way `&`-concat and `TEXT`-free contexts do: general format, no trailing `.0`,
-/// and `0` for both `0.0` and `-0.0` (Excel shows an unsigned zero).
-pub(crate) fn num_to_text(n: f64) -> String {
+/// Render a number in Excel's **General** number format — the text form `&`-concat and
+/// `TEXT(…,"General")` both produce. Excel's General format carries **up to 15 significant digits**,
+/// trims trailing zeros, and switches to **scientific notation** (`1E+20`, `1.23E-09`) when the
+/// value's decimal exponent falls outside the window `[-4, 15)` — i.e. `|n| < 1e-4` or the magnitude
+/// needs 16+ integer digits. This is the classic C `%.15g` rule (Excel's General is that rule with an
+/// uppercase `E`, a signed ≥2-digit exponent, and no `+` on the fixed form). `0` (and `-0`) print as
+/// an unsigned `0`. This is the ONE home for number→General text, so `&` and `TEXT`'s General case
+/// agree, and extreme magnitudes never leak Rust's full-precision `Display` (which would print `1e20`
+/// as a 21-digit integer, diverging from Excel).
+///
+/// Public so the filesystem-model's display surface ([`charlie_model::display_value`]) spells a
+/// rendered/`charlie eval` number through this SAME General formatter — the number→text rule (15-sig
+/// General, scientific outside `[-4, 15)`, unsigned `0` for `-0.0`) has ONE home, so the `&`/`TEXT`
+/// text form and the grid/eval display form never diverge.
+pub fn num_to_text(n: f64) -> String {
     if n == 0.0 {
         return "0".to_string();
     }
-    // Rust's `Display` for `f64` already yields the shortest round-tripping form without a spurious
-    // `.0` (e.g. `1.0 -> "1"`, `1.5 -> "1.5"`), which matches Excel's general format closely enough
-    // for v1's non-`TEXT` concatenation.
-    format!("{n}")
+    // Defensive: a `Value::Number` is always finite (the lexer, `coerce_num`, and `arith` enforce it),
+    // but never panic on a synthesized non-finite — fall back to `Display` rather than index a
+    // mantissa that has no `e`.
+    if !n.is_finite() {
+        return format!("{n}");
+    }
+    let neg = n < 0.0;
+    // Format to 15 significant digits (1 leading digit + 14 fractional) in scientific form, then
+    // read back the rounded significant digits and the decimal exponent. Rust rounds correctly and
+    // carries (e.g. `9.999…e0 -> 1.0e1`), so `exp` is the exponent of the ROUNDED value.
+    let sci = format!("{:.*e}", 14, n.abs());
+    let (mantissa, exp_str) = match sci.split_once('e') {
+        Some(parts) => parts,
+        None => return format!("{n}"),
+    };
+    let exp: i32 = match exp_str.parse() {
+        Ok(e) => e,
+        Err(_) => return format!("{n}"),
+    };
+    // The 15 significant digits, '.' removed, with trailing zeros trimmed (≥1 digit kept).
+    let all_digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let trimmed = all_digits.trim_end_matches('0');
+    let sig = if trimmed.is_empty() { "0" } else { trimmed };
+    // The `%g` switch: scientific outside the `[-4, 15)` exponent window, fixed inside it.
+    let body = if (-4..15).contains(&exp) {
+        general_fixed(sig, exp)
+    } else {
+        general_scientific(sig, exp)
+    };
+    if neg { format!("-{body}") } else { body }
+}
+
+/// Render `sig` (the trimmed significant digits) in Excel General scientific form: `D[.DDD]E±XX`
+/// (uppercase `E`, an explicit sign, exponent zero-padded to ≥2 digits). E.g. `("1", 20) -> "1E+20"`,
+/// `("123", -9) -> "1.23E-09"`.
+fn general_scientific(sig: &str, exp: i32) -> String {
+    let (lead, frac) = sig.split_at(1);
+    let mantissa = if frac.is_empty() {
+        lead.to_string()
+    } else {
+        format!("{lead}.{frac}")
+    };
+    let sign = if exp < 0 { '-' } else { '+' };
+    format!("{mantissa}E{sign}{:02}", exp.abs())
+}
+
+/// Render `sig` (the trimmed significant digits) in Excel General fixed form, where `exp` is the
+/// power of ten of the leading digit. E.g. `("314", 0) -> "3.14"`, `("123456789012345", 14) ->
+/// "123456789012345"`, `("1", -4) -> "0.0001"`.
+fn general_fixed(sig: &str, exp: i32) -> String {
+    if exp >= 0 {
+        let int_len = (exp as usize) + 1;
+        if sig.len() <= int_len {
+            // All significant digits are integer digits; pad the low end with zeros.
+            let mut s = String::with_capacity(int_len);
+            s.push_str(sig);
+            s.extend(std::iter::repeat_n('0', int_len - sig.len()));
+            s
+        } else {
+            format!("{}.{}", &sig[..int_len], &sig[int_len..])
+        }
+    } else {
+        // `|n| < 1`: a `0.`, then `-exp-1` leading zeros, then the significant digits.
+        let zeros = (-exp - 1) as usize;
+        let mut s = String::from("0.");
+        s.extend(std::iter::repeat_n('0', zeros));
+        s.push_str(sig);
+        s
+    }
 }
 
 /// Compare two already-error-free values under a comparison operator, returning a `Bool` (or an
@@ -498,14 +642,56 @@ mod tests {
         );
         assert_eq!(eval_on(&e, &g), Value::Error(ErrKind::Div0));
 
-        // A MULTI-cell left array scalarizes to #VALUE!, which must win over a right #REF!.
+        // A MULTI-cell left array now BROADCASTS the operator (it is no longer demoted to a scalar
+        // `#VALUE!`): `{1;2}+#REF!` maps `#REF!` over each cell, so the scalar right `Error` still
+        // wins leftmost (rv screened before broadcasting) and the whole result is `#REF!`. This is
+        // Excel's array-arithmetic answer (`{#REF!;#REF!}` collapsing to `#REF!` in scalar position),
+        // and it is what enables the `--(cond)` / `(condA)*(condB)` SUMPRODUCT idioms.
         let g = Grid::new(1, vec![Value::Number(1.0), Value::Number(2.0)]);
         let e = Expr::Binary(
             BinOp::Add,
             Box::new(range(0, 0, 0, 1)),
             Box::new(Expr::Lit(Value::Error(ErrKind::Ref))),
         );
-        assert_eq!(eval_on(&e, &g), Value::Error(ErrKind::Value));
+        assert_eq!(eval_on(&e, &g), Value::Error(ErrKind::Ref));
+    }
+
+    #[test]
+    fn array_arithmetic_coerces_booleans_element_wise() {
+        // The engine half of the `--(cond)` / `(condA)*(condB)` SUMPRODUCT idioms: a comparison over
+        // a range yields a BOOLEAN array, and unary-minus / `*` coerce each boolean to 1/0.
+        let g = Grid::new(
+            1,
+            vec![Value::Number(1.0), Value::Number(3.0), Value::Number(5.0)],
+        );
+        // A1:A3>2 -> {FALSE;TRUE;TRUE} (element-wise comparison, scalar broadcast).
+        assert_eq!(
+            eval(&parse("=A1:A3>2").unwrap(), &g),
+            Value::Array(
+                Shape { rows: 3, cols: 1 },
+                vec![Value::Bool(false), Value::Bool(true), Value::Bool(true)]
+            )
+        );
+        // -(A1:A3>2) -> {-0;-1;-1} (unary minus coerces each boolean; `-FALSE` is `-0.0`, exactly as
+        // the scalar unary always produced — the double-unary `--` folds it back to `+0.0`).
+        assert_eq!(
+            eval(&parse("=-(A1:A3>2)").unwrap(), &g),
+            Value::Array(
+                Shape { rows: 3, cols: 1 },
+                vec![
+                    Value::Number(-0.0),
+                    Value::Number(-1.0),
+                    Value::Number(-1.0)
+                ]
+            )
+        );
+        // SUMPRODUCT(--(A1:A3>2)) -> 2 (double-unary coerces the boolean array to 1/0, then sums).
+        assert_eq!(
+            eval(&parse("=SUMPRODUCT(--(A1:A3>2))").unwrap(), &g),
+            Value::Number(2.0)
+        );
+        // The scalar `-TRUE = -1` case still holds (a boolean coerces under unary minus).
+        assert_eq!(eval(&parse("=-TRUE").unwrap(), &g), Value::Number(-1.0));
     }
 
     #[test]
@@ -650,6 +836,32 @@ mod tests {
         assert_eq!(eval_on(&ii_arr, &g), Value::Number(7.0));
         let spill = Expr::SpillRef(Box::new(num(7.0)));
         assert_eq!(eval_on(&spill, &g), Value::Error(ErrKind::Calc));
+    }
+
+    #[test]
+    fn num_to_text_matches_excel_general_format() {
+        // Small integers and normals stay plain decimal (the common case `&`/TEXT General relies on).
+        assert_eq!(num_to_text(0.0), "0");
+        assert_eq!(num_to_text(-0.0), "0");
+        assert_eq!(num_to_text(1.0), "1");
+        assert_eq!(num_to_text(2.0), "2");
+        assert_eq!(num_to_text(5.0), "5");
+        assert_eq!(num_to_text(10.0), "10");
+        assert_eq!(num_to_text(2.75), "2.75");
+        assert_eq!(num_to_text(-2.75), "-2.75");
+        assert_eq!(num_to_text(1234.5), "1234.5");
+        assert_eq!(num_to_text(0.5), "0.5");
+        assert_eq!(num_to_text(0.0001), "0.0001"); // exp -4 stays fixed
+        // 15 significant digits fit as a plain integer (exp 14 < 15).
+        assert_eq!(num_to_text(123456789012345.0), "123456789012345");
+        assert_eq!(num_to_text(1000000000000.0), "1000000000000");
+        // Extremes switch to scientific (exp >= 15 or < -4), uppercase E, signed ≥2-digit exponent.
+        assert_eq!(num_to_text(1e20), "1E+20");
+        assert_eq!(num_to_text(1e-9), "1E-09");
+        assert_eq!(num_to_text(1e-7), "1E-07");
+        assert_eq!(num_to_text(-1e20), "-1E+20");
+        // 15-significant-digit cap: 1/3 shows 15 threes, not Rust Display's 16.
+        assert_eq!(num_to_text(1.0 / 3.0), "0.333333333333333");
     }
 
     #[test]

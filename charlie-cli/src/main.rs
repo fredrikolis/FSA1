@@ -1,4 +1,4 @@
-// Concern: charlie-cli — the THIN binary shell (`charlie render` / `charlie check`): parse argv, drive `charlie-model` (load a workbook, ask for a render grid or a lint report), print the ASCII result to stdout, and set the exit code an agent branches on (0 clean · 2 bad args · 3 error-severity diagnostics · 24 path not found); it holds NO spreadsheet logic — the demand-driven eval, value spelling, and diagnostics all live in the model, and comfy-table drawing lives in `ascii` | Non-concern: WHAT a cell computes to or WHY a diagnostic fires (charlie-model owns the render model + lint), the formula language (charlie-ast), and xlsx serde | IO: (argv, a workbook directory on disk) -> an ASCII table on stdout + an exit code; usage/errors to stderr
+// Concern: charlie-cli — the THIN binary shell (`charlie render` / `charlie check` / `charlie eval`): parse argv, drive `charlie-model` (load a workbook, ask for a render grid, a lint report, or an ad-hoc `=formula`'s value), print the result to stdout — an ASCII table for render/check, a single scalar value for eval — and set the exit code an agent branches on (0 clean · 2 bad args · 3 error-severity diagnostics · 24 path not found); it holds NO spreadsheet logic — the demand-driven eval, value spelling, and diagnostics all live in the model, and comfy-table drawing lives in `ascii` | Non-concern: WHAT a cell computes to or WHY a diagnostic fires (charlie-model owns the render model + lint + ad-hoc formula eval), the formula language (charlie-ast), and xlsx serde | IO: (argv, a workbook directory on disk) -> an ASCII table (render/check) or a scalar value (eval) on stdout + an exit code; usage/errors to stderr
 //! `charlie` — render and lint a filesystem spreadsheet. The binary is a thin consumer of
 //! `charlie-model`: it parses arguments, calls the model's `render`/`lint` surface, and lays the
 //! returned plain-data grid into an ASCII table with `comfy-table` (see [`ascii`]). All spreadsheet
@@ -11,7 +11,7 @@ mod ascii;
 use std::path::Path;
 use std::process::ExitCode;
 
-use charlie_model::{RenderMode, Workbook, parse_viewport, render};
+use charlie_model::{FormulaOutcome, RenderMode, Workbook, parse_viewport, render};
 
 use crate::ascii::{diagnostics_table, grid_table};
 
@@ -45,6 +45,7 @@ fn run(args: &[String]) -> u8 {
     match args[0].as_str() {
         "render" => cmd_render(&args[1..]),
         "check" => cmd_check(&args[1..]),
+        "eval" => cmd_eval(&args[1..]),
         other => {
             eprintln!("charlie: unknown command {other:?}\n");
             print_help();
@@ -188,6 +189,87 @@ fn cmd_check(rest: &[String]) -> u8 {
     if has_error { exit::VALIDATION } else { 0 }
 }
 
+/// `charlie eval <path> [--tab <name>] '=<formula>'` — evaluate an ad-hoc formula against a loaded
+/// workbook and print the resulting value with the same formatting `render` uses. Read-only: no file
+/// writes, no mutation. Unqualified refs resolve against `--tab` (default: the first tab). A parse
+/// error prints the located diagnostic; an error-valued result prints the error text; both exit
+/// non-zero.
+fn cmd_eval(rest: &[String]) -> u8 {
+    let mut path: Option<String> = None;
+    let mut tab: Option<String> = None;
+    let mut formula: Option<String> = None;
+
+    let mut it = rest.iter();
+    while let Some(arg) = it.next() {
+        let (flag, inline) = split_flag(arg);
+        match flag {
+            "--tab" => match take_value(inline, &mut it) {
+                Some(v) => tab = Some(v),
+                None => return bad_arg("--tab needs a tab name"),
+            },
+            // A formula begins with `=` (not `-`), so only a genuine `-`/`--` token is an unknown flag.
+            f if f.starts_with('-') => return bad_arg(&format!("unknown flag {f:?}")),
+            _ => {
+                if path.is_none() {
+                    path = Some(arg.clone());
+                } else if formula.is_none() {
+                    formula = Some(arg.clone());
+                } else {
+                    return bad_arg("eval takes exactly one <path> and one '=formula'");
+                }
+            }
+        }
+    }
+
+    let Some(path) = path else {
+        return bad_arg("eval needs a <path> to a workbook directory");
+    };
+    let Some(formula) = formula else {
+        return bad_arg("eval needs a formula, e.g. charlie eval ./budget '=SUM(A1:A5)'");
+    };
+
+    let wb = match load(Path::new(&path)) {
+        Ok(wb) => wb,
+        Err(code) => return code,
+    };
+    if wb.sheet_names().is_empty() {
+        eprintln!("charlie: {path:?} has no tabs (a tab is a sub-folder of cell/range files)");
+        return exit::VALIDATION;
+    }
+
+    // Resolve the tab unqualified refs bind to: an explicit --tab by name, else tab 0 (the first).
+    let sheet = match &tab {
+        Some(name) => match wb.tab_index(name) {
+            Some(i) => i,
+            None => {
+                eprintln!(
+                    "charlie: no tab named {name:?} in {path:?} (tabs: {:?})",
+                    wb.sheet_names()
+                );
+                return exit::NOT_FOUND;
+            }
+        },
+        None => 0,
+    };
+
+    match wb.eval_formula(sheet, &formula) {
+        Ok(FormulaOutcome::Value(s)) => {
+            println!("{s}");
+            0
+        }
+        // An error-valued result (#DIV/0!, #REF!, …) prints its text and is a non-zero outcome.
+        Ok(FormulaOutcome::Error(s)) => {
+            println!("{s}");
+            exit::VALIDATION
+        }
+        // A parse refusal is a located diagnostic on stderr; non-zero.
+        Err(diag) => {
+            eprintln!("charlie: {diag}");
+            exit::VALIDATION
+        }
+    }
+}
+
 /// Load a workbook directory for `render`, mapping loader failures to exit codes and printing the
 /// load-time refusal table (a workbook that won't load can't be rendered — run `check` for detail).
 fn load(path: &Path) -> Result<Workbook, u8> {
@@ -256,6 +338,7 @@ fn print_help() {
 USAGE:
   charlie render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions|--annotation]
   charlie check  <path>
+  charlie eval   <path> [--tab <name>] '=<formula>'
   charlie --version | --help
 
 COMMANDS:
@@ -268,11 +351,19 @@ COMMANDS:
              --annotation     Each range's line-1 '# ' annotation.
   check    Lint the workbook — overlap, dimension-mismatch, and cycle diagnostics — as an ASCII
            table pointing at the offending file(s). Exits non-zero if any error-severity diagnostic.
+  eval     Evaluate an ad-hoc =formula against the loaded workbook and print its value (same
+           formatting as render). Read-only — no file writes, no mutation. The formula may reference
+           cells, ranges, and other tabs; unqualified refs (A1, A1:A5) bind to --tab.
+             --tab <name>     Which tab unqualified references resolve against. Default: the first tab.
+           A parse error prints the located diagnostic; an error-valued result (#DIV/0!, …) prints
+           the error text. Both exit non-zero.
 
 EXAMPLES:
   charlie render ./budget --tab Summary
   charlie render ./budget --tab Sales --range A1:E14 --functions
   charlie check  ./budget
+  charlie eval   ./budget --tab Orders '=SUM(C2:C11)'
+  charlie eval   ./budget --tab Orders '=SUMPRODUCT(--(C2:C11>5))'
 
 EXIT CODES:
   0   Success (render drawn, or check found no error-severity diagnostics)

@@ -7,7 +7,7 @@
 //! labels are all model concerns. The CLI only lays the returned strings into an ASCII table.
 
 use charlie_ast::a1::{format_column, parse_a1};
-use charlie_ast::{ErrKind, Value};
+use charlie_ast::{ErrKind, Value, num_to_text};
 
 use crate::body::Body;
 use crate::overlap::Rect;
@@ -103,12 +103,18 @@ fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) ->
     }
 }
 
-/// The single home for spelling a resolved [`Value`] as a display string: a number in its shortest
-/// round-trippable form, `TRUE`/`FALSE`, the `#REF!`-family error text, text verbatim, blank as
+/// The single home for spelling a resolved [`Value`] as a display string: a number in Excel's
+/// **General** number format, `TRUE`/`FALSE`, the `#REF!`-family error text, text verbatim, blank as
 /// empty. An array (which a placed cell never is, but defended) shows its top-left cell.
+///
+/// The number case defers to [`charlie_ast::num_to_text`] — the SAME General formatter the `&`/`TEXT`
+/// text form uses — so the grid/`charlie eval` display and the concatenation text never diverge:
+/// extreme magnitudes render in scientific form (`1E+20`, `1E-09`, `1.23456789012346E+15`) instead of
+/// leaking Rust's full-precision `Display`, and `-0.0` canonicalizes to an unsigned `0` (Excel never
+/// shows `-0`).
 pub fn display_value(v: &Value) -> String {
     match v {
-        Value::Number(n) => n.to_string(),
+        Value::Number(n) => num_to_text(*n),
         Value::Text(s) => s.clone(),
         Value::Bool(true) => "TRUE".to_string(),
         Value::Bool(false) => "FALSE".to_string(),
@@ -252,6 +258,14 @@ mod tests {
     fn value_spelling_covers_every_arm() {
         assert_eq!(display_value(&Value::Number(20.0)), "20");
         assert_eq!(display_value(&Value::Number(2.5)), "2.5");
+        // General format (shared with `&`/`TEXT`): extreme magnitudes go scientific, `-0.0` is `0`.
+        assert_eq!(display_value(&Value::Number(1e20)), "1E+20");
+        assert_eq!(display_value(&Value::Number(1e-9)), "1E-09");
+        assert_eq!(
+            display_value(&Value::Number(1234567890123456.0)),
+            "1.23456789012346E+15"
+        );
+        assert_eq!(display_value(&Value::Number(-0.0)), "0");
         assert_eq!(display_value(&Value::Text("hi".into())), "hi");
         assert_eq!(display_value(&Value::Bool(true)), "TRUE");
         assert_eq!(display_value(&Value::Bool(false)), "FALSE");

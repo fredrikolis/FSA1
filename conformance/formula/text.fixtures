@@ -324,6 +324,12 @@ funcs: TEXT
 formula: =TEXT(5, "General")
 expect: "5"
 
+[text-general-15-significant-digits]
+funcs: TEXT
+note: General carries up to 15 sig digits; a 15-digit integer (exponent 14 < 15) stays a plain integer, not scientific or truncated. EXPECTED spelled by the Excel General rule.
+formula: =TEXT(123456789012345, "General")
+expect: "123456789012345"
+
 [text-date-ymd]
 funcs: TEXT
 formula: =TEXT(44927, "yyyy-mm-dd")

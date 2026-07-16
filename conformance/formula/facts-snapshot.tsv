@@ -1,5 +1,5 @@
 charlie-formula-conformance/v1
-# captured_unix=1784208045 git_commit=a29d08acf0aff6993e0f95396e13d5f19be4bc17 git_dirty=true tool=conformance 0.1.0
+# captured_unix=1784235233 git_commit=e3bbf7db0bd858fdfa18bcaff0a3c2ed56fa796d git_dirty=true tool=conformance 0.1.0
 # coverage modeled=75 target=70 registry=77 functions=ABS,AND,AVERAGE,AVERAGEIF,AVERAGEIFS,CEILING,CHOOSE,COLUMN,CONCAT,COUNT,COUNTA,COUNTBLANK,COUNTIF,COUNTIFS,DATE,DATEDIF,DAY,EDATE,FIND,FLOOR,IF,IFERROR,IFNA,IFS,INDEX,INT,IRR,ISBLANK,ISERROR,ISNUMBER,ISTEXT,LEFT,LEN,LOWER,MATCH,MAX,MAXIFS,MEDIAN,MID,MIN,MINIFS,MOD,MONTH,NA,NOT,NOW,NPV,OR,PMT,POWER,PRODUCT,RANK,REPLACE,RIGHT,ROUND,ROUNDDOWN,ROUNDUP,ROW,SEARCH,SQRT,SUBSTITUTE,SUM,SUMIF,SUMIFS,SUMPRODUCT,SWITCH,TEXT,TEXTJOIN,TODAY,TRIM,TYPE,UPPER,VLOOKUP,XLOOKUP,YEAR
 # columns: VERDICT<TAB>key[<TAB>detail]
 MATCH	aggregation/average-mixed-range
@@ -218,15 +218,22 @@ MATCH	math_v1/sqrt-basic
 MATCH	math_v1/sqrt-of-negative-is-num
 MATCH	math_v1/sqrt-of-zero
 MATCH	math_v1/sumproduct-all-nonnumeric-is-canonical-zero
+MATCH	math_v1/sumproduct-double-unary-boolean-array
 MATCH	math_v1/sumproduct-error-cell-propagates
 MATCH	math_v1/sumproduct-length-mismatch-is-value-error
 MATCH	math_v1/sumproduct-nonnumeric-counts-as-zero
+MATCH	math_v1/sumproduct-product-of-two-boolean-arrays
 MATCH	math_v1/sumproduct-two-columns
 MATCH	operators/add
 MATCH	operators/blank-cell-equals-zero
 MATCH	operators/cell-arithmetic
+MATCH	operators/concat-16-integer-digits-rounds-to-15-sig-scientific
 MATCH	operators/concat-bool-and-text
+MATCH	operators/concat-large-number-is-scientific-general
+MATCH	operators/concat-negative-zero-canonicalizes-to-unsigned-zero
+MATCH	operators/concat-normal-number-stays-plain-decimal
 MATCH	operators/concat-number-and-text
+MATCH	operators/concat-tiny-number-is-scientific-general
 MATCH	operators/concat-two-numbers-is-text
 MATCH	operators/divide-noninteger
 MATCH	operators/equality-text-is-case-insensitive
@@ -239,6 +246,7 @@ MATCH	operators/power-left-associative
 MATCH	operators/precedence-mul-before-add
 MATCH	operators/subtract-to-negative
 MATCH	operators/unary-minus-binds-tight
+MATCH	operators/unary-minus-of-true-is-minus-one
 MATCH	stats_v1/counta-all-blank-is-zero
 MATCH	stats_v1/counta-counts-nonempty-including-error
 MATCH	stats_v1/counta-empty-string-counts
@@ -306,6 +314,7 @@ MATCH	text/text-dynamic-format-resolves-to-supported
 MATCH	text/text-error-value-propagates
 MATCH	text/text-fixed-decimals
 MATCH	text/text-general
+MATCH	text/text-general-15-significant-digits
 MATCH	text/text-negative-fixed
 MATCH	text/text-nonnumeric-to-numeric-format-is-value
 MATCH	text/text-percent

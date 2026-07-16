@@ -1,8 +1,10 @@
-// Concern: the DEMAND-DRIVEN evaluation engine (bet B3) — load a sheet-directory (tabs=folders, cells/ranges=files) into an in-memory `Workbook` via the W2 `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it and, when its body is a `=formula`, EVALUATING it through `charlie_ast::eval` with THIS workbook as the resolver — the PULL; a multi-cell `=formula` range DRAG-FILLS (each cell offsets the body's relative refs by its delta from the top-left anchor via `offset_refs`, a top-level bare range instead ARRAY-places under §6), results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an array formula range's evaluated result shape is checked against the declared range under the pinned §6 broadcast-conformance rule, a mismatch becoming the static `#SPILL!`-class refusal (closing the B1<->engine shape handoff) | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval and the `offset_refs` ref-shift), the filename/body/conformance/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`/`classify_placement`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, plus the eval-time located `Diagnostic`s it accumulates
+// Concern: the DEMAND-DRIVEN evaluation engine (bet B3) — load a sheet-directory (tabs=folders, cells/ranges=files) into an in-memory `Workbook` via the W2 `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it and, when its body is a `=formula`, EVALUATING it through `charlie_ast::eval` with THIS workbook as the resolver — the PULL; a multi-cell `=formula` range DRAG-FILLS (each cell offsets the body's relative refs by its delta from the top-left anchor via `offset_refs`, a top-level bare range instead ARRAY-places under §6), results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an array formula range's evaluated result shape is checked against the declared range under the pinned §6 broadcast-conformance rule, a mismatch becoming the static `#SPILL!`-class refusal (closing the B1<->engine shape handoff); an AD-HOC `=formula` string is also evaluated against this loaded workbook via `eval_formula` (the `charlie eval` entry) — parsed through `charlie_ast`, evaluated with THIS workbook as the resolver (unqualified refs resolving against a caller-named tab), and returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, each already `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval and the `offset_refs` ref-shift), the filename/body/conformance/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`/`classify_placement`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
 //! Demand-driven evaluation: [`Workbook`] loads a sheet-directory and implements [`Resolver`] over
 //! it, so `charlie_ast::eval` pulls cell values through the model (the "swap the impl, the engine is
 //! unchanged" firewall made live over a real store). Memoized, cycle-safe, and lazy: an off-request
-//! cell never computes.
+//! cell never computes. Beyond the stored-cell pull, [`Workbook::eval_formula`] evaluates an ad-hoc
+//! `=formula` string against the loaded workbook (the `charlie eval` entry), returning a
+//! [`FormulaOutcome`] that distinguishes a clean value from a spreadsheet error value.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -161,6 +163,19 @@ pub struct Workbook {
     diagnostics: RefCell<Vec<Diagnostic>>,
 }
 
+/// The outcome of [`Workbook::eval_formula`]: a successfully evaluated value or a spreadsheet error
+/// value, each already spelled with the render surface's [`display_value`](crate::render::display_value)
+/// formatting. The variant lets a caller (the `charlie eval` CLI) set its exit code — a `Value` is
+/// clean (exit 0), an `Error` value is a non-zero validation outcome — without re-inspecting the
+/// `charlie_ast::Value` (keeping the CLI firewall: `charlie-cli` never depends on `charlie-ast`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormulaOutcome {
+    /// A non-error value; the string is its render-formatted display.
+    Value(String),
+    /// A spreadsheet error value (`#DIV/0!`, `#REF!`, `#VALUE!`, …); the string is its canonical text.
+    Error(String),
+}
+
 /// A read-only view of the single file that covers a requested cell — the un-evaluated source the
 /// render surface shows in `--functions`/`--annotation` mode. Borrows the workbook, so it cannot
 /// outlive it.
@@ -314,6 +329,39 @@ impl Workbook {
     /// Snapshot — call after driving the cells of interest.
     pub fn eval_diagnostics(&self) -> Vec<Diagnostic> {
         self.diagnostics.borrow().clone()
+    }
+
+    /// Evaluate an AD-HOC formula string against this loaded workbook — the `charlie eval` entry.
+    /// Parses `formula` through `charlie_ast`, then evaluates it with THIS workbook as the
+    /// [`Resolver`], so the formula can reference cells, ranges, and other tabs exactly as a stored
+    /// formula would. Unqualified references (`A1`, `A1:A5`) resolve against `sheet` (the tab index).
+    /// Read-only: no file writes, no cell mutation — it reuses the same memoized pull path stored
+    /// formulas ride, restoring the sheet context afterward.
+    ///
+    /// The result is spelled with the SAME [`display_value`](crate::render::display_value) formatting
+    /// the render surface uses. A parse failure is a located [`Diagnostic`] (`Err`); an evaluation
+    /// that yields a spreadsheet **error value** (`#DIV/0!`, `#REF!`, …) is [`FormulaOutcome::Error`]
+    /// so a caller can exit non-zero, while any other value is [`FormulaOutcome::Value`].
+    pub fn eval_formula(&self, sheet: u32, formula: &str) -> Result<FormulaOutcome, Diagnostic> {
+        let expr = parse(formula).map_err(|diag| {
+            Diagnostic::new(
+                Code::FormulaSyntax,
+                // Locate on the formula text at the refusal's 1-based byte column (a formula is a
+                // single line; line 1 mirrors the body-line convention).
+                Loc::body(formula, 1, (diag.span.start as u32) + 1),
+                format!("cannot parse formula {formula:?}: {}", diag.message),
+            )
+        })?;
+        // Resolve unqualified refs against the requested tab: save/restore `current_sheet` exactly as
+        // the stored-formula pull path does, so this ad-hoc eval never leaves the context dirty.
+        let prev = self.current_sheet.replace(sheet);
+        let value = eval(&expr, self);
+        self.current_sheet.set(prev);
+        let shown = crate::render::display_value(&value);
+        Ok(match value {
+            Value::Error(_) => FormulaOutcome::Error(shown),
+            _ => FormulaOutcome::Value(shown),
+        })
     }
 
     /// The tab index for a sheet name, or `None` if no tab has that name. The index is the
@@ -498,10 +546,13 @@ impl Workbook {
             Plan::DragFill(body) => {
                 // DRAG-FILL: shift the body's RELATIVE refs by this cell's delta from the anchor, then
                 // evaluate. A ref that offsets off-sheet (a relative axis driven below the grid) makes
-                // the whole cell `#REF!`. The result is a scalar (the syntactic classification
-                // guarantees a non-`Range` top level, and every operator/corpus function scalarizes).
+                // the whole cell `#REF!`. A drag-fill cell is scalar-valued, so collapse the result to
+                // a scalar: a 1×1 array is its single cell, and a genuinely multi-cell array (a rare
+                // top-level array-arithmetic body like `=A1:A3>2` written into a single cell — array
+                // spill is the `ArrayRange` plan's job, deferred in v1) is `#VALUE!` in this scalar
+                // position. Every scalar body already returns a scalar, so this is behaviour-preserving.
                 match offset_refs(body, i64::from(dr), i64::from(dc)) {
-                    Some(shifted) => eval(&shifted, self),
+                    Some(shifted) => scalar_cell(eval(&shifted, self)),
                     None => Value::Error(ErrKind::Ref),
                 }
             }
@@ -695,6 +746,21 @@ impl Resolver for Workbook {
 
     fn now_serial(&self) -> f64 {
         self.now
+    }
+}
+
+/// Collapse a drag-fill formula's evaluated result to the single scalar a `.cell`/filled range cell
+/// holds: a 1×1 array is its lone cell, a genuinely multi-cell array is `#VALUE!` (an array in a
+/// scalar cell position — the array/spill case is the `ArrayRange` plan's job, deferred in v1), and a
+/// scalar passes through. This mirrors the engine's scalar-position rule; a scalar-valued body (the
+/// only kind a `DragFill` plan carries) always passes through unchanged.
+fn scalar_cell(v: Value) -> Value {
+    match v {
+        Value::Array(shape, mut cells) if shape.rows == 1 && shape.cols == 1 => {
+            cells.pop().unwrap_or(Value::Blank)
+        }
+        Value::Array(..) => Value::Error(ErrKind::Value),
+        scalar => scalar,
     }
 }
 

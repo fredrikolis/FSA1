@@ -72,3 +72,38 @@ cell A1: 10
 cell B1: 3
 formula: =A1-B1
 expect: 7
+
+# ---- unary-minus coerces a boolean (the scalar half of the `--(cond)` idiom) ----
+[unary-minus-of-true-is-minus-one]
+note: unary minus coerces TRUE->1 then negates, so -TRUE = -1 (FALSE->0 gives -0, shown as 0).
+formula: =-TRUE
+expect: -1
+
+# ---- `&` concatenation renders a number in Excel's GENERAL format ----
+# General carries up to 15 significant digits and switches to scientific notation (uppercase E, a
+# signed >=2-digit exponent) when the decimal exponent leaves [-4, 15): |n| >= 1e15 or |n| < 1e-4.
+# EXPECTED spelled by the Excel General rule (the C `%.15g` form), independently of charlie.
+[concat-large-number-is-scientific-general]
+note: 1e20 has exponent 20 (>= 15) so General is scientific: "1E+20".
+formula: =1e20&""
+expect: "1E+20"
+
+[concat-tiny-number-is-scientific-general]
+note: 1e-9 has exponent -9 (< -4) so General is scientific: "1E-09" (signed 2-digit exponent).
+formula: =1e-9&""
+expect: "1E-09"
+
+[concat-normal-number-stays-plain-decimal]
+note: 3.14 is inside the fixed window, so General is the plain decimal "3.14" (unchanged).
+formula: =3.14&""
+expect: "3.14"
+
+[concat-16-integer-digits-rounds-to-15-sig-scientific]
+note: 1234567890123456 needs 16 integer digits (exponent 15 >= 15) so General goes scientific AND rounds to 15 sig digits: "1.23456789012346E+15". EXPECTED spelled by the Excel General (%.15g) rule.
+formula: =1234567890123456&""
+expect: "1.23456789012346E+15"
+
+[concat-negative-zero-canonicalizes-to-unsigned-zero]
+note: 0*-1 is IEEE -0.0; Excel's General never shows a signed zero, so the text form is an unsigned "0". EXPECTED spelled by the Excel General rule.
+formula: =(0*-1)&""
+expect: "0"
