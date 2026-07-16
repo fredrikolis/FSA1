@@ -13,9 +13,13 @@ require_package_charter = true
 
 # The internal crate dependency graph stays a DAG with no isolated crates.
 forbid_cycles = true
-forbid_orphans = true
+# forbid_orphans is OFF while the workspace holds a SINGLE crate: a lone crate has no internal
+# edges in or out and is therefore trivially an "orphan", which would fail the gate for a reason
+# that cannot be fixed until a second crate exists. Re-enable it the moment charlie-model lands
+# (docs/architecture.md §5, W1) and the first `cli -> model -> ast` edge makes orphans a real signal.
+forbid_orphans = false
 
-# ARCHITECTURAL FIREWALL (populated as crates land — charlie-v1.md Phase 1+).
+# ARCHITECTURAL FIREWALL (populated as crates land — docs/architecture.md §1, §5 W2+).
 # NOTE: a deny pair naming a crate that does not yet exist is a FATAL `unknown_deny_package`
 # violation, so these are added only once both crates exist. The intended invariants:
 #   ["charlie-ast",   "charlie-model"]  # the formula engine must never know the filesystem model

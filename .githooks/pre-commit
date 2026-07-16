@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# pre-commit gate: formatting + lint + annotations (all sub-second). Adapted from
+# ~/src/fanuc-tools-dev/fanuc-tools/.githooks/pre-commit.
+#
+# W0 posture: there is NO conformance crate yet, so the conformance BACKSLIDE state-guard that
+# fanuc runs after the fast checks is NOT wired here — see the clearly-marked block below where W3
+# adds it. The full test gate (`cargo test --workspace -- --include-ignored`) remains a deliberate,
+# observed step — intentionally NOT run here, so it never gets chained into the commit action.
+# Enable this hook per clone: git config core.hooksPath .githooks
+set -euo pipefail
+
+# git hooks run with a minimal environment; the Rust toolchain is often not on PATH (a GUI/IDE git
+# client, a cron/CI shell, or any non-login shell). Resolve `cargo` robustly regardless of the invoking
+# shell: cargo always installs its binary under $CARGO_HOME/bin (default ~/.cargo/bin), so prepend that
+# directly to PATH — this works even when ~/.cargo/env does not exist (a non-rustup install, a custom
+# CARGO_HOME). The env script, when present, is sourced too (it sets up other rustup vars). Fail loud
+# with a clear message if cargo still cannot be found (never silently skip the gate).
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+case ":$PATH:" in
+	*":$cargo_home/bin:"*) ;;                 # already present — don't duplicate
+	*) PATH="$cargo_home/bin:$PATH" ;;
+esac
+export PATH
+[ -f "$cargo_home/env" ] && . "$cargo_home/env"
+command -v cargo >/dev/null 2>&1 || {
+	echo "pre-commit: cargo not found (looked in $cargo_home/bin; install rustup or set CARGO_HOME)" >&2
+	exit 1
+}
+
+echo "pre-commit: cargo fmt --check"
+cargo fmt --all -- --check
+
+echo "pre-commit: cargo clippy -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
+
+# annotated-tree annotation + architecture gate (sub-second; rules live in ./.annotated-tree.toml).
+# No -I corpus/oracle/fixture globs are needed YET — this workspace ships no corpus/fixture
+# territory. When one lands, add the excludes to the call below AND keep them in sync with
+# .github/workflows/annotations.yml and the note in .annotated-tree.toml (annotated-tree's config
+# has no `ignore` key, so exclusion is done at the CALL site).
+echo "pre-commit: annotated-tree --strict-check"
+# Resolve annotated-tree robustly (hooks run with a minimal PATH): prefer an installed binary under
+# the npm global prefix or PATH, else fall back to `npx` (fetches it on demand); fail loud otherwise.
+npm_bin="${npm_config_prefix:-$HOME/.npm-global}/bin"
+case ":$PATH:" in *":$npm_bin:"*) ;; *) PATH="$npm_bin:$PATH" ;; esac
+export PATH
+if command -v annotated-tree >/dev/null 2>&1; then
+	annotated-tree --strict-check --include-tests .
+elif command -v npx >/dev/null 2>&1; then
+	# Pinned to an exact version (load-bearing gate; `--yes annotated-tree` alone would fetch
+	# LATEST and could drift --strict-check behavior). Keep in sync with
+	# .github/workflows/annotations.yml. Bump both together, deliberately.
+	npx --yes annotated-tree@0.2.1 --strict-check --include-tests .
+else
+	echo "pre-commit: annotated-tree not found (install: 'npm i -g annotated-tree', or ensure npx is on PATH)" >&2
+	exit 1
+fi
+
+# --- conformance BACKSLIDE state-guard -----------------------------------------------------------
+# W3 wires the conformance backslide state-guard here (cargo run -p conformance -- backslide),
+# branching on its exit code exactly as fanuc's pre-commit does:
+#   0 = no proven fact lost                 -> PASS (growth/improvements are exempt by construction)
+#   1 = >=1 backslide                        -> BLOCK
+#   2 = anchor missing/unreadable            -> BLOCK (fail SAFE: never a false pass when unverifiable)
+#   * = any other exit                       -> BLOCK (fail SAFE)
+# No conformance crate exists until W3, so there is nothing to guard yet — do NOT add a stub that
+# passes vacuously. When the crate lands, port the fanuc branch verbatim (including the
+# $PRECOMMIT_BACKSLIDE_CMD test seam that pre-commit.selftest.sh will drive).
+# -------------------------------------------------------------------------------------------------
+
+echo "pre-commit: OK (fmt + clippy + annotations clean)"

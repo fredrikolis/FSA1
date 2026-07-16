@@ -1,5 +1,6 @@
-# Workspace root. Exploration-first: ZERO member crates until a proven bet in the project-charlie
-# workspace graduates the first prod-native plan (charlie-v1.md Phase 1 adds `charlie-ast`).
+# Workspace root. Build-out: the first product crate has landed — `charlie-ast`, the formula
+# language contract surface (docs/architecture.md §5, W0). charlie-model and charlie-cli follow
+# (W1+), at which point the `.annotated-tree.toml` deny edges + forbid_orphans are wired.
 [workspace]
 resolver = "2"
-members = []
+members = ["charlie-ast"]

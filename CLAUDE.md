@@ -1,3 +1,4 @@
+<!-- Concern: the authoritative PROCESS doc for this repo — posture, the commit gate, the AST↔filesystem separation-of-concerns, governing standards, and the first-read path | Non-concern: product facts and domain rules (README.md + the architecture/scope docs own those) and the code itself | IO: none -->
 # CLAUDE.md — charlie (production Rust workspace)
 
 **This is the shipping repo for charlie-cli.** It is the graduation target of the outer
@@ -8,13 +9,17 @@ process document and survives compaction.
 
 ## Posture (declare every transition)
 
-**Current posture: BOOTSTRAP / walking-skeleton — UNRELEASED.**
-Structure is still forming. Contracts (the formula AST, the filesystem-model boundary) are
-being laid and are ours to break freely until the first real consumer exists. Review the
-*contracts*, not impl polish; churn is expected. There are **zero product crates** here until
-an exploration conclusion in the workspace justifies the first one (exploration-first bootstrap).
+**Current posture: BUILD-OUT / UNRELEASED.**
+The first product crate has landed — `charlie-ast`, the formula-language contract surface. No
+external consumer depends on these crates yet, so contracts (the formula AST, the
+filesystem-model boundary) are ours to break freely: **break freely and fix every call site in
+the same commit — never a backwards-compat shim across a boundary we own both ends of.**
+Implementation polish now counts — this is not throwaway scaffolding; the correctness foundation
+is reached by a reviewed grind and gated green before "done".
 
 Transitions (bootstrap → build-out → stabilization) are declared here, never silently slid into.
+The first real consumer flips this to *stabilization* — back-compat becomes mandatory and a
+breaking change becomes a next-major act; re-declare here when that happens.
 
 ## What this repo is
 
@@ -43,17 +48,38 @@ later, separate layer.
 The outer workspace (`../`) holds ideation, experiments, and vetted plans. Conclusions graduate
 into this repo as prod-native plans; **scratch code never does.**
 
-## Commit gate (wired in Phase 0 of charlie-v1.md)
+## Commit gate (wired — `.githooks` + CI)
 
-Every commit must pass, mechanically enforced by `.githooks` + CI:
-1. **Tests green** — `cargo test --workspace -- --include-ignored`.
-2. **Fast checks** — `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
-3. **Annotations** — `annotated-tree --strict-check` (full path `/home/olis/.cargo/bin/annotated-tree`
-   in hooks: non-interactive shells have no `~/.cargo/bin` on PATH).
-4. **Neutral reviewer** score ≥ 9 against the named standard for the change, recorded in the commit.
-5. **Annotation-drift review** — every changed first-line annotation re-checked for drift.
+Enable per clone once: `git config core.hooksPath .githooks`. The gate is three parts (full
+rationale: `docs/commit-gate.md`).
 
-Until Phase 0 wires these, treat the list above as the standing bar.
+**`.githooks/pre-commit`** (mechanical, fail-fast) runs, in order:
+1. **Fast checks** — `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+2. **Annotations** — `annotated-tree --strict-check --include-tests`, PATH-resolved via `command -v`
+   after the hook prepends `$CARGO_HOME/bin` and the npm global bin (non-interactive shells have
+   neither on PATH), with an `npx --yes annotated-tree@0.2.1` fallback if no binary is found. The
+   conformance backslide state-guard is wired here in **W3** (no conformance crate exists yet).
+
+The **full test gate** — `cargo test --workspace -- --include-ignored` — is deliberately **NOT**
+in the hook; it stays an observed step so it is never chained into the commit action.
+`--include-ignored` is mandatory so an `#[ignore]` never silently skips a load-bearing test.
+
+**`.githooks/commit-msg`** (attestation presence-check) requires **two** trailers — **(A or
+`Review-skip`) AND (B or `Annotation-skip`)** — severity-tiered, not scored:
+- **A — standards review:** `Reviewed: by <reviewer> vs <tag> — major=<n> moderate=<n> minor=<n>`
+  (passes iff `major=0 AND moderate=0`; minor is discretionary), or `Review-skip: <reason>`.
+- **B — annotation-drift review:** `Annotation-Reviewer: <id>` + `Annotation-Issues: 0`, or
+  `Annotation-skip: <reason>`.
+
+The reviews are performed **out-of-band** by an independent reviewer (a workflow / spawned task
+agent, never the author self-reviewing) against the standards below; the hook only checks the
+trailers are present and well-formed — it cannot run a review. Selftests lock the parser quirks
+(`.githooks/{pre-commit,commit-msg}.selftest.sh`) — and CI runs them, so the lock is real, not
+aspirational: a hook-parser edit that breaks a locked quirk fails `build.yml`.
+
+**CI** (`.github/workflows/`) mirrors the mechanical checks: `annotations.yml` (the annotation
+gate, pinned `annotated-tree@0.2.1`) and `build.yml` (`--locked` fmt + clippy + the full
+`--include-ignored` test gate, then both `.selftest.sh` regression tables).
 
 ## First-read path
 

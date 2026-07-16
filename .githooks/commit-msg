@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+# commit-msg: accountability-record gate for independent-review attestations. Adapted faithfully
+# from ~/src/fanuc-tools-dev/fanuc-tools/.githooks/commit-msg (same parser, same two-attestation
+# model); only the standards it POINTS at differ (this repo's AST work is governed by
+# ast-standards.md instead of fanuc's repo-standards.md).
+#
+# Arg $1 is the path to the file holding the pending commit message (git's commit-msg contract).
+# This hook fires at COMMIT time — ALL attestation gating happens here, next to the change, before
+# the commit object is even created.
+#
+# WHAT THIS HOOK CAN AND CANNOT DO (honest limitation)
+# A git hook is a bash script; it CANNOT invoke an LLM and therefore CANNOT perform either the
+# independent standards review OR the annotation review itself. Its job is exactly one mechanical
+# thing: verify the message carries a well-formed attestation trailer for BOTH reviews. The
+# AUTHENTICITY of the reviews rests entirely on the accountable orchestrator's out-of-band neutral
+# reviews (see CLAUDE.md "Commit gate"). This hook records and enforces the PRESENCE and FORM of
+# each attestation; it does NOT and must NOT pretend to re-derive a verdict or re-scan the files.
+# It never reads the standards docs — it only POINTS at them. It enforces the PRESENCE of a
+# non-empty reviewer label (so a recorded review is traceable to who/what produced it), but CANNOT
+# verify that reviewer is genuinely independent — bash can't run or authenticate a review.
+#
+# REVIEW MODEL — SEVERITY-TIERED, not scored. An independent reviewer classifies every finding by
+# severity; the norm is to iterate fix -> re-review until NO major and NO moderate findings remain.
+# MINOR findings are the author's discretion (fix, or consciously leave). This deliberately REPLACED a
+# 0..10 score: a severity gate drives the weak dimension to zero directly, where a blended score could
+# bury it, and "iterate until no major/moderate" is a clearer target than a numeric bar.
+#
+# NO SIZE EXEMPTION (deliberate). Every non-merge commit carries BOTH attestations (or the matching
+# skip vent) regardless of size. The knob for "this felt heavy" is FEWER/LARGER commits. On success
+# the commit's objective staged changed-line count is PRINTED next to the accepted attestation
+# (accountability: a Review-skip on a 3,000-line diff is then glaringly auditable — the counted
+# number cannot lie, unlike prose).
+#
+# TWO INDEPENDENT ATTESTATIONS ARE REQUIRED — the commit needs (A or Review-skip) AND (B or
+# Annotation-skip):
+#
+# ATTESTATION A — standards review (severity-tiered):
+#   Reviewed: by <reviewer> vs <tag> — major=<n> moderate=<n> minor=<n>
+#       -> independently reviewed BY <reviewer> against <tag>; PASSES iff major=0 AND moderate=0.
+#          minor is RECORDED (informational, non-blocking — the author's discretion). All three
+#          counts are REQUIRED and must be non-negative integers (found anywhere after the tag).
+#          <reviewer> is FREE-FORM and MAY CONTAIN SPACES (a workflow run-id / task-agent id, e.g.
+#          `wf_520043b9-f7d`); it is parsed as the text between ` by ` and the FIRST ` vs `, and MUST
+#          be non-empty. NOTE: ` vs ` is the reviewer|tag DELIMITER — the reviewer label itself must
+#          NOT contain ` vs ` (real workflow/agent ids never do; an embedded ` vs ` mis-splits it). A
+#          SECOND matching limit: the severity counts are matched by KEYWORD anywhere after ` by `
+#          (`major=`/`moderate=`/`minor=`), NOT positionally, so the <tag> itself must not contain a
+#          `major=`/`moderate=`/`minor=` token — a tag literally shaped like `major=0 moderate=0 minor=0`
+#          would satisfy the count match. Real standards-tags never do; not worth re-architecting the
+#          parse to forbid this absurd edge.
+#   Review-skip: <reason>
+#       -> attests the change did not warrant an independent standards review AT ALL, with WHY (the
+#          vent that REPLACES the old size exemption). A non-empty reason is required.
+#
+# ATTESTATION B — annotation review:
+#   Annotation-Reviewer: <non-empty name/id>   AND   Annotation-Issues: <n>
+#       -> a neutral reviewer confirmed every file the diff touches carries an APPROPRIATE first-line
+#          annotation AND that the diff did not make it STALE — the semantic complement to
+#          pre-commit's mechanical `annotated-tree --strict-check`. <n> is the count of annotation
+#          problems found; it MUST be 0 to pass (>0 -> BLOCK). Both trailers are required together.
+#          Trailing text after the count is tolerated (e.g. `Annotation-Issues: 0  (clean)`).
+#   Annotation-skip: <reason>
+#       -> attests the diff touches nothing annotatable (e.g. a pure corpus/fixture/data change), with
+#          WHY. A non-empty reason is required.
+#
+# ACCEPTED RESIDUAL HOLE (a known limit of commit-time gating, consciously accepted): because the
+# commit object does not exist yet, this hook CANNOT detect a `git commit --amend` that changes the
+# diff AFTER its cited review — a reviewed commit can be amended and the now-stale attestation still
+# passes. Re-review after any substantive amend.
+#
+# ACCEPTED RESIDUAL HOLE #2 — `fixup!`/`squash!` subjects are trusted by SUBJECT PREFIX ALONE. They are
+# consumed by `git rebase --autosquash` and carry NO commit-time state signal to verify against (unlike a
+# merge/revert, which git records in-progress via MERGE_HEAD/REVERT_HEAD — see the auto-skip below), so a
+# forged `fixup! `/`squash! ` subject bypasses BOTH attestations. Consciously accepted: the squashed-into
+# target commit carries the real attestation, and the rebase rewrites history under the author's control.
+#
+# Enable per clone: git config core.hooksPath .githooks
+set -euo pipefail
+
+# The three standards the independent reviewer classifies findings against. Home-relative (~) so the
+# reference is stable across machines. Printed as guidance ONLY; never opened by this hook.
+readonly STD_LANG='~/.knowledge-base/coding-standards/language-agnostic-programming-standards.md'
+readonly STD_TEST='~/.knowledge-base/coding-standards/universal-testing-principles.md'
+readonly STD_AST='~/.knowledge-base/coding-standards/ast-standards.md'
+
+msg_file="${1:?commit-msg hook requires the message-file path as \$1}"
+[ -f "$msg_file" ] || { echo "commit-msg: message file '$msg_file' not found" >&2; exit 1; }
+msg="$(cat "$msg_file")"
+
+# Subject = first non-empty, non-comment line (git strips '#' comments AFTER this hook runs, so we
+# skip them ourselves to find the true subject; leading blank lines are skipped too).
+subject=''
+while IFS= read -r line; do
+	case "$line" in
+	'#'*) continue ;;
+	'') [ -z "$subject" ] && continue ;;
+	esac
+	subject="$line"
+	break
+done <<<"$msg"
+
+# Auto-skip (exit 0) git's own auto-generated subjects — a merge/revert/fixup/squash carries no
+# authored change of its own requiring an independent review (the reviewed content lives elsewhere).
+# A subject PREFIX alone is author-controlled and forgeable, so `Merge `/`Revert ` are trusted ONLY when
+# git's OWN in-progress state confirms them (MERGE_HEAD / REVERT_HEAD); a hand-typed "Merge ..."/"Revert
+# ..." with no such operation in flight is a real authored change and MUST be attested. `fixup!`/`squash!`
+# have no commit-time state to verify against, so they stay prefix-trusted (ACCEPTED RESIDUAL HOLE #2).
+# Fail-safe: if `git rev-parse` fails (not a repo), git_dir is empty → treated as NOT a merge/revert.
+git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+case "$subject" in
+Merge\ *)
+	if [ -n "$git_dir" ] && [ -f "$git_dir/MERGE_HEAD" ]; then exit 0; fi
+	;;
+Revert\ *)
+	if [ -n "$git_dir" ] && [ -f "$git_dir/REVERT_HEAD" ]; then exit 0; fi
+	;;
+fixup!\ * | squash!\ *)
+	exit 0
+	;;
+esac
+
+declare -a blockers=()
+
+# --- ATTESTATION A: standards review (severity-tiered) -----------------------------------
+reviewed_seen=0 struct_bad=0 counts_bad=0 r_major='' r_moderate='' r_minor='' review_skip=''
+while IFS= read -r line; do
+	if [[ "$line" =~ ^Reviewed:[[:space:]]+by[[:space:]]+(.+)$ ]]; then
+		reviewed_seen=1
+		struct_bad=0 counts_bad=0              # reset per Reviewed: line — the LAST line's validity decides
+		payload="${BASH_REMATCH[1]}"           # "<reviewer> vs <tag> — major=.. moderate=.. minor=.."
+		reviewer="${payload%% vs *}"           # non-greedy: text before the FIRST ` vs `
+		tail_after_reviewer="${payload#"$reviewer"}"
+		if [ "$reviewer" = "$payload" ] || [ -z "$reviewer" ] ||
+			[[ ! "$tail_after_reviewer" =~ ^[[:space:]]+vs[[:space:]]+[^[:space:]] ]]; then
+			# No non-empty reviewer followed by ` vs <tag>` -> the line's structure is malformed.
+			struct_bad=1
+		elif [[ "$payload" =~ major=([0-9]+) ]] && r_major="${BASH_REMATCH[1]}" &&
+			[[ "$payload" =~ moderate=([0-9]+) ]] && r_moderate="${BASH_REMATCH[1]}" &&
+			[[ "$payload" =~ minor=([0-9]+) ]] && r_minor="${BASH_REMATCH[1]}"; then
+			: # all three counts captured
+		else
+			counts_bad=1
+		fi
+	elif [[ "$line" =~ ^Review-skip:[[:space:]]*([^[:space:]].*)$ ]]; then
+		review_skip="${BASH_REMATCH[1]}"
+	fi
+done <<<"$msg"
+
+a_ok=0
+if [ -n "$review_skip" ] && [ "$reviewed_seen" -eq 0 ]; then
+	a_ok=1   # Review-skip alone = "not review-worthy, here is why".
+elif [ "$reviewed_seen" -eq 1 ]; then
+	if [ "$struct_bad" -eq 1 ]; then
+		blockers+=("ATTESTATION A: Reviewed: line is malformed -> it must read 'Reviewed: by <reviewer> vs <tag> — major=<n> moderate=<n> minor=<n>' (a non-empty reviewer, then ' vs <tag>').")
+	elif [ "$counts_bad" -eq 1 ]; then
+		blockers+=("ATTESTATION A: Reviewed: line is missing well-formed severity counts -> include 'major=<n> moderate=<n> minor=<n>' (all three, non-negative integers).")
+	elif [ "$r_major" -gt 0 ] || [ "$r_moderate" -gt 0 ]; then
+		blockers+=("ATTESTATION A: review has major=$r_major moderate=$r_moderate unresolved -> iterate fix->re-review until BOTH are 0 (minor=$r_minor is discretionary, non-blocking).")
+	else
+		a_ok=1   # major=0 AND moderate=0
+	fi
+else
+	blockers+=("ATTESTATION A: no review attestation -> add 'Reviewed: by <reviewer> vs <tag> — major=0 moderate=0 minor=<n>', or 'Review-skip: <reason>' if the change did not warrant an independent review.")
+fi
+
+# --- ATTESTATION B: annotation review ----------------------------------------------------
+ann_reviewer='' ann_issues='' ann_issues_present=0 ann_skip=''
+while IFS= read -r line; do
+	if [[ "$line" =~ ^Annotation-Reviewer:[[:space:]]*([^[:space:]].*)$ ]]; then
+		ann_reviewer="${BASH_REMATCH[1]}"
+	elif [[ "$line" =~ ^Annotation-Issues:[[:space:]]*([0-9]+) ]]; then
+		# Trailing text after the digits is tolerated (matches the Reviewed: line's tolerance).
+		ann_issues="${BASH_REMATCH[1]}"
+		ann_issues_present=1
+	elif [[ "$line" =~ ^Annotation-skip:[[:space:]]*([^[:space:]].*)$ ]]; then
+		ann_skip="${BASH_REMATCH[1]}"
+	fi
+done <<<"$msg"
+
+b_ok=0
+if [ -n "$ann_skip" ]; then
+	b_ok=1   # nothing annotatable in this diff, here is why.
+elif [ -n "$ann_reviewer" ] && [ "$ann_issues_present" -eq 1 ]; then
+	if [ "$ann_issues" -eq 0 ]; then
+		b_ok=1
+	else
+		blockers+=("ATTESTATION B: Annotation-Issues: $ann_issues is non-zero -> resolve every annotation problem (add/fix the first-line 'Concern | Non-concern | IO' annotation on each touched file, un-stale any the diff invalidated) and re-run the annotation review to 0.")
+	fi
+elif [ -n "$ann_reviewer" ] && [ "$ann_issues_present" -eq 0 ]; then
+	blockers+=("ATTESTATION B: 'Annotation-Reviewer:' present but a well-formed 'Annotation-Issues: <n>' line is MISSING -> add 'Annotation-Issues: 0' (digits; must be 0 to pass).")
+elif [ -z "$ann_reviewer" ] && [ "$ann_issues_present" -eq 1 ]; then
+	blockers+=("ATTESTATION B: 'Annotation-Issues:' present but 'Annotation-Reviewer:' is MISSING -> add 'Annotation-Reviewer: <name/id>' (who/what performed the annotation review).")
+else
+	blockers+=("ATTESTATION B: no annotation attestation -> add BOTH 'Annotation-Reviewer: <name/id>' and 'Annotation-Issues: 0', or 'Annotation-skip: <reason>' if the diff touches nothing annotatable.")
+fi
+
+# --- verdict -----------------------------------------------------------------------------
+if [ "$a_ok" -ne 1 ] || [ "$b_ok" -ne 1 ]; then
+	{
+		printf '\ncommit-msg BLOCKED: the commit message is missing a required review attestation:\n'
+		for b in "${blockers[@]}"; do printf '  - %s\n' "$b"; done
+		printf '\nEvery non-merge commit needs (A or Review-skip) AND (B or Annotation-skip).\n'
+		printf '\nATTESTATION A — independent standards review (severity-tiered; iterate until 0 major, 0 moderate):\n'
+		printf '  Reviewed: by <reviewer> vs <standards-tag> — major=0 moderate=0 minor=<n>\n'
+		printf '  Review-skip: <reason>                               change did not warrant a review, with WHY\n'
+		printf '\nATTESTATION B — annotation review (first-line annotations current & non-stale):\n'
+		printf '  Annotation-Reviewer: <name/id>                      who/what performed the annotation review\n'
+		printf '  Annotation-Issues: 0                                count of annotation problems found (must be 0)\n'
+		printf '  Annotation-skip: <reason>                           diff touches nothing annotatable, with WHY\n'
+		printf '\nThe reviews are performed by an INDEPENDENT reviewer (a workflow or spawned task agent,\n'
+		printf 'never the author) classifying findings by severity against:\n'
+		printf '  %s\n' "$STD_LANG"
+		printf '  %s\n' "$STD_TEST"
+		printf '  %s\n' "$STD_AST"
+	} >&2
+	exit 1
+fi
+
+# Objective size audit (accountability): print the staged diff's changed-line count next to the
+# accepted attestation, so a Review-skip / discretionary-minor claim on a large diff stays glaringly
+# auditable. Fail-safe: if git/the index is unavailable, the size is reported '?' — never a crash.
+staged_lines="$(git diff --cached --numstat 2>/dev/null | awk '
+	NF >= 2 { a=$1; d=$2; if (a=="-") a=0; if (d=="-") d=0; s+=a+d } END { print s+0 }' 2>/dev/null || true)"
+[ -n "$staged_lines" ] || staged_lines='?'
+if [ -n "$review_skip" ]; then a_desc="Review-skip"; else a_desc="major=$r_major moderate=$r_moderate minor=$r_minor"; fi
+if [ -n "$ann_skip" ]; then b_desc="Annotation-skip"; else b_desc="Annotation-Issues=0"; fi
+printf 'commit-msg: OK — A[%s] B[%s] (staged diff: %s changed lines)\n' "$a_desc" "$b_desc" "$staged_lines"
+exit 0
