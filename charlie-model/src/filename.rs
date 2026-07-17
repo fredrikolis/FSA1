@@ -9,8 +9,8 @@ use charlie_ast::a1::{A1Address, A1Error, parse_a1};
 /// A well-formed, canonical filename: the closed A1 range it declares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileName {
-    /// The grid region the file claims (the input to the §7 overlap detector and the FT-8 grid
-    /// dimension check).
+    /// The grid region the file claims (the input to the [`crate::overlap`] detector and the FT-8
+    /// grid dimension check).
     pub region: Rect,
     /// `(rows, cols)` = `(maxRow-minRow+1, maxCol-minCol+1)`.
     pub declared_shape: Shape,
@@ -78,6 +78,8 @@ fn parse_range(name: &str, left: &str, right: &str) -> Result<FileName, Diagnost
         ));
     }
     if la.col == ra.col && la.row == ra.row {
+        // A `1x1` range is a REJECT, not an accept-and-canonicalize to the bare address: one file,
+        // one canonical name, and a single cell is always written as the address (`A1`), never `A1:A1`.
         return Err(Diagnostic::new(
             Code::DegenerateRange,
             Loc::file(name),
@@ -106,6 +108,8 @@ fn parse_range(name: &str, left: &str, right: &str) -> Result<FileName, Diagnost
 /// zero (FT-3). `offset` is the address's byte position within the whole filename, so the diagnostic
 /// points at the right place in the name.
 fn enforce_canonical(name: &str, offset: usize, a: &A1Address) -> Result<(), Diagnostic> {
+    // A file's own address is intrinsically fixed, so a `$` absolute-marker is meaningless in a
+    // filename — the `$` markers live only inside formula bodies. Reject rather than silently strip.
     if a.col_abs || a.row_abs {
         return Err(Diagnostic::new(
             Code::DollarInFilename,

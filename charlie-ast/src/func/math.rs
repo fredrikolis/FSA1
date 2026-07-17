@@ -54,7 +54,7 @@ pub(crate) fn product(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
 
 /// `SUMPRODUCT(array1, [array2], …)` — multiply the arrays element-for-element, then sum. Every
 /// argument must share ONE shape (rows × cols); a mismatch is a static `#VALUE!` (the same
-/// static-conformance stance as the `*IFS` family and format.md §6). A non-numeric cell (text /
+/// static-conformance stance as the `*IFS` family). A non-numeric cell (text /
 /// blank / boolean) contributes `0` — Excel's rule, so an unfiltered boolean is `0`, not `1`; an
 /// error at ANY position propagates (leftmost array, leftmost cell).
 pub(crate) fn sumproduct(ctx: &mut EvalCtx, args: &[Expr]) -> Value {

@@ -605,7 +605,7 @@ fn viewport_evaluates_only_the_dependency_cone() {
 /// and this assertion fails. Keep in sync with `conformance/render/PROVENANCE.md` if the oracle set
 /// is ever deliberately grown.
 const PINNED_RENDER_MANIFEST_DIGEST: &str =
-    "3528f0ca8ad331bb4a019c97bbbbd3f65ba61e7e0bebb89738152eaae80a1b71";
+    "3b400d10e747cb117175960849e7ef746956e48035bb7be37c089de9f6318d37";
 
 /// Run `sha256sum <args>` in `conformance/render/`, returning `(exit_ok, stdout)`. Fails LOUD if the
 /// system tool is absent — the purity guarantee depends on it (charlie-model is crypto-free by

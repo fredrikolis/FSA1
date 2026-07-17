@@ -35,7 +35,7 @@
 #     old_text returns the text unchanged; instance_num<1 is #VALUE!.
 #   * REPLACE is POSITIONAL (splice num_chars from start_num, insert new_text; clamped).
 #   * TRIM collapses interior ASCII-space runs and strips the ends.
-#   * TEXT renders a SUPPORTED format subset (docs/format.md §13); a value that a numeric format cannot
+#   * TEXT renders a SUPPORTED format subset (single-sourced in `func::text::classify_format`); a value that a numeric format cannot
 #     coerce is #VALUE!, and an error value propagates. The 1900 date system WITH Excel's leap-year bug
 #     is the epoch decision (serial 61 = 1900-03-01).
 

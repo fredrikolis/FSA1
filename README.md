@@ -16,7 +16,7 @@ commit gate.
 
 ## Using the CLI
 
-The binary is `charlie` (crate `charlie-cli`). Run it stack-natively:
+The binary is `charlie-cli` (crate `charlie-cli`). Run it stack-natively:
 
 ```
 cargo run -p charlie-cli -- render <workbook-dir> [--tab <name>] [--range <A3:G8>] [--values|--functions|--annotation]
@@ -29,7 +29,7 @@ row-number gutter — `--values` (default, demand-driven: only the viewport's co
 `--functions` (formula text), or `--annotation` (each range's `# ` annotation). `check` lints the
 workbook (overlap, dimension-mismatch, cycle) as an ASCII table pointing at the offending file(s)
 and exits non-zero on any error-severity diagnostic. The authoritative flag/exit-code list lives in
-`charlie --help`, not this README.
+`charlie-cli --help`, not this README.
 
 ## Architecture (target)
 

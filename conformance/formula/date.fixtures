@@ -1,8 +1,9 @@
 # v1 date/time batch: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW.
 #
 # EPOCH: the Excel 1900 date-serial system, WITH Excel's 1900 leap-year bug replicated (serial 60 =
-# the fictional 1900-02-29; serials >= 61 shift back one day, so 44927 = 2023-01-01). See
-# docs/format.md §13.2 + §14 and func.rs's date section. TODAY/NOW are VOLATILE and read the
+# the fictional 1900-02-29; serials >= 61 shift back one day, so 44927 = 2023-01-01). The serial<->date
+# maps are single-sourced: the forward `serial_to_ymd` in func::text (TEXT's date render needs it), its
+# inverse `serial_from_ymd` in func/date.rs. TODAY/NOW are VOLATILE and read the
 # resolver's INJECTABLE clock, PINNED in conformance to 2023-01-01T12:00:00 = serial 44927.5
 # (charlie_ast::PINNED_NOW_SERIAL) so every fixture is reproducible.
 #

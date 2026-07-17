@@ -21,7 +21,7 @@ use super::*;
 //     (clamping a `start_num` past the end to an append, and `num_chars` past the end to "to the end").
 //   * TRIM removes leading/trailing ASCII spaces and COLLAPSES interior runs to a single space (Excel
 //     TRIM touches only 0x20, never a tab).
-//   * TEXT renders a value through a SUPPORTED format-code subset (docs/format.md §13); an unsupported
+//   * TEXT renders a value through a SUPPORTED format-code subset (single-sourced in `classify_format`); an unsupported
 //     LITERAL format is refused at PARSE (`validate_text_format` → `unsupported-format`), while a
 //     NON-LITERAL (computed) format is accepted and deferred — `text_fn`'s `None` arm returns `#VALUE!`
 //     iff the RESOLVED format is unsupported (accept-under-uncertainty, never a false-reject). The
@@ -442,12 +442,11 @@ pub(crate) fn lower_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
 }
 
 // --- TEXT() and its format-code subset ------------------------------------------------------
-// The supported subset is documented in docs/format.md §13 and single-sourced in `classify_format`,
-// which BOTH the parser's `validate_text_format` (refuse an unsupported LITERAL format up front) and
-// `text_fn` (render a resolved format, `#VALUE!` on an unsupported one) consult — so what parses and
-// what renders can never drift.
-/// The supported TEXT format-code kinds (docs/format.md §13). Anything else classifies to `None` and
-/// is refused at parse.
+// The supported subset is single-sourced HERE in `classify_format`, which BOTH the parser's
+// `validate_text_format` (refuse an unsupported LITERAL format up front) and `text_fn` (render a
+// resolved format, `#VALUE!` on an unsupported one) consult — so what parses and what renders can
+// never drift.
+/// The supported TEXT format-code kinds. Anything else classifies to `None` and is refused at parse.
 #[derive(Clone, Copy)]
 enum Fmt {
     /// `General` — the value's general text form.
@@ -519,7 +518,7 @@ fn parse_decimals(rest: &str) -> Option<usize> {
     (!frac.is_empty() && frac.bytes().all(|b| b == b'0')).then_some(frac.len())
 }
 
-/// `TEXT(value, format)` — render `value` through the supported format subset (docs/format.md §13).
+/// `TEXT(value, format)` — render `value` through the supported format subset (see `classify_format`).
 /// A LITERAL format was vetted by `validate_text_format` at parse; a NON-LITERAL (computed) format
 /// reaches here unvetted, so the `None` arm is a LIVE path — an unsupported RESOLVED format (e.g.
 /// `TEXT(A1, B1)` where `B1` is a currency mask) is `#VALUE!`, never a wrong guess (accept-under-
@@ -666,8 +665,8 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y + i64::from(m <= 2), m, d)
 }
 
-/// Parse-time gate for `TEXT`: refuse ONLY an UNSUPPORTED STRING LITERAL format code (docs/format.md
-/// §13) — a statically-known-wrong format is caught up front rather than mis-rendered at eval. A
+/// Parse-time gate for `TEXT`: refuse ONLY an UNSUPPORTED STRING LITERAL format code (the subset
+/// `classify_format` accepts) — a statically-known-wrong format is caught up front rather than mis-rendered at eval. A
 /// non-literal format (a reference/computed string, e.g. `TEXT(A1, B1)`) is ACCEPTED and deferred to
 /// `text_fn`, which returns `#VALUE!` iff the RESOLVED format turns out unsupported. This is
 /// accept-under-uncertainty (ast-standards PART 6): a false-reject is the cardinal sin, so a dynamic
@@ -682,9 +681,7 @@ pub(crate) fn validate_text_format(args: &[Expr], span: Span) -> Result<(), Diag
         Some(Expr::Lit(Value::Text(fmt))) if classify_format(fmt).is_none() => Err(Diag::new(
             DiagCode::UnsupportedFormat,
             span,
-            format!(
-                "TEXT format code {fmt:?} is not in the supported v1 subset (docs/format.md §13)"
-            ),
+            format!("TEXT format code {fmt:?} is not in the supported v1 subset"),
         )),
         // A supported literal, OR any non-literal format v1 cannot vet statically: accept and defer to
         // eval's resolved-format `#VALUE!` rather than false-reject a call Excel would compute.

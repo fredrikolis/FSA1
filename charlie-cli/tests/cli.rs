@@ -1,7 +1,7 @@
-// Concern: the CLI CONTRACT integration test — drive the built `charlie` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, the ASCII table on stdout (render/check), the scalar VALUE on stdout (eval — e.g. `6`, `4`, `#DIV/0!`), and the EXIT CODE an agent branches on (0 clean render/check/eval · 2 bad args · 3 error-severity diagnostics or error-valued eval · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection) and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie`, writes temp workbook dirs, asserts on stdout + exit status
-//! End-to-end tests of the `charlie` binary: exit codes and stdout for `render`, `check`,
-//! `--version`, and misuse. The spreadsheet logic is tested in `charlie-model`; this locks the
-//! thin shell's own contract.
+// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, the ASCII table on stdout (render/check), the scalar VALUE on stdout (eval — e.g. `6`, `4`, `#DIV/0!`), the on-disk `sample` workbook + its never-clobber refusal, the `--guide` text, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval · 4 sample target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT) and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, asserts on stdout + exit status
+//! End-to-end tests of the `charlie-cli` binary: exit codes and stdout for `render`, `check`, `eval`,
+//! `sample`, `--guide`, `--version`, and misuse. The spreadsheet logic is tested in `charlie-model`;
+//! this locks the thin shell's own contract.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -46,10 +46,10 @@ impl Drop for Fixture {
 
 /// Run the binary with `args`, returning `(exit_code, stdout)`.
 fn run(args: &[&str]) -> (i32, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_charlie"))
+    let out = Command::new(env!("CARGO_BIN_EXE_charlie-cli"))
         .args(args)
         .output()
-        .expect("spawn charlie");
+        .expect("spawn charlie-cli");
     let code = out.status.code().expect("exit code");
     (code, String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -229,7 +229,7 @@ fn version_prints_a_json_envelope() {
         "version envelope:\n{out}"
     );
     assert!(
-        out.contains("\"name\":\"charlie\""),
+        out.contains("\"name\":\"charlie-cli\""),
         "version envelope:\n{out}"
     );
 }
@@ -263,5 +263,117 @@ fn an_enormous_range_is_a_located_refusal_not_a_crash() {
     assert_eq!(
         code, 2,
         "an oversized --range is a located refusal, not a crash"
+    );
+}
+
+#[test]
+fn sample_writes_a_renderable_workbook_and_prints_next_steps() {
+    // `sample <dir>` on a fresh (not-yet-created) directory writes the model's tutorial workbook and
+    // exits 0, printing the next-steps hints; the written tree is a REAL workbook the same binary can
+    // then render (proving the sample is live, not prose).
+    let fx = Fixture::new("sample");
+    let target = fx.path().join("wb");
+    let target_s = target.to_str().unwrap().to_string();
+
+    let (code, out) = run(&["sample", &target_s]);
+    assert_eq!(code, 0, "a fresh sample exits 0; got:\n{out}");
+    // The two tabs and a couple of representative cell/range files exist on disk.
+    assert!(target.join("Orders").is_dir(), "Orders tab written:\n{out}");
+    assert!(
+        target.join("Summary").is_dir(),
+        "Summary tab written:\n{out}"
+    );
+    assert!(
+        target.join("Orders/A1:D1").is_file(),
+        "the header range file exists:\n{out}"
+    );
+    assert!(
+        target.join("Orders/D5").is_file(),
+        "the SUM total cell exists:\n{out}"
+    );
+    // The next-steps text prints and names the renamed binary.
+    assert!(out.contains("next:"), "next-steps hint printed:\n{out}");
+    assert!(
+        out.contains("charlie-cli render"),
+        "next-steps names charlie-cli:\n{out}"
+    );
+    // The hint quotes the sample's real grand total; pinning it here means a change to the sample's
+    // total fails this test instead of leaving the tutorial hint silently stale.
+    assert!(
+        out.contains("110"),
+        "next-steps hint quotes the sample total (110):\n{out}"
+    );
+
+    // The sample is a genuine workbook: rendering it succeeds and shows a computed total (D5 = 110).
+    let (rcode, rout) = run(&["render", &target_s]);
+    assert_eq!(rcode, 0, "the written sample renders cleanly:\n{rout}");
+    assert!(
+        rout.contains("110"),
+        "D5 grand total renders as 110:\n{rout}"
+    );
+}
+
+#[test]
+fn sample_writes_into_an_existing_empty_dir() {
+    // The never-clobber gate has three target states: absent, exists-and-empty, exists-and-non-empty.
+    // The success tests above use an absent dir and the refusal test uses a non-empty dir; this pins
+    // the third branch — an EXISTING but EMPTY directory PROCEEDS (an empty dir is not a clobber),
+    // writes the workbook into it, and exits 0.
+    let fx = Fixture::new("sample-empty");
+    let target = fx.path().join("wb");
+    std::fs::create_dir_all(&target).expect("pre-create an empty target dir");
+    let target_s = target.to_str().unwrap().to_string();
+
+    let (code, out) = run(&["sample", &target_s]);
+    assert_eq!(
+        code, 0,
+        "an existing EMPTY dir is not a clobber -> sample proceeds and exits 0; got:\n{out}"
+    );
+    assert!(
+        target.join("Orders/D5").is_file(),
+        "the workbook was written into the pre-existing empty dir:\n{out}"
+    );
+}
+
+#[test]
+fn sample_refuses_to_clobber_a_nonempty_dir_and_writes_nothing() {
+    // The never-clobber guarantee: `sample <dir>` on an EXISTING, NON-EMPTY directory refuses,
+    // writes nothing, and exits 4 (CONFLICT — the argv is valid, the target state is the problem;
+    // it is NOT a usage error / exit 2). The pre-existing content is left untouched.
+    let fx = Fixture::new("sample-clobber");
+    // A sentinel file makes the target directory non-empty (and is NOT a workbook tab).
+    fx.file("keep", "A1", "42");
+    let target_s = fx.path().to_str().unwrap().to_string();
+
+    let (code, _out) = run(&["sample", &target_s]);
+    assert_eq!(
+        code, 4,
+        "clobber refusal is a CONFLICT (exit 4), not bad-args (exit 2)"
+    );
+    // Nothing was written: no tutorial tab appeared, and the sentinel is intact.
+    assert!(
+        !fx.path().join("Orders").exists(),
+        "refusal must write no Orders tab"
+    );
+    assert!(
+        !fx.path().join("Summary").exists(),
+        "refusal must write no Summary tab"
+    );
+    let kept = std::fs::read_to_string(fx.path().join("keep/A1")).expect("sentinel survives");
+    assert!(kept.contains("42"), "the pre-existing file is untouched");
+}
+
+#[test]
+fn guide_prints_and_exits_zero() {
+    // `--guide` prints the terse on-disk-model tour and exits 0.
+    let (code, out) = run(&["--guide"]);
+    assert_eq!(code, 0, "--guide exits 0:\n{out}");
+    assert!(
+        out.contains("charlie-cli"),
+        "the guide names the binary:\n{out}"
+    );
+    assert!(
+        out.contains("STRUCTURE"),
+        "the guide has its structure section:\n{out}"
     );
 }

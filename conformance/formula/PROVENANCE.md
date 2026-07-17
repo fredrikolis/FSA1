@@ -55,7 +55,8 @@ The interesting behaviors the seed pins, all from Excel semantics:
   case-INSENSITIVE with `?`/`*` wildcards (`~` escapes); both return the match's START and miss with
   `#VALUE!`, and an empty needle returns `start_num`. `SUBSTITUTE` replaces the Nth or ALL
   non-overlapping occurrences (an empty `old_text` is a no-op; `instance_num < 1` is `#VALUE!`);
-  `REPLACE` is positional. `TEXT` renders a SUPPORTED format subset only (`docs/format.md §13`) —
+  `REPLACE` is positional. `TEXT` renders a SUPPORTED format subset only (the subset charlie-ast's
+  `func::text::classify_format` accepts) —
   general / fixed `0.00` / thousands `#,##0` / percent `0%` / date `yyyy-mm-dd`; a value a numeric
   format cannot coerce is `#VALUE!`, an error value propagates, and the **1900 date system WITH
   Excel's leap-year bug** is the epoch decision (serial 61 = `1900-03-01`). A **non-literal** (computed)
@@ -68,7 +69,7 @@ The interesting behaviors the seed pins, all from Excel semantics:
 - **Date/time batch** (`date.fixtures`, the `DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW` family).
   Every value is an Excel **1900-system date serial** WITH the leap-year bug replicated (serial 60 =
   the fictional `1900-02-29`; `44927` = `2023-01-01`) — the same epoch decision as `TEXT`'s date
-  render (`docs/format.md §13.2`/§14). `DATE` truncates its args and NORMALIZES out-of-range
+  render (charlie-ast's `func::text::serial_to_ymd`). `DATE` truncates its args and NORMALIZES out-of-range
   month/day (with the year `0..=1899` `+1900` fold); `YEAR`/`MONTH`/`DAY` `floor` the serial (`YEAR(60)
   =1900`, `DAY(60)=29`); `EDATE` CLAMPS the day to the target month's end; `DATEDIF` covers
   `Y`/`M`/`D` + `MD`/`YM`/`YD` (case-folded unit; `start>end` and an unknown unit are `#NUM!`).

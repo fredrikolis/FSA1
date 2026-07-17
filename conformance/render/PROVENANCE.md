@@ -70,24 +70,27 @@ block — mirroring the formula-conformance ratchet. Re-bless the baseline consc
 `RENDER_RESNAPSHOT=1 cargo test -p charlie-model --test render_conformance -- --ignored resnapshot`
 and record WHY in the carrying commit.
 
-## Resolved B3 finding — drag-fill landed (this harness is now zero-divergence)
+## Resolved B3 finding — the corpus is explicit grids, not drag-fill (this harness is zero-divergence)
 
-At migration this harness recorded a large, **systematic** class of `Diverge`s: charlie's engine
-evaluated a scalar `=formula` stored in a multi-cell `.range` file **once** (with its literal
-top-left references) and **Filled** the whole declared region with that single result — it did **not**
-perform the per-cell **relative-reference offsetting** (drag-fill) that `docs/format.md` §10.2
-requires ("a `5×1` drag-fill `Orders/D2:D6.range` with body `=B2*C2` … its per-cell offsetting is a
-W3 eval concern"). The oracle computes the drag-fill per row; charlie did not, so **every derived
-(drag-fill) column diverged** across all six workbooks — recorded as standing FACTS in the anchor.
+At migration this harness recorded a large, **systematic** class of `Diverge`s. The W1 corpus
+originally expressed each derived column as a **single scalar `=formula` stored over a multi-cell
+`.range`** and expected the reader to **drag-fill** it — to offset the body's relative references
+per-cell across the region (the former format spec illustrated this with "a `5×1` drag-fill
+`Orders/D2:D6` with body `=B2*C2` … its per-cell offsetting is a W3 eval concern"). charlie has **no
+such mechanism**: by **FT-9** a cell's value derives *only from its own content*, so there is no
+offset/drag-fill anywhere in the engine (`charlie-model/src/workbook.rs`). charlie therefore
+evaluated the stored scalar once and Filled the region with that one result, while the oracle
+computed the drag-fill per row — so **every derived column diverged** across all six workbooks,
+recorded as standing FACTS in the anchor.
 
-**That standing class is now RESOLVED.** Relative fill landed in the W4b delta this doc ships with:
-`charlie_ast::offset_refs` (the pure tree-walking ref-shift) drives `Plan::DragFill` in
-`charlie-model/src/workbook.rs`, so each cell of a multi-cell scalar `=formula` range now offsets
-the body's relative refs by its delta from the top-left anchor (`$`-anchors fixed) instead of the
-old single-result Fill. The harness in this directory now enforces a **zero-divergence** gate and
-passes **542/542** with `Diverge = 0` — the previously-diverging drag-fill cells all flipped to
-`Match`. (The `model` amortization's 62 accumulated-IEEE-754 cells still Match under the oracle
-authors' documented `|Δ| ≤ 1e-6` tolerance, counted as Match, not Diverge — see the grader section
+**That standing class is now RESOLVED — by aligning the corpus to FT-9, never by adding drag-fill.**
+Each derived column is now an **explicit per-cell grid**: the range file spells out one formula per
+row with its own literal references (e.g. `conformance/encoding/artifacts/lookup-join/Orders/D2:D11`
+writes `=XLOOKUP(B2,Products!$A$2:$A$7,Products!$C$2:$C$7)` through `=XLOOKUP(B11,…)` in full), which
+is exactly what charlie's own-content rule evaluates. The harness in this directory now enforces a
+**zero-divergence** gate and passes **542/542** with `Diverge = 0` — the previously-diverging cells
+all Match. (The `model` amortization cells still Match under the oracle authors' documented
+`|Δ| ≤ 1e-6` tolerance rather than bit-exact, counted as Match, not Diverge — see the grader section
 above.) The ratchet continues to guard against any future regression: no cell that Matches now may
 Diverge later.
 
@@ -105,7 +108,7 @@ sha256sum -c MANIFEST.sha256 --quiet   # exit 0 == oracles are byte-identical to
 Digest of the manifest itself (a single value pinning the whole set):
 
 ```
-sha256(MANIFEST.sha256) = 3528f0ca8ad331bb4a019c97bbbbd3f65ba61e7e0bebb89738152eaae80a1b71
+sha256(MANIFEST.sha256) = 3b400d10e747cb117175960849e7ef746956e48035bb7be37c089de9f6318d37
 ```
 
 This is **mechanically enforced at the grading site** by

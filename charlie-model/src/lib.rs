@@ -1,4 +1,4 @@
-// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename->closed-range parser (`filename`, FT-3), the TSV DESERIALIZER and the GRID it produces (`grid`, FT-4/FT-5), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula/annotation strings for the CLI to draw, and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling each formula cell through `charlie_ast::eval`, memoized and cycle-safe; `parse_file` ties the filename+annotation+deserializer into one loaded `ParsedFile` (its declared range and its grid), enforcing FT-8 (the grid fills the range exactly); `Workbook` resolves cells to `Value`s on demand and additionally exposes `Workbook::eval_formula`, the AD-HOC `=formula` evaluator (the `charlie eval` entry) returning a `FormulaOutcome` so the CLI branches its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
+// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename->closed-range parser (`filename`, FT-3), the TSV DESERIALIZER and the GRID it produces (`grid`, FT-4/FT-5), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula/annotation strings for the CLI to draw, the canonical live TUTORIAL workbook as data (`sample`, what `charlie-cli sample` writes out), and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling each formula cell through `charlie_ast::eval`, memoized and cycle-safe; `parse_file` ties the filename+annotation+deserializer into one loaded `ParsedFile` (its declared range and its grid), enforcing FT-8 (the grid fills the range exactly); `Workbook` resolves cells to `Value`s on demand and additionally exposes `Workbook::eval_formula`, the AD-HOC `=formula` evaluator (the `charlie-cli eval` entry) returning a `FormulaOutcome` so the CLI branches its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
 //! # charlie-model — the filesystem spreadsheet model
 //!
 //! **CHARTER.** `charlie-model` owns the on-disk encoding: a tab is a folder and a file's *name* is a
@@ -21,6 +21,7 @@ pub mod filename;
 pub mod grid;
 pub mod overlap;
 pub mod render;
+pub mod sample;
 pub mod workbook;
 
 pub use diagnostic::{Code, Diagnostic, Loc, Severity};
@@ -31,6 +32,7 @@ pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, display_value, parse_viewport, render,
     viewport_cell_count,
 };
+pub use sample::sample_workbook;
 pub use workbook::{CellSource, FormulaOutcome, Workbook};
 
 use charlie_ast::Shape;
@@ -55,6 +57,10 @@ pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Diagnostic> 
         Some((first, rest)) => (first, rest),
         None => (contents, ""),
     };
+    // The prefix is `# ` WITH the trailing space, not a bare `#`: the space disambiguates an
+    // annotation from a line-1 literal that merely starts with `#` — e.g. the error token `#REF!`,
+    // which has no following space — so a single-cell file whose sole value is `#REF!` is not
+    // mistaken for a (malformed) annotation.
     if !line1.starts_with("# ") {
         return Err(Diagnostic::new(
             Code::MissingAnnotation,

@@ -1,9 +1,9 @@
-// Concern: the DEMAND-DRIVEN evaluation engine — load a sheet-directory (tabs=folders, files=closed ranges) into an in-memory `Workbook` via `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it, reading its grid cell at the local offset, and — when that cell is a `=formula` — EVALUATING the parsed `Expr` through `charlie_ast::eval` with THIS workbook as the resolver (the PULL); a cell's value derives only from its own content (FT-9), so there is no drag-fill/offset anywhere; results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an AD-HOC `=formula` string is also evaluated against this loaded workbook via `eval_formula` (the `charlie eval` entry) — parsed through `charlie_ast`, evaluated with THIS workbook as the resolver (unqualified refs resolving against a caller-named tab), and returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, each already `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
+// Concern: the DEMAND-DRIVEN evaluation engine — load a sheet-directory (tabs=folders, files=closed ranges) into an in-memory `Workbook` via `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it, reading its grid cell at the local offset, and — when that cell is a `=formula` — EVALUATING the parsed `Expr` through `charlie_ast::eval` with THIS workbook as the resolver (the PULL); a cell's value derives only from its own content (FT-9), so there is no drag-fill/offset anywhere; results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an AD-HOC `=formula` string is also evaluated against this loaded workbook via `eval_formula` (the `charlie-cli eval` entry) — parsed through `charlie_ast`, evaluated with THIS workbook as the resolver (unqualified refs resolving against a caller-named tab), and returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, each already `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
 //! Demand-driven evaluation: [`Workbook`] loads a sheet-directory and implements [`Resolver`] over
 //! it, so `charlie_ast::eval` pulls cell values through the model (the "swap the impl, the engine is
 //! unchanged" firewall made live over a real store). Memoized, cycle-safe, and lazy: an off-request
 //! cell never computes. Beyond the stored-cell pull, [`Workbook::eval_formula`] evaluates an ad-hoc
-//! `=formula` string against the loaded workbook (the `charlie eval` entry), returning a
+//! `=formula` string against the loaded workbook (the `charlie-cli eval` entry), returning a
 //! [`FormulaOutcome`] that distinguishes a clean value from a spreadsheet error value.
 
 use std::cell::{Cell, RefCell};
@@ -132,7 +132,7 @@ pub struct Workbook {
 
 /// The outcome of [`Workbook::eval_formula`]: a successfully evaluated value or a spreadsheet error
 /// value, each already spelled with the render surface's [`display_value`](crate::render::display_value)
-/// formatting. The variant lets a caller (the `charlie eval` CLI) set its exit code — a `Value` is
+/// formatting. The variant lets a caller (the `charlie-cli eval` CLI) set its exit code — a `Value` is
 /// clean (exit 0), an `Error` value is a non-zero validation outcome — without re-inspecting the
 /// `charlie_ast::Value` (keeping the CLI firewall: `charlie-cli` never depends on `charlie-ast`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -293,7 +293,7 @@ impl Workbook {
         self.diagnostics.borrow().clone()
     }
 
-    /// Evaluate an AD-HOC formula string against this loaded workbook — the `charlie eval` entry.
+    /// Evaluate an AD-HOC formula string against this loaded workbook — the `charlie-cli eval` entry.
     /// Parses `formula` through `charlie_ast`, then evaluates it with THIS workbook as the
     /// [`Resolver`], so the formula can reference cells, ranges, and other tabs exactly as a stored
     /// formula would. Unqualified references (`A1`, `A1:A5`) resolve against `sheet` (the tab index).
@@ -543,7 +543,8 @@ impl Resolver for Workbook {
     fn value(&self, cell: CellRef) -> Value {
         let sheet = self.resolve_sheet(cell.sheet);
         let Some((id, file)) = self.covering(sheet, cell.col, cell.row) else {
-            // A gap (no file claims this cell) reads as Blank (FORMAT §7).
+            // A gap (no file claims this cell) reads as Blank (the overlap policy: gaps are Blank,
+            // not errors -- see `overlap`).
             return Value::Blank;
         };
         let dr = cell.row - file.region.min_row;
@@ -1199,7 +1200,7 @@ mod tests {
 
     #[test]
     fn eval_formula_evaluates_an_ad_hoc_string_against_the_workbook() {
-        // The `charlie eval` entry: an ad-hoc formula string evaluates against the loaded workbook,
+        // The `charlie-cli eval` entry: an ad-hoc formula string evaluates against the loaded workbook,
         // referencing stored cells. A clean value is `Value`; a spreadsheet error value is `Error`.
         let wb = load_one_tab("Sheet1", &[("A1", "6"), ("A2", "7")]);
         assert_eq!(

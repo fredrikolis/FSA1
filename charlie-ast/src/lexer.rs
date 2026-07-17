@@ -1,4 +1,4 @@
-// Concern: the formula LEXER — turn a formula string into a flat `Vec<Token>` (each a `TokenKind` + byte `Span`), recognizing numbers (§4.3 finite grammar), `"`-strings (Excel `""` escaping), UPPERCASE-only `TRUE`/`FALSE` and the `#…!` error literals (docs/format.md R5), A1 cell references via `charlie_ast::a1`, the operator/paren/comma vocabulary, function-name-before-`(`, the `!` sheet-separator of a cross-sheet reference as a `TokenKind::SheetBang(name)` (bare `Sheet1!` and quoted `'My Sheet'!` names via `lex_quoted_sheet_name`, with `''` escapes and a `MalformedSheetName` refusal on an unterminated/`!`-less name), and the reserved `@`/`#` markers; a hostile byte is a located refusal, never a panic | Non-concern: how tokens NEST into an `Expr` (parser.rs owns precedence/arity/reserved-construct verdicts) and evaluating anything | IO: (a formula `&str`) -> `Result<Vec<Token>, Diag>`
+// Concern: the formula LEXER — turn a formula string into a flat `Vec<Token>` (each a `TokenKind` + byte `Span`), recognizing numbers (§4.3 finite grammar), `"`-strings (Excel `""` escaping), UPPERCASE-only `TRUE`/`FALSE` and the `#…!` error literals (deliberate, no case-folding), A1 cell references via `charlie_ast::a1`, the operator/paren/comma vocabulary, function-name-before-`(`, the `!` sheet-separator of a cross-sheet reference as a `TokenKind::SheetBang(name)` (bare `Sheet1!` and quoted `'My Sheet'!` names via `lex_quoted_sheet_name`, with `''` escapes and a `MalformedSheetName` refusal on an unterminated/`!`-less name), and the reserved `@`/`#` markers; a hostile byte is a located refusal, never a panic | Non-concern: how tokens NEST into an `Expr` (parser.rs owns precedence/arity/reserved-construct verdicts) and evaluating anything | IO: (a formula `&str`) -> `Result<Vec<Token>, Diag>`
 //! The formula lexer: [`tokenize`] a formula string into [`Token`]s.
 //!
 //! ASCII-oriented and single-pass. It never panics on hostile input — every byte either extends a
@@ -29,10 +29,10 @@ pub enum TokenKind {
     Num(f64),
     /// A `"`-quoted string literal, already unescaped (Excel `""` → `"`).
     Str(String),
-    /// `TRUE` / `FALSE` (UPPERCASE-only, docs/format.md R5).
+    /// `TRUE` / `FALSE` (UPPERCASE-only, deliberate — no case-folding).
     Bool(bool),
     /// One of the seven live error literals, or the two reserved (`#SPILL!`/`#CALC!`) — round-tripped
-    /// as first-class [`crate::Value::Error`] values (docs/format.md R5, uppercase-only).
+    /// as first-class [`crate::Value::Error`] values (uppercase-only).
     Err(ErrKind),
     /// A resolved single-cell A1 reference lexeme (`A1`, `$A$1`) — column/row zero-based.
     CellRef {
@@ -245,7 +245,7 @@ fn lex_number(src: &str, b: &[u8], mut i: usize) -> Result<(TokenKind, usize), D
     match lexeme.parse::<f64>() {
         Ok(n) if n.is_finite() => Ok((TokenKind::Num(n), i)),
         // A magnitude that overflows to ±inf, or an otherwise-unparseable numeric run, is a located
-        // refusal — never a non-finite `Number` (mirrors docs/format.md R6 for the literal domain).
+        // refusal — never a non-finite `Number` (mirrors the literal lexer: a non-finite spelling is text, never a Number).
         _ => Err(Diag::new(
             DiagCode::InvalidNumber,
             Span::new(start, i),
@@ -336,7 +336,7 @@ fn lex_word(src: &str, b: &[u8], i: usize) -> (TokenKind, usize) {
     if j < b.len() && b[j] == b'!' {
         return (TokenKind::SheetBang(w.to_string()), j + 1);
     }
-    // UPPERCASE-only boolean constants (docs/format.md R5).
+    // UPPERCASE-only boolean constants (deliberate — no case-folding).
     match w {
         "TRUE" => return (TokenKind::Bool(true), j),
         "FALSE" => return (TokenKind::Bool(false), j),
@@ -362,7 +362,7 @@ fn lex_word(src: &str, b: &[u8], i: usize) -> (TokenKind, usize) {
 
 /// If `s` begins with one of the nine error literals, return its [`ErrKind`] and byte length. The
 /// seven live errors and the two reserved (`#SPILL!`/`#CALC!`) are all recognized so a formula can
-/// round-trip them; uppercase-only (docs/format.md R5). Longest spellings are unambiguous — no
+/// round-trip them; uppercase-only. Longest spellings are unambiguous — no
 /// literal is a prefix of another (each ends in `!`, `?`, or the `A` of `#N/A`).
 fn match_error_literal(s: &str) -> Option<(ErrKind, usize)> {
     const LITS: &[(&str, ErrKind)] = &[

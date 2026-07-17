@@ -107,7 +107,7 @@ pub enum DiagCode {
     /// registry data, not a hand-fork in the parser.
     ReservedRefFunction,
     /// A `TEXT(value, format)` call whose format is a *literal* string naming no supported v1 code
-    /// (docs/format.md §13). This is a PARSE verdict, not an eval-time value: a wrong-format guess is
+    /// (the subset `func::text::classify_format` accepts). This is a PARSE verdict, not an eval-time value: a wrong-format guess is
     /// refused up front rather than silently mis-rendered, so the refusal is located and named rather
     /// than a `#VALUE!` guess. Vetting is only possible when the format is a literal; a NON-LITERAL
     /// (computed) format is ACCEPTED at parse and deferred to eval (accept-under-uncertainty — v1

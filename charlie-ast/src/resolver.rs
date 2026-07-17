@@ -7,8 +7,8 @@ use crate::value::{ArrayView, Value};
 /// The instant tests and conformance PIN the [`Resolver::now_serial`] clock to: 2023-01-01T12:00:00,
 /// i.e. Excel date-time serial `44927.5` (date serial `44927` = 2023-01-01, `+0.5` = noon). A single
 /// source of truth so the engine's test grid and the conformance stub agree, keeping every
-/// `TODAY()`/`NOW()` fixture deterministic. (`44927` = 2023-01-01 is the same anchor
-/// `docs/format.md` §13.1 uses for the `TEXT` date example.)
+/// `TODAY()`/`NOW()` fixture deterministic. (`44927` = 2023-01-01 is the same anchor the `TEXT`
+/// `yyyy-mm-dd` date example uses — see `func::text::serial_to_ymd`.)
 pub const PINNED_NOW_SERIAL: f64 = 44927.5;
 
 /// The Excel date-time serial of the Unix epoch (1970-01-01T00:00:00). The single source of truth

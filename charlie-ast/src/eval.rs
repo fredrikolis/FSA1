@@ -337,7 +337,7 @@ pub(crate) fn to_text(v: &Value) -> Result<String, ErrKind> {
 /// as a 21-digit integer, diverging from Excel).
 ///
 /// Public so the filesystem-model's display surface ([`charlie_model::display_value`]) spells a
-/// rendered/`charlie eval` number through this SAME General formatter — the number→text rule (15-sig
+/// rendered/`charlie-cli eval` number through this SAME General formatter — the number→text rule (15-sig
 /// General, scientific outside `[-4, 15)`, unsigned `0` for `-0.0`) has ONE home, so the `&`/`TEXT`
 /// text form and the grid/eval display form never diverge.
 pub fn num_to_text(n: f64) -> String {

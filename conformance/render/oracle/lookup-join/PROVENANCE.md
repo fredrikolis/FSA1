@@ -53,7 +53,7 @@ python3 oracle/lookup-join/compute_oracle.py      # regenerates oracle.csv and o
 
 The script writes its outputs beside itself, so cwd only sets where the script path resolves.
 Outputs are stable, sorted by (tab, row, address). Diff `oracle.csv` against a future
-charlie render to grade the engine cell-for-cell (QA-ladder Tier 6, cell-exact).
+charlie-cli render to grade the engine cell-for-cell (QA-ladder Tier 6, cell-exact).
 
 ## Independent cross-check (H12 = 148.20)
 

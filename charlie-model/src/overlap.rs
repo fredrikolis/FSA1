@@ -1,4 +1,4 @@
-// Concern: the rectangular REGION a file claims (`Rect`, inclusive zero-based corners) and the OVERLAP detector — across a tab's files, find any two whose declared regions intersect and raise a located `Overlap` diagnostic naming BOTH files and the contested cells; precedence is REJECT, never a guessed winner (FORMAT §7) | Non-concern: parsing the filename that produced a `Rect` (filename.rs), and gaps between regions (a gap is Blank, not an error) | IO: (a tab name, its files' `(name, Rect)` claims) -> `Vec<Diagnostic>` (one per intersecting pair)
+// Concern: the rectangular REGION a file claims (`Rect`, inclusive zero-based corners) and the OVERLAP detector — across a tab's files, find any two whose declared regions intersect and raise a located `Overlap` diagnostic naming BOTH files and the contested cells; precedence is REJECT, never a guessed winner (this crate owns the overlap policy — SPEC has no winner-picking rule) | Non-concern: parsing the filename that produced a `Rect` (filename.rs), and gaps between regions (a gap is Blank, not an error) | IO: (a tab name, its files' `(name, Rect)` claims) -> `Vec<Diagnostic>` (one per intersecting pair)
 //! Region geometry and the overlap detector: [`Rect`], [`detect_overlaps`].
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -63,8 +63,10 @@ impl Rect {
 
 /// Detect every pair of files in one tab whose declared regions intersect. Each intersecting pair
 /// yields one located [`Code::Overlap`] diagnostic naming both files and the contested cells; the
-/// precedence rule is REJECT (FORMAT §7), so no winner is chosen. A disjoint set yields an empty
-/// vec (gaps are Blank, not errors).
+/// precedence rule is REJECT, so no winner is chosen (v1 never picks one by ordering, recency, or
+/// specificity — the workbook is invalid until the author removes the overlap). Edge-touching (a
+/// shared boundary but no shared cell) is NOT an overlap; a disjoint set yields an empty vec (gaps
+/// are Blank, not errors).
 pub fn detect_overlaps(tab: &str, files: &[(String, Rect)]) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for i in 0..files.len() {

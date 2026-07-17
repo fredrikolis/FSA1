@@ -108,7 +108,7 @@ fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) ->
 /// empty. An array (which a placed cell never is, but defended) shows its top-left cell.
 ///
 /// The number case defers to [`charlie_ast::num_to_text`] — the SAME General formatter the `&`/`TEXT`
-/// text form uses — so the grid/`charlie eval` display and the concatenation text never diverge:
+/// text form uses — so the grid/`charlie-cli eval` display and the concatenation text never diverge:
 /// extreme magnitudes render in scientific form (`1E+20`, `1E-09`, `1.23456789012346E+15`) instead of
 /// leaking Rust's full-precision `Display`, and `-0.0` canonicalizes to an unsigned `0` (Excel never
 /// shows `-0`).

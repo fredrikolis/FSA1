@@ -1,15 +1,16 @@
-// Concern: the DATE/TIME worksheet functions (DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW) — the Excel 1900 date-serial built-ins WITH the 1900 leap-year bug replicated (`serial_from_ymd`/`serial_to_ymd` are the one place it lives), the valid serial band, and the TODAY/NOW volatiles that read the resolver's injectable clock (never `std::time` from here) | Non-concern: the registry table + dispatch (func/mod.rs), the injectable clock seam (eval.rs/`Resolver` own `now_serial`), and the shared `one_num`/`arg_text`/`finite_or_num` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the DATE/TIME worksheet functions (DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW) — the Excel 1900 date-serial built-ins WITH the 1900 leap-year bug replicated (the ymd->serial map `serial_from_ymd` lives here; its inverse `serial_to_ymd` + the shared epoch live in `func::text`, which TEXT's date render also needs), the valid serial band, and the TODAY/NOW volatiles that read the resolver's injectable clock (never `std::time` from here) | Non-concern: the registry table + dispatch (func/mod.rs), the injectable clock seam (eval.rs/`Resolver` own `now_serial`), and the shared `one_num`/`arg_text`/`finite_or_num` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
 // Date/time batch v1: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW.
 //
-// EPOCH (the load-bearing call, worth a reviewer's eye — docs/format.md §14, and §13.2 for the
-// shared serial↔date mapping): the Excel 1900 date-serial system, WITH Excel's 1900 leap-year bug
+// EPOCH (the load-bearing call, worth a reviewer's eye — the shared serial↔date mapping is single-
+// homed across two files: the forward `serial_to_ymd` in `func::text` and its inverse `serial_from_ymd`
+// below): the Excel 1900 date-serial system, WITH Excel's 1900 leap-year bug
 // REPLICATED (serial 60 = the fictional 1900-02-29; serials ≥ 61 shift back one day), so a serial an
 // xlsx round-trip authored in Excel maps to the same civil date later. `serial_to_ymd` (the forward
-// map, already used by TEXT's date render) and `serial_from_ymd` (its inverse) are the one place that
-// bug lives; DATE/EDATE build a serial by day-offset arithmetic in the CONTIGUOUS serial space, so
-// DATE(1900,2,29) reproduces the phantom serial 60 with no special case.
+// map in `func::text`, already used by TEXT's date render) and `serial_from_ymd` (its inverse, below)
+// each carry that same bug; DATE/EDATE build a serial by day-offset arithmetic in the CONTIGUOUS
+// serial space, so DATE(1900,2,29) reproduces the phantom serial 60 with no special case.
 //
 // VOLATILITY: TODAY/NOW read the resolver's INJECTABLE clock (`EvalCtx::now_serial` →
 // `Resolver::now_serial`), never `std::time` from here — so conformance/tests PIN "now" to a fixed

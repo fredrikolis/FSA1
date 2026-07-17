@@ -515,7 +515,8 @@ pub static FUNCS: &[FuncDef] = &[
     // --- Date/time batch v1: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW. The Excel 1900 date-serial
     //     system (with the leap-year bug replicated — see `serial_to_ymd`/`serial_from_ymd`); TODAY/NOW
     //     are VOLATILE and read the resolver's injectable clock (`now_serial`), pinned deterministically
-    //     in tests + conformance. See docs/format.md §14. ---
+    //     in tests + conformance. The serial↔date maps: the forward `serial_to_ymd` lives in
+    //     `func::text` (TEXT's date render needs it), its inverse `serial_from_ymd` in `func::date`. ---
     FuncDef {
         name: "DATE",
         min_args: 3,

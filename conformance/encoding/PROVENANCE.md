@@ -42,7 +42,8 @@ rendered value:
    removed. The surviving edge/invalid fixtures had their `EXPECTED.md` verdicts rewritten to cite
    SPEC.md's FT‑invariants and the current diagnostic codes (`dimension-mismatch`, `ragged-grid`,
    `non-canonical-range`, `dollar-in-filename`, `degenerate-range`, `overlap`).
-4. **`FORMAT.md`** was replaced by a superseded-pointer to `SPEC.md` + `docs/format.md`.
+4. **`FORMAT.md`** was replaced by a superseded-pointer to `SPEC.md` + `charlie-cli --guide` (the former
+   `docs/format.md` guide is retired; its rationale now lives in the governing code).
 
 ## What this corpus is graded by
 
@@ -53,7 +54,7 @@ rendered value:
 - **The `conformance-forms` / `invalid-forms` fixtures** carry per-fixture and consolidated
   `EXPECTED.md` ledgers documenting the expected static verdict (a filename/grid rejection or an
   overlap). They are the human-readable oracle for the encoding rules; each was verified against
-  `charlie check` during the migration.
+  `charlie-cli check` during the migration.
 
 ## Fingerprint (oracle-input purity)
 

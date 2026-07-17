@@ -39,7 +39,8 @@ pub enum Code {
     /// A deserialized grid whose dimensions do not fill the file's declared closed range exactly
     /// (FT-8) — a located dimension error.
     DimensionMismatch,
-    /// Two files in one tab claim intersecting cells (FORMAT §7).
+    /// Two files in one tab claim intersecting cells (a hard reject; the overlap policy lives in
+    /// [`crate::overlap`]).
     Overlap,
     /// A `=formula` cell depends on itself, directly or through a chain (demand-driven eval, B3) —
     /// a `#REF!`-class refusal. The evaluator refuses the cycle instead of hanging / overflowing.

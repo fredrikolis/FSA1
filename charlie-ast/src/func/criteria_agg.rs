@@ -10,7 +10,8 @@ use super::*;
 // CONFORMANCE (an Excel-semantics call worth a reviewer's eye): every criteria range and the value
 // range must share the SAME on-disk shape (rows × cols) — a mismatch is a STATIC `#VALUE!`, not
 // Excel's lenient legacy reshape-from-the-value-range's-corner. This is the same "static conformance
-// beats runtime guessing" stance the encoding layer takes (format.md §6). A blank/text cell in a
+// beats runtime guessing" stance the encoding layer takes (a static structural refusal, cf.
+// charlie-model's FT-8 dimension check). A blank/text cell in a
 // value range is ignored (only numbers aggregate); an error in a value range at a MATCHING position
 // propagates; an error IN a criteria range never matches; an error-valued criterion propagates.
 /// The reduction a masked aggregation performs over the numeric matching cells of a value range.

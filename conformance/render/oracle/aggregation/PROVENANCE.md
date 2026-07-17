@@ -19,7 +19,7 @@ region/product criteria keys) and computes what each formula *should* render.
   `Sales/A2:E13.range`; region keys `[EMEA, AMER, APAC]` (`Summary/A2:A4`); product keys
   `[Widget, Gadget, Sprocket]` (`Summary/A7:A9`). All inputs are constants — no dates, no
   volatiles (`TODAY/NOW/RAND`) — so the result is deterministic and reproducible.
-- **Formula → oracle method mapping (independent restatement, not charlie eval):**
+- **Formula → oracle method mapping (independent restatement, not charlie-cli eval):**
   | Charlie formula (file)                          | Oracle computation (pandas) |
   |-------------------------------------------------|-----------------------------|
   | `Sales/D14` `=SUM(D2:D13)`                       | `df.Units.sum()` |

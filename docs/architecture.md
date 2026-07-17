@@ -97,4 +97,4 @@ config comments use.
 | **W1** — Substrate | Frozen sample-directory corpus + an independent oracle + the QA-ladder harness. `.annotated-tree.toml` `forbid_orphans` + the first `deny` edges become meaningful once `charlie-model` lands. |
 | **W2** — Encoding | On-disk format spec + `charlie-model` skeleton parsing filename↔range + broadcast-conformance validator + overlap detector. |
 | **W3** — AST engine | `charlie-ast`: lexer + Pratt parser + evaluator for the ~70-function set behind `Resolver`; located refusals; no-panic fuzz; the coverage ratchet. The conformance backslide state-guard is wired into `.githooks/pre-commit` here. |
-| **W4** — Model + render | Demand-driven eval wired to `charlie-ast`; `charlie render` ASCII output (values/functions/annotation modes); overlap/dimension/cycle diagnostics. |
+| **W4** — Model + render | Demand-driven eval wired to `charlie-ast`; `charlie-cli render` ASCII output (values/functions/annotation modes); overlap/dimension/cycle diagnostics. |

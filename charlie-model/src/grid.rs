@@ -49,12 +49,16 @@ impl Grid {
 /// The grid's own dimensions come from the content; whether they FILL the file's declared range
 /// (FT-8) is checked separately in [`crate::parse_file`].
 pub fn deserialize_tsv(file: &str, content: &str) -> Result<Grid, Diagnostic> {
-    // A trailing newline is allowed and ignored (a lone trailing CR too).
+    // A single trailing newline is stripped and ignored (a lone trailing CR after it tolerated too),
+    // so a stray CRLF at end-of-file adds no phantom row. An interior CR is NOT stripped — it rides
+    // inside its token's text.
     let content = content.strip_suffix('\n').unwrap_or(content);
     let content = content.strip_suffix('\r').unwrap_or(content);
 
-    // Empty content is a single Blank cell (the 0-D range `A1` written with no body); the FT-8
-    // fills-range check decides whether a `1x1` Blank grid fits the file's declared range.
+    // An empty body is a single Blank cell (the 0-D range `A1` written with no body). This resolves
+    // toward ACCEPT for the single-cell case (ast-standards PART 6: a false-reject is the cardinal
+    // sin) — a `1x1` Blank fills an `A1` file exactly; for a multi-cell range it is short and the
+    // FT-8 fills-range check refuses it. Consistent with an unclaimed gap already reading Blank.
     if content.is_empty() {
         return Ok(Grid {
             shape: Shape { rows: 1, cols: 1 },
@@ -133,6 +137,9 @@ pub fn lex_literal(token: &str) -> Value {
     if token.len() >= 2 && token.starts_with('"') && token.ends_with('"') {
         return Value::Text(unescape_quoted(&token[1..token.len() - 1]));
     }
+    // TRUE/FALSE and the seven error literals below match UPPERCASE only — deliberate, no
+    // case-folding (`true`, `#ref!` fall through to Text), so the boolean/error domain has exactly
+    // one canonical spelling on disk.
     match token {
         "TRUE" => return Value::Bool(true),
         "FALSE" => return Value::Bool(false),
