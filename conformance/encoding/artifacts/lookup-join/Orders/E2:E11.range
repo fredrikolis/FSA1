@@ -1,2 +1,0 @@
-# Concern: the same unit_price joined via INDEX/MATCH — an independent cross-check that must equal column D (unmatched key P099 yields #N/A) | Non-concern: line totals (F:H) | IO: none
-=INDEX(Products!$C$2:$C$7,MATCH(B2,Products!$A$2:$A$7,0))

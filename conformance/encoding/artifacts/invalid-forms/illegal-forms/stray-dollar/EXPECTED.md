@@ -1,21 +1,25 @@
 <!-- Concern: the expected reject verdict for a filename carrying a stray $ absolute marker | Non-concern: the other illegal-forms cases | IO: output -->
 # EXPECTED — illegal-forms: stray `$` in filename
 
-**Fixture:** `Sheet/$A$1.cell`
-**Rule under test:** FORMAT.md §2 (absolute markers `$`: none in filenames) + §11.
+**Fixture:** `Sheet/$A$1`
+**Rule under test:** SPEC.md FT‑3 (a file's name is a closed range) + the canonical-form policy
+(no `$` in filenames).
 
 ## Inputs
-- Filename `$A$1.cell` carries `$` absolute/mixed markers. The body (`42`) is valid — the sole defect is the filename.
+- Filename `$A$1` carries `$` absolute/mixed markers. The body (`42`) is valid — the sole defect is the
+  filename.
 
 ## Verdict: **REJECT — `$` is meaningless and rejected in a filename.**
-A file's own address is intrinsically a fixed location, so `$` on the left of the dot has no meaning and is rejected. `$` exists **only inside formula bodies** (§4), where it governs relative-ref offsetting under fill (§5). The loader rejects at filename parse.
+A file's own address is intrinsically a fixed location, so `$` on a filename has no meaning and is
+rejected. `$` lives only inside formula bodies, where it governs relative-vs-absolute references. The
+loader rejects at filename parse.
 
-## Expected diagnostic (shape)
+## Expected diagnostic (verbatim)
 ```
-error[filename]: "$" is not allowed in a filename (absolute markers live only in formula bodies)
-  Sheet/$A$1.cell
-  fix: rename to  A1.cell
+error[dollar-in-filename]: $ is not allowed in a filename (it lives in formula bodies): "$A$1"
+  $A$1 (byte 0)
 ```
 
 ## Why (citation)
-FORMAT.md §2: *"Absolute markers (`$`): none in filenames … `$` is meaningless on the left of the dot and is rejected."* Also §11: *"`$A$1.cell` — `$` in a filename → reject (`$` lives in formula bodies only)."*
+SPEC.md FT‑3 + FT‑1: A1 addressing uses `$` (`$C$7`) inside formula bodies; a filename is a bare
+canonical closed range with no `$`.

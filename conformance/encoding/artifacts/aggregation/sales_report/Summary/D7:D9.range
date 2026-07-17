@@ -1,2 +1,0 @@
-# Concern: average revenue per product (criteria AVERAGE group-by) | Non-concern: the totals in B | IO: output
-=AVERAGEIFS(Sales!E$2:E$13, Sales!C$2:C$13, A7)

@@ -30,12 +30,12 @@ jobs:
       - name: clippy -D warnings
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: oracle-input purity (frozen corpus fingerprint)
-        # The frozen W1 encoding corpus is a graded ORACLE INPUT: charlie-model is graded AGAINST
-        # these fixtures and their EXPECTED ledgers and must never author/edit/regenerate them
-        # (conformance/encoding/PROVENANCE.md). Re-hash every migrated file against the manifest so a
-        # silent fixture or EXPECTED-ledger rewrite fails CI here — this is the mechanical enforcement
-        # of "oracle-input purity" (the encoding_conformance.rs harness does NOT assert cell VALUES in
-        # the 6 valid workbooks, so editing a literal inside one would otherwise flip no verdict).
+        # The frozen encoding corpus is a graded ORACLE INPUT: charlie-model is graded AGAINST these
+        # fixtures (the render zero-divergence gate in charlie-model/tests/render_conformance.rs grades
+        # the 6 valid workbooks; the EXPECTED ledgers document the invalid/edge verdicts) and must
+        # never author/edit/regenerate them (conformance/encoding/PROVENANCE.md). Re-hash every corpus
+        # file against the manifest so a silent fixture or EXPECTED-ledger rewrite fails CI here — this
+        # is the mechanical enforcement of "oracle-input purity".
         # Kept out of the crypto-free charlie-model (system sha256sum, per PROVENANCE.md), so it lives
         # here rather than in a Rust test. Paths in the manifest are relative to the corpus root.
         working-directory: conformance/encoding

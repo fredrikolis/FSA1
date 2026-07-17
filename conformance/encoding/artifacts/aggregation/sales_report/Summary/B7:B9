@@ -1,0 +1,4 @@
+# Concern: total revenue per product (criteria SUM group-by) | Non-concern: order counts and averages | IO: output
+=SUMIFS(Sales!E$2:E$13, Sales!C$2:C$13, A7)
+=SUMIFS(Sales!E$2:E$13, Sales!C$2:C$13, A8)
+=SUMIFS(Sales!E$2:E$13, Sales!C$2:C$13, A9)

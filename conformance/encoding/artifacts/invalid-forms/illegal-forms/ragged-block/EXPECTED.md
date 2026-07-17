@@ -1,26 +1,29 @@
-<!-- Concern: the expected reject verdict for a ragged literal block (unequal field counts per line) | Non-concern: the other illegal-forms cases | IO: output -->
-# EXPECTED — illegal-forms: ragged literal block
+<!-- Concern: the expected reject verdict for a ragged TSV grid (unequal field counts per line) | Non-concern: the other illegal-forms cases | IO: output -->
+# EXPECTED — illegal-forms: ragged TSV grid
 
-**Fixture:** `Sheet/A1:C2.range`
-**Rule under test:** FORMAT.md §5 (literal-block layout; equal field counts) + §11.
+**Fixture:** `Sheet/A1:C2`
+**Rule under test:** SPEC.md FT‑5 (the TSV deserializer) — a grid's rows must have equal field counts.
 
 ## Inputs
 - Filename & annotation are canonical/valid — the sole defect is the body.
-- Body (§4.2, §5):
+- Body (TSV, FT‑5):
   ```
-  1  2  3      (3 fields)
-  4  5         (2 fields)
+  1	2	3      (3 fields)
+  4	5         (2 fields)
   ```
   Field count differs per line (3 then 2) ⇒ **ragged**.
 
 ## Verdict: **REJECT — `#VALUE!`-class structural refusal at load.**
-A literal block is TSV with an identical field count on every line (§5). Because the field counts are unequal, the block has no well-defined literal shape; charlie refuses it **structurally** — before, and independent of, the §6 broadcast-conformance check.
+The TSV deserializer builds a grid of tab-separated columns; a row whose field count differs from the
+first has no well-defined grid shape and is refused structurally, before any fill-the-range (FT‑8)
+check.
 
-## Expected diagnostic (shape)
+## Expected diagnostic (verbatim)
 ```
-error[value]: ragged literal block — field count differs per line
-  Sheet/A1:C2.range  line 2 has 3 fields, line 3 has 2
+error[ragged-grid]: ragged TSV grid: row 2 has 2 field(s), expected 3 (#VALUE!-class)
+  A1:C2 (body row 2)
 ```
 
 ## Why (citation)
-FORMAT.md §5: *"Field count must be identical on every line (ragged blocks are illegal — a `#VALUE!`-class structural refusal at load)."* Also §11: *"A `.range` literal block with unequal field counts per line → ragged → `#VALUE!`-class reject."*
+SPEC.md FT‑5 / FT‑13 (totality): a malformed file yields a located refusal pointing at the offending
+row, never a crash or a silent wrong value.

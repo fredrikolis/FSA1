@@ -1,2 +1,0 @@
-# Concern: aging bucket for the row = bin days outstanding into 0-30/31-60/61-90/90+ | Non-concern: the per-bucket rollup counts (summary block) | IO: none
-=IFS(E2<=30,"0-30",E2<=60,"31-60",E2<=90,"61-90",TRUE,"90+")

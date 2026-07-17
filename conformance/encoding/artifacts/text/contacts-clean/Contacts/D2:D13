@@ -1,0 +1,13 @@
+# Concern: last name = everything after the first space of the cleaned full name | Non-concern: the first-name token (C) | IO: none
+=MID(TRIM(A2),FIND(" ",TRIM(A2))+1,LEN(TRIM(A2)))
+=MID(TRIM(A3),FIND(" ",TRIM(A3))+1,LEN(TRIM(A3)))
+=MID(TRIM(A4),FIND(" ",TRIM(A4))+1,LEN(TRIM(A4)))
+=MID(TRIM(A5),FIND(" ",TRIM(A5))+1,LEN(TRIM(A5)))
+=MID(TRIM(A6),FIND(" ",TRIM(A6))+1,LEN(TRIM(A6)))
+=MID(TRIM(A7),FIND(" ",TRIM(A7))+1,LEN(TRIM(A7)))
+=MID(TRIM(A8),FIND(" ",TRIM(A8))+1,LEN(TRIM(A8)))
+=MID(TRIM(A9),FIND(" ",TRIM(A9))+1,LEN(TRIM(A9)))
+=MID(TRIM(A10),FIND(" ",TRIM(A10))+1,LEN(TRIM(A10)))
+=MID(TRIM(A11),FIND(" ",TRIM(A11))+1,LEN(TRIM(A11)))
+=MID(TRIM(A12),FIND(" ",TRIM(A12))+1,LEN(TRIM(A12)))
+=MID(TRIM(A13),FIND(" ",TRIM(A13))+1,LEN(TRIM(A13)))

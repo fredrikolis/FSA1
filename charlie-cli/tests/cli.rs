@@ -57,8 +57,8 @@ fn run(args: &[&str]) -> (i32, String) {
 #[test]
 fn render_values_draws_the_computed_cone() {
     let fx = Fixture::new("render");
-    fx.file("Sheet1", "A1.cell", "20000")
-        .file("Sheet1", "B1.cell", "=A1*2");
+    fx.file("Sheet1", "A1", "20000")
+        .file("Sheet1", "B1", "=A1*2");
     let (code, out) = run(&["render", fx.path().to_str().unwrap()]);
     assert_eq!(code, 0, "clean render exits 0; got:\n{out}");
     // The header row, the gutter, and the demand-driven value B1 = 40000.
@@ -69,8 +69,7 @@ fn render_values_draws_the_computed_cone() {
 #[test]
 fn render_functions_shows_formula_text() {
     let fx = Fixture::new("funcs");
-    fx.file("Sheet1", "A1.cell", "2")
-        .file("Sheet1", "B1.cell", "=A1*2");
+    fx.file("Sheet1", "A1", "2").file("Sheet1", "B1", "=A1*2");
     let (code, out) = run(&["render", fx.path().to_str().unwrap(), "--functions"]);
     assert_eq!(code, 0);
     assert!(out.contains("=A1*2"), "formula text in --functions:\n{out}");
@@ -79,7 +78,7 @@ fn render_functions_shows_formula_text() {
 #[test]
 fn render_missing_tab_is_not_found() {
     let fx = Fixture::new("notab");
-    fx.file("Sheet1", "A1.cell", "1");
+    fx.file("Sheet1", "A1", "1");
     let (code, _) = run(&["render", fx.path().to_str().unwrap(), "--tab", "Nope"]);
     assert_eq!(code, 24, "an unknown tab is exit 24 (not found)");
 }
@@ -87,8 +86,7 @@ fn render_missing_tab_is_not_found() {
 #[test]
 fn check_clean_workbook_exits_zero() {
     let fx = Fixture::new("clean");
-    fx.file("Sheet1", "A1.cell", "1")
-        .file("Sheet1", "B1.cell", "=A1+1");
+    fx.file("Sheet1", "A1", "1").file("Sheet1", "B1", "=A1+1");
     let (code, out) = run(&["check", fx.path().to_str().unwrap()]);
     assert_eq!(code, 0, "clean check exits 0:\n{out}");
     assert!(out.contains("no diagnostics"), "clean report:\n{out}");
@@ -97,8 +95,7 @@ fn check_clean_workbook_exits_zero() {
 #[test]
 fn check_cycle_reports_and_exits_three() {
     let fx = Fixture::new("cycle");
-    fx.file("Sheet1", "A1.cell", "=B1")
-        .file("Sheet1", "B1.cell", "=A1");
+    fx.file("Sheet1", "A1", "=B1").file("Sheet1", "B1", "=A1");
     let (code, out) = run(&["check", fx.path().to_str().unwrap()]);
     assert_eq!(
         code, 3,
@@ -114,8 +111,8 @@ fn check_cycle_reports_and_exits_three() {
 #[test]
 fn check_overlap_reports_and_exits_three() {
     let fx = Fixture::new("overlap");
-    fx.file("Sheet1", "A1:C3.range", "1\t2\t3\n4\t5\t6\n7\t8\t9")
-        .file("Sheet1", "B2.cell", "x");
+    fx.file("Sheet1", "A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9")
+        .file("Sheet1", "B2", "x");
     let (code, out) = run(&["check", fx.path().to_str().unwrap()]);
     assert_eq!(code, 3, "an overlap is exit 3:\n{out}");
     assert!(out.contains("overlap"), "the overlap code:\n{out}");
@@ -131,7 +128,7 @@ fn check_missing_path_is_not_found() {
 fn eval_computes_a_sum_against_the_workbook() {
     // A range SUM over literal cells: the ad-hoc formula pulls A1:A3 through the model.
     let fx = Fixture::new("eval-sum");
-    fx.file("Sheet1", "A1:A3.range", "1\n2\n3");
+    fx.file("Sheet1", "A1:A3", "1\n2\n3");
     let (code, out) = run(&["eval", fx.path().to_str().unwrap(), "=SUM(A1:A3)"]);
     assert_eq!(code, 0, "clean eval exits 0; got:\n{out}");
     assert_eq!(out.trim(), "6", "SUM(A1:A3) = 6:\n{out}");
@@ -144,7 +141,7 @@ fn eval_number_uses_excel_general_format() {
     // full-precision Display, a 16-integer-digit value rounds to 15 sig digits, and a computed -0.0
     // canonicalizes to an unsigned 0 (Excel never shows -0). Oracle: Excel's General (%.15g) rule.
     let fx = Fixture::new("eval-general");
-    fx.file("Sheet1", "A1.cell", "0");
+    fx.file("Sheet1", "A1", "0");
     let big = fx.path().to_str().unwrap();
     for (formula, want) in [
         ("=1e20", "1E+20"),
@@ -168,7 +165,7 @@ fn eval_sumproduct_boolean_coercion_is_not_a_value_error() {
     // The `--(cond)` idiom: a boolean array coerces to 1/0 under the double-unary, so SUMPRODUCT
     // counts the cells > 7 (15, 25, 10, 30 => 4 of 5) rather than refusing #VALUE!.
     let fx = Fixture::new("eval-sumproduct");
-    fx.file("Sheet1", "A1:A5.range", "5\n15\n25\n10\n30");
+    fx.file("Sheet1", "A1:A5", "5\n15\n25\n10\n30");
     let (code, out) = run(&[
         "eval",
         fx.path().to_str().unwrap(),
@@ -184,8 +181,7 @@ fn eval_resolves_a_cross_tab_reference_against_the_named_tab() {
     // `--tab Summary` binds unqualified refs to Summary, and an explicit `Inputs!A1` reaches the
     // other tab: Inputs!A1 (10) * A1 (Summary!A1 = 4) = 40.
     let fx = Fixture::new("eval-cross");
-    fx.file("Inputs", "A1.cell", "10")
-        .file("Summary", "A1.cell", "4");
+    fx.file("Inputs", "A1", "10").file("Summary", "A1", "4");
     let (code, out) = run(&[
         "eval",
         fx.path().to_str().unwrap(),
@@ -201,7 +197,7 @@ fn eval_resolves_a_cross_tab_reference_against_the_named_tab() {
 fn eval_a_bad_formula_exits_non_zero() {
     // An unparseable formula is a located diagnostic (on stderr) and a non-zero exit.
     let fx = Fixture::new("eval-bad");
-    fx.file("Sheet1", "A1.cell", "1");
+    fx.file("Sheet1", "A1", "1");
     let (code, _) = run(&["eval", fx.path().to_str().unwrap(), "=SUM("]);
     assert_eq!(code, 3, "a parse error is a validation exit (3)");
 }
@@ -210,7 +206,7 @@ fn eval_a_bad_formula_exits_non_zero() {
 fn eval_an_error_value_exits_non_zero() {
     // A well-formed formula that evaluates to a spreadsheet error prints the error and exits non-zero.
     let fx = Fixture::new("eval-err");
-    fx.file("Sheet1", "A1.cell", "1");
+    fx.file("Sheet1", "A1", "1");
     let (code, out) = run(&["eval", fx.path().to_str().unwrap(), "=1/0"]);
     assert_eq!(code, 3, "an error-valued result exits 3:\n{out}");
     assert_eq!(out.trim(), "#DIV/0!", "the error value is printed:\n{out}");
@@ -219,7 +215,7 @@ fn eval_an_error_value_exits_non_zero() {
 #[test]
 fn eval_missing_formula_is_bad_args() {
     let fx = Fixture::new("eval-noformula");
-    fx.file("Sheet1", "A1.cell", "1");
+    fx.file("Sheet1", "A1", "1");
     let (code, _) = run(&["eval", fx.path().to_str().unwrap()]);
     assert_eq!(code, 2, "eval with no formula is bad args (2)");
 }
@@ -247,7 +243,7 @@ fn unknown_command_is_bad_args() {
 #[test]
 fn bad_range_is_bad_args() {
     let fx = Fixture::new("badrange");
-    fx.file("Sheet1", "A1.cell", "1");
+    fx.file("Sheet1", "A1", "1");
     let (code, _) = run(&["render", fx.path().to_str().unwrap(), "--range", "a1"]);
     assert_eq!(code, 2, "a non-canonical --range is exit 2");
 }
@@ -257,7 +253,7 @@ fn an_enormous_range_is_a_located_refusal_not_a_crash() {
     // `--range A1:A4294967295` is a syntactically-valid address pair; without a viewport cap it
     // aborts the process on allocation. It must instead be a clean bad-args refusal (exit 2).
     let fx = Fixture::new("hugerange");
-    fx.file("Sheet1", "A1.cell", "1");
+    fx.file("Sheet1", "A1", "1");
     let (code, _) = run(&[
         "render",
         fx.path().to_str().unwrap(),

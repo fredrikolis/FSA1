@@ -425,7 +425,8 @@ fn fold_range(lhs: Expr, rhs: Expr, span: Span) -> Result<Expr, Diag> {
     };
     // Normalize each axis to (min, max) independently, carrying each endpoint's `$`-anchor flag with
     // the corner it lands on, so a mixed range like `$E$2:E2` keeps "start absolute, end relative"
-    // through the normalization (drag-fill reads these per-corner flags in `RangeNode::offset`).
+    // through the normalization — the AST faithfully represents each corner's anchor for source
+    // round-trip, even though the engine resolves refs as absolute addresses (FT-9: no offsetting).
     let (start_col, start_col_abs, end_col, end_col_abs) = if a.col <= b.col {
         (a.col, a.col_abs, b.col, b.col_abs)
     } else {

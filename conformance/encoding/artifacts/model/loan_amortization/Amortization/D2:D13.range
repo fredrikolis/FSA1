@@ -1,2 +1,0 @@
-# Concern: period interest = opening balance x monthly rate (drag-fill; B2 re-anchors per row, rate stays absolute) | Non-concern: the principal portion (E column) | IO: none
-=B2*Inputs!$B$5

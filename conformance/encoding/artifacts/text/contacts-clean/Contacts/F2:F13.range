@@ -1,2 +1,0 @@
-# Concern: UNIQUE-style first-occurrence flag via expanding-window COUNTIF on the normalized email | Non-concern: removing the rows, which v1 does not do (UNIQUE spill is deferred) | IO: output
-=IF(COUNTIF($E$2:E2,E2)=1,"unique","dup")

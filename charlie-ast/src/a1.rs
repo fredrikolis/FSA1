@@ -1,8 +1,8 @@
-// Concern: the shared A1 ADDRESS grammar — parse an A1 address string (`$`-anchor flags, bijective base-26 column, 1-indexed row) into its raw components, and render a zero-based `(col,row)` back to A1 text; the single home for A1 syntax, reused by the filename parser (charlie-model) now and the formula parser later | Non-concern: the FILENAME grammar and its canonical-form policy (charlie-model owns `.cell`/`.range`, `:`-ranges, and the rejection of lowercase/leading-zero/`$`) and resolving an address to a value | IO: (an A1 address `&str`) -> `A1Address`, and `(col,row)` -> `String`
+// Concern: the shared A1 ADDRESS grammar — parse an A1 address string (`$`-anchor flags, bijective base-26 column, 1-indexed row) into its raw components, and render a zero-based `(col,row)` back to A1 text; the single home for A1 syntax, reused by the filename parser (charlie-model) now and the formula parser later | Non-concern: the FILENAME grammar and its canonical-form policy (charlie-model owns the bare closed-range filename, `:`-ranges, and the rejection of lowercase/leading-zero/`$`) and resolving an address to a value | IO: (an A1 address `&str`) -> `A1Address`, and `(col,row)` -> `String`
 //! Shared A1 address grammar: [`parse_a1`], [`format_cell`], [`format_column`].
 //!
 //! A1 is the syntax two later consumers share: the *filename* parser in `charlie-model` (a file
-//! `A1.cell` / `A3:G8.range` embeds A1 addresses) and the *formula* parser (W3, `=B2*C2`). Putting
+//! named `A1` / `A3:G8` is a closed range of A1 addresses) and the *formula* parser (`=B2*C2`). Putting
 //! the grammar here keeps it single-sourced; each consumer layers its own **policy** on the raw
 //! parse — the filename layer enforces canonical form (no `$`, uppercase, no leading zero), the
 //! formula layer will normalize instead. So [`parse_a1`] is deliberately lenient and *reports* the

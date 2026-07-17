@@ -1,30 +1,23 @@
-<!-- Concern: the expected verdict for a degenerate 1x1 .range filename, and which resolution FORMAT.md mandates | Non-concern: the broadcast fixtures | IO: output -->
-# EXPECTED — degenerate 1×1 range (`A1:A1.range`)
+<!-- Concern: the expected verdict for a degenerate 1x1 range filename under the current spec | Non-concern: the invalid-forms fixtures | IO: output -->
+# EXPECTED — degenerate 1×1 range (`A1:A1`)
 
-**Fixture:** `Cell/A1:A1.range`
-**Rule under test:** FORMAT.md §2 (canonical filename grammar) + §11 (illegal-forms checklist).
-
-> Placed under `conformance-forms/` because the brief lists it as an *edge case* to pin down; its
-> resolved verdict is nonetheless a **rejection**. FORMAT.md leaves no "valid-but-canonicalize"
-> option for this form.
+**Fixture:** `Cell/A1:A1`
+**Rule under test:** SPEC.md FT‑3 (a file's name is a *closed range*) + the filename canonical-form policy.
 
 ## Inputs
-- **Filename** `A1:A1.range` declares a range whose top-left equals its bottom-right ⇒ shape `1×1`.
+- **Filename** `A1:A1` declares a `left:right` range whose top-left equals its bottom-right ⇒ shape `1×1`.
 
-## Verdict: **REJECT (non-canonical / degenerate name).** FORMAT.md mandates **reject in favor of `A1.cell`** — not valid-but-canonicalize.
-A `.range` file must declare a rectangle of **≥2 cells** (§1: *"a RANGE … = a rectangular block of ≥2 cells"*). A 1×1 location is always a `.cell`, never a `.range`. The loader rejects the filename before any body/conformance check.
+## Verdict: **REJECT (degenerate range).**
+A `left:right` filename must span a rectangle whose endpoints differ; a 1×1 location is written as the
+single address `A1`, never as `A1:A1`. The loader rejects the filename before any body/grid check.
 
-## Expected diagnostic (shape)
-A located, filename-grammar refusal, e.g.:
+## Expected diagnostic (verbatim)
 ```
-error[filename]: degenerate 1x1 range is not a legal .range spelling
-  Cell/A1:A1.range  declares a single cell (top-left == bottom-right)
-  fix: rename to  A1.cell
+error[degenerate-range]: a 1x1 range is illegal; a single cell is written A1
+  A1:A1
 ```
 
 ## Why (citation)
-- FORMAT.md §2: *"A degenerate 1×1 range is illegal — a single cell is always `.cell`, never `A1:A1.range`."*
-- FORMAT.md §1: a `.range` is *"a rectangular block of ≥2 cells."*
-- FORMAT.md §11: *"`A1:A1.range` … → reject."*
-
-**Which the format mandates:** REJECT (canonicalize *by renaming to `A1.cell`*, i.e. the `.range` spelling itself is never accepted). There is no accept-and-rewrite path in the spec.
+SPEC.md FT‑3: *"A file's name is a closed range — a bounded rectangle of A1 cells with inclusive
+endpoints … one cell is `A1`."* The 1×1 `left:right` spelling is redundant with the single-address
+form and is refused; the fix is to name the file `A1`.

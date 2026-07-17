@@ -1,2 +1,0 @@
-# Concern: safe line_total = qty × the IFNA-guarded unit_price; the missing-key row contributes 0, never #N/A | Non-concern: the raw line_total in F | IO: none
-=C2*G2

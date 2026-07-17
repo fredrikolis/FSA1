@@ -1,42 +1,31 @@
-// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename<->range parser (`filename`), body classification (`body`), the broadcast-conformance validator (`conformance`), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula/annotation strings for the CLI to draw, and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling formula cells through `charlie_ast::eval`, memoized and cycle-safe; a multi-cell scalar `=formula` range DRAG-FILLS (each cell offsets the body's relative refs per §10.2 and is never §6-checked — a scalar drag-fill never raises `#SPILL!`), while only a top-level bare-range ARRAY formula has its evaluated result shape checked against its declared dims under §6 (`#SPILL!`-class on mismatch); `parse_file` ties the W2 parsers into one loaded `ParsedFile` (bet B1), and `Workbook` proves bet B3 (demand-driven eval) — additionally exposing `Workbook::eval_formula`, the AD-HOC `=formula` evaluator (the `charlie eval` entry) that parses a formula string and evaluates it with the loaded workbook as the resolver, returning a `FormulaOutcome` (a clean value vs a spreadsheet error value, each `display_value`-spelled) so the CLI branches its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
-//! # charlie-model — the filesystem spreadsheet model (W2–W4)
+// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename->closed-range parser (`filename`, FT-3), the TSV DESERIALIZER and the GRID it produces (`grid`, FT-4/FT-5), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula/annotation strings for the CLI to draw, and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling each formula cell through `charlie_ast::eval`, memoized and cycle-safe; `parse_file` ties the filename+annotation+deserializer into one loaded `ParsedFile` (its declared range and its grid), enforcing FT-8 (the grid fills the range exactly); `Workbook` resolves cells to `Value`s on demand and additionally exposes `Workbook::eval_formula`, the AD-HOC `=formula` evaluator (the `charlie eval` entry) returning a `FormulaOutcome` so the CLI branches its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
+//! # charlie-model — the filesystem spreadsheet model
 //!
-//! **CHARTER.** `charlie-model` owns the on-disk encoding (`FORMAT.md`): a tab is a folder and a
-//! cell/range is a file whose *name* declares its A1 region and whose *body* is a literal block or
-//! one opaque `=formula`. It is the middle crate of the firewall
-//! `charlie-cli -> charlie-model -> charlie-ast`: it depends on `charlie-ast` for the ref/value/
-//! shape types and the shared A1 grammar (the one allowed firewall edge), and the AST never learns
-//! of the filesystem model (the `["charlie-ast","charlie-model"]` deny edge enforces this).
+//! **CHARTER.** `charlie-model` owns the on-disk encoding: a tab is a folder and a file's *name* is a
+//! closed A1 range (FT-3), whose *content* deserializes into a [`Grid`] — for every coordinate one
+//! cell, an explicit value or a parsed `=formula` (FT-4). The current deserializer is TSV (FT-5): tab
+//! columns, newline rows, each field a literal or an `=formula`. It is the middle crate of the
+//! firewall `charlie-cli -> charlie-model -> charlie-ast`: it depends on `charlie-ast` for the
+//! ref/value/shape types and the shared A1 grammar (the one allowed firewall edge), and the AST never
+//! learns of the filesystem model.
 //!
-//! It proves **bet B1** (the filename<->range encoding and the broadcast-conformance dimension
-//! check) and **bet B3** (demand-driven eval): [`Workbook`] loads a sheet-directory and implements
-//! [`charlie_ast::Resolver`] over it, so `charlie_ast::eval` PULLS formula cells through the model —
-//! memoized, cycle-safe (a reference cycle is a located `#REF!`-class refusal, never a hang), and
-//! lazy (only transitively-requested cells compute). A formula range-file, opaque in W2, now
-//! evaluates: a multi-cell scalar `=formula` range **drag-fills** (each cell offsets the body's
-//! relative refs per §10.2 and is never §6-checked — a scalar drag-fill never raises `#SPILL!`),
-//! whereas a top-level bare-range **array** formula has its evaluated result shape checked against
-//! the declared range under §6, so a non-conforming array result becomes the static `#SPILL!`-class
-//! refusal — the B1<->engine shape handoff, live.
-//! Everything is a *located refusal* ([`Diagnostic`]) — never a panic, never a silent drop
-//! (ast-standards PART 5).
-//!
-//! The **living authoritative spec** for this encoding layer is `docs/format.md` (the as-built
-//! contract, including the six W2 hardening resolutions). `conformance/encoding/FORMAT.md` is the
-//! FROZEN provisional snapshot the corpus was authored against — fingerprinted, do not edit it.
+//! [`Workbook`] loads a sheet-directory and implements [`charlie_ast::Resolver`] over the grids, so
+//! `charlie_ast::eval` PULLS each formula cell through the model — memoized, cycle-safe (a reference
+//! cycle is a located `#REF!`-class refusal, never a hang), and lazy (only transitively-requested
+//! cells compute). A cell's value derives only from its own content (FT-9): a range file is an
+//! EXPLICIT grid, with no single-formula-offset (drag-fill) mechanism anywhere. Everything is a
+//! *located refusal* ([`Diagnostic`]) — never a panic, never a silent drop (ast-standards PART 5).
 
-pub mod body;
-pub mod conformance;
 pub mod diagnostic;
 pub mod filename;
+pub mod grid;
 pub mod overlap;
 pub mod render;
 pub mod workbook;
 
-pub use body::{Body, LiteralBlock, classify_body, lex_literal};
-pub use conformance::{Placement, classify_placement, validate_conformance};
 pub use diagnostic::{Code, Diagnostic, Loc, Severity};
-pub use filename::{FileKind, FileName, parse_filename};
+pub use filename::{FileName, parse_filename};
+pub use grid::{Cell, Grid, deserialize_tsv, lex_literal};
 pub use overlap::{Rect, detect_overlaps};
 pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, display_value, parse_viewport, render,
@@ -46,26 +35,22 @@ pub use workbook::{CellSource, FormulaOutcome, Workbook};
 
 use charlie_ast::Shape;
 
-/// One fully-loaded file: the filename declaration, the classified body, and — for a literal body —
-/// the broadcast placement. This is the end-to-end B1 artifact for a single file.
+/// One fully-loaded file: the declared closed range (region + shape) and the grid its content
+/// deserialized to. This is the end-to-end artifact for a single file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedFile {
-    pub kind: FileKind,
     pub region: Rect,
     pub declared_shape: Shape,
-    pub body: Body,
-    /// The §6 placement for a literal body; `None` for a formula body (result shape needs eval, W3).
-    pub placement: Option<Placement>,
+    pub grid: Grid,
 }
 
-/// Load one file from its name and contents: parse the filename, verify the line-1 annotation
-/// (FORMAT §8), classify the body, and — for a literal body — validate broadcast conformance
-/// against the declared shape. Never panics; the first violation is returned as a located
-/// [`Diagnostic`].
+/// Load one file from its name and contents: parse the filename to a closed range, verify the line-1
+/// `# ` annotation, deserialize the body to a [`Grid`], and enforce FT-8 (the grid fills the declared
+/// range exactly). Never panics; the first violation is returned as a located [`Diagnostic`].
 pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Diagnostic> {
     let declared = parse_filename(name)?;
 
-    // Line 1 is the mandatory `# ` annotation (FORMAT §8); the body is everything after it.
+    // Line 1 is the mandatory `# ` annotation; the body is everything after it.
     let (line1, rest) = match contents.split_once('\n') {
         Some((first, rest)) => (first, rest),
         None => (contents, ""),
@@ -74,28 +59,31 @@ pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Diagnostic> 
         return Err(Diagnostic::new(
             Code::MissingAnnotation,
             Loc::body(name, 1, 1),
-            "line 1 must be a '# ' annotation (FORMAT §8)".to_string(),
+            "line 1 must be a '# ' annotation".to_string(),
         ));
     }
 
-    let body = classify_body(name, rest)?;
-    let placement = match &body {
-        Body::Literal(block) => Some(validate_conformance(
-            name,
-            declared.declared_shape,
-            block.shape,
-        )?),
-        // A formula body is opaque in W2: its result shape is unknown until eval (W3), so no
-        // conformance verdict yet.
-        Body::Formula(_) => None,
-    };
+    let grid = deserialize_tsv(name, rest)?;
+    // FT-8: the deserialized grid must fill the file's closed range exactly.
+    if grid.shape != declared.declared_shape {
+        return Err(Diagnostic::new(
+            Code::DimensionMismatch,
+            Loc::file(name),
+            format!(
+                "the grid is {}x{} but the file's range {name:?} declares {}x{}: the grid must \
+                 fill the closed range exactly (FT-8)",
+                grid.shape.rows,
+                grid.shape.cols,
+                declared.declared_shape.rows,
+                declared.declared_shape.cols,
+            ),
+        ));
+    }
 
     Ok(ParsedFile {
-        kind: declared.kind,
         region: declared.region,
         declared_shape: declared.declared_shape,
-        body,
-        placement,
+        grid,
     })
 }
 
@@ -103,66 +91,67 @@ pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Diagnostic> 
 mod tests {
     use super::*;
     use charlie_ast::Value;
+    use grid::Cell;
 
     const ANN: &str = "# Concern: x | Non-concern: y | IO: input\n";
 
     #[test]
     fn loads_a_header_row_exact_match() {
-        // FORMAT §10: A1:D1.range, declared 1x4, literal shape 1x4 -> exact.
+        // A1:D1, declared 1x4, a 1x4 literal row -> fills the range.
         let contents = format!("{ANN}Product\tUnit Price\tQty\tLine Total");
-        let f = parse_file("A1:D1.range", &contents).unwrap();
+        let f = parse_file("A1:D1", &contents).unwrap();
         assert_eq!(f.declared_shape, Shape { rows: 1, cols: 4 });
-        assert_eq!(f.placement, Some(Placement::Exact));
+        assert_eq!(f.grid.shape, Shape { rows: 1, cols: 4 });
+        assert_eq!(
+            f.grid.cells[0],
+            Cell::Value(Value::Text("Product".to_string()))
+        );
     }
 
     #[test]
-    fn loads_a_drag_fill_formula_opaque() {
-        // FORMAT §10: D2:D6.range with a scalar =formula -> stored opaque, no conformance verdict.
+    fn loads_a_single_formula_cell() {
+        // A1 with a formula body -> a 1x1 grid whose one cell is a parsed formula.
         let contents = format!("{ANN}=B2*C2");
-        let f = parse_file("D2:D6.range", &contents).unwrap();
-        assert_eq!(f.body, Body::Formula("=B2*C2".to_string()));
-        assert_eq!(f.placement, None);
+        let f = parse_file("A1", &contents).unwrap();
+        assert!(matches!(&f.grid.cells[0], Cell::Formula { src, .. } if src == "=B2*C2"));
     }
 
     #[test]
-    fn loads_a_row_vector_broadcast_down() {
-        // FORMAT §10.1: B2:D4.range (3x3) with a 1x3 literal row vector -> broadcast down.
-        let contents = format!("{ANN}0.1\t0.2\t0.3");
-        let f = parse_file("B2:D4.range", &contents).unwrap();
-        assert_eq!(f.placement, Some(Placement::BroadcastDown));
+    fn loads_an_explicit_mixed_grid() {
+        // FT-9: a range file's content is the EXPLICIT grid; each cell is independently a literal or
+        // a formula. B2:D4 declares 3x3, and the body is a full 3x3 grid.
+        let contents = format!("{ANN}1\t2\t3\n=A1\t=B1\t=C1\n7\t8\t9");
+        let f = parse_file("B2:D4", &contents).unwrap();
+        assert_eq!(f.grid.shape, Shape { rows: 3, cols: 3 });
+        assert_eq!(f.grid.cells[0], Cell::Value(Value::Number(1.0)));
+        assert!(matches!(&f.grid.cells[3], Cell::Formula { src, .. } if src == "=A1"));
     }
 
     #[test]
     fn loads_a_blank_cell() {
-        let f = parse_file("A1.cell", "# ann only, no body").unwrap();
-        assert_eq!(
-            f.body,
-            Body::Literal(LiteralBlock {
-                shape: Shape { rows: 1, cols: 1 },
-                cells: vec![Value::Blank],
-            })
-        );
-        assert_eq!(f.placement, Some(Placement::Fill));
+        let f = parse_file("A1", "# ann only, no body").unwrap();
+        assert_eq!(f.grid.shape, Shape { rows: 1, cols: 1 });
+        assert_eq!(f.grid.cells, vec![Cell::Value(Value::Blank)]);
     }
 
     #[test]
     fn missing_annotation_is_rejected() {
         // First line is data, not a `# ` annotation.
-        let d = parse_file("A1:D1.range", "Product\tPrice").unwrap_err();
+        let d = parse_file("A1:D1", "Product\tPrice\tQty\tTotal").unwrap_err();
         assert_eq!(d.code, Code::MissingAnnotation);
     }
 
     #[test]
-    fn non_conforming_literal_body_is_rejected_at_load() {
-        // A 2x2 literal into a declared 3x3 -> neither exact nor broadcastable -> #SPILL!-class.
+    fn a_grid_that_does_not_fill_the_range_is_a_dimension_error() {
+        // FT-8: B2:D4 declares 3x3, but the body is only 2x2 -> a located dimension error.
         let contents = format!("{ANN}1\t2\n3\t4");
-        let d = parse_file("B2:D4.range", &contents).unwrap_err();
-        assert_eq!(d.code, Code::NonConforming);
+        let d = parse_file("B2:D4", &contents).unwrap_err();
+        assert_eq!(d.code, Code::DimensionMismatch);
     }
 
     #[test]
     fn a_bad_filename_is_rejected_before_the_body() {
-        let d = parse_file("g8:a3.range", &format!("{ANN}1\t2")).unwrap_err();
+        let d = parse_file("g8:a3", &format!("{ANN}1\t2")).unwrap_err();
         // Lowercase is caught per-address before the ordering check.
         assert_eq!(d.code, Code::LowercaseColumn);
     }

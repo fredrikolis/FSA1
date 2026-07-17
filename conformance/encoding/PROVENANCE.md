@@ -1,11 +1,11 @@
-<!-- Concern: the SOURCE + tamper-fingerprint of the frozen W1 encoding corpus graduating into prod, so charlie can never silently regenerate its own oracle inputs | Non-concern: the conformance verdict logic (charlie-model/tests/encoding_conformance.rs owns that) and how values are computed (the W4 value oracles, deliberately NOT migrated) | IO: none -->
-# PROVENANCE — W1 encoding corpus (frozen contract)
+<!-- Concern: the SOURCE + tamper-fingerprint of the encoding corpus, and the record of its value-preserving migration to the current (no-endings + explicit-grid + TSV) form | Non-concern: how values are computed (the render value oracles live in conformance/render) | IO: none -->
+# PROVENANCE — encoding corpus (frozen contract)
 
 This directory is a **sanctioned graduation** of the W1 encoding corpus from the product-manager
-workspace into the production repo. It is a **frozen CONTRACT**: charlie-model is *graded against*
-these fixtures and their EXPECTED verdict ledgers — it must never author, edit, or regenerate them.
-That is the point of the fingerprint below (**oracle-input purity**): if any byte of an input fixture
-or an EXPECTED ledger changes, the manifest check fails, exposing a silent oracle rewrite.
+workspace into the production repo, subsequently **migrated value-preservingly** to the current
+on-disk form. It is a **frozen CONTRACT** graded against the current spec (`SPEC.md`): the fingerprint
+below (**oracle-input purity**) makes any silent byte change in a fixture or an EXPECTED ledger fail a
+`sha256sum -c` check, exposing a rewrite.
 
 ## Source
 
@@ -13,34 +13,52 @@ or an EXPECTED ledger changes, the manifest check fails, exposing a silent oracl
 |---|---|
 | **Workspace** | `project-charlie` (product-manager dev-harness) |
 | **Path** | `exploration/experiments/01-encoding-corpus/` |
-| **Commit** | `9367ee90cc5417d9983cb70ed8846d6ad772f47b` |
-| **Commit subject** | `W1 Substrate: format spec + corpus + purity-checked oracle + QA ladder` |
-| **Migrated on** | 2026-07-15 |
+| **Original commit** | `9367ee90cc5417d9983cb70ed8846d6ad772f47b` (`W1 Substrate: format spec + corpus + purity-checked oracle + QA ladder`) |
+| **Originally migrated** | 2026-07-15 |
 
-## What was migrated (and what was deliberately NOT)
+## The value-preserving migration to the current form
 
-**Migrated — the W2 parse / conformance / overlap contract:**
-- `artifacts/` — the full corpus tree, verbatim:
-  - the **6 valid category workbooks** (`aggregation`, `conditional`, `dates`, `lookup-join`,
-    `model`, `text`) — every `.range` / `.cell` file must PARSE (§2/§4/§5), every literal body must
-    CONFORM under §6, and each tab must be OVERLAP-free (§7);
-  - `conformance-forms/` — the four broadcast/edge fixtures, each with its per-fixture `EXPECTED.md`;
-  - `invalid-forms/` — the six rejection fixtures, each with its per-fixture `EXPECTED.md`.
-- `oracle/conformance-forms/EXPECTED.md` and `oracle/invalid-forms/EXPECTED.md` — the two
-  consolidated verdict ledgers (the "ruler's quick oracle").
-- `FORMAT.md` — the on-disk-format spec the ledgers cite by `§`, copied so those citations resolve
-  inside the frozen contract.
+The engine was changed so that a file's name **is** a closed range with **no `.range`/`.cell` ending**
+(SPEC.md FT‑3), its content deserializes to an **explicit grid** that must fill the range exactly
+(FT‑4/FT‑8) via the **TSV** deserializer (FT‑5), and a cell's value derives only from its own content
+(FT‑9) — there is **no broadcast/drag-fill**. This corpus was migrated to match, preserving every
+rendered value:
 
-**NOT migrated — the W4 rendered-VALUE oracles.** The source `oracle/<category>/compute_oracle.py`,
-`expected_values.*`, `*.oracle.csv`, and per-category `PROVENANCE.md` grade **W4 evaluation** (the
-numeric result of a formula), not W2 encoding. W2 tests only PARSE + CONFORMANCE + OVERLAP verdicts —
-a static shape/grammar decision, no evaluator involved — so those value oracles are out of scope here
-and were left in the exploration workspace.
+1. **Filenames lost their endings.** Every `<range>.range` / `<addr>.cell` file was renamed to the
+   bare closed range (`A2:E13.range` → `A2:E13`, `D14.cell` → `D14`). The name is now the closed
+   range itself.
+2. **Drag-fill bodies were expanded to explicit grids.** Every range file whose body was a single
+   drag-fill `=formula` was rewritten to the **explicit per-cell grid it denoted**: each cell holds
+   its own offset formula (relative refs shifted with position, `$`-absolute refs pinned). E.g.
+   `Amortization/D2:D13` went from the single body `=B2*Inputs!$B$5` to twelve rows
+   `=B2*Inputs!$B$5` / `=B3*Inputs!$B$5` / … / `=B13*Inputs!$B$5`. Because each expanded cell
+   evaluates its own formula exactly as the old loader would have offset it, **rendered values are
+   unchanged** — proven by the render zero-divergence gate
+   (`charlie-model/tests/render_conformance.rs`), which grades these workbooks against the frozen W1
+   value oracle in `conformance/render/` and requires zero divergence.
+3. **Retired-concept fixtures were deleted.** The `conformance-forms/{broadcast-across,broadcast-down,
+   square-disambiguator}` fixtures (which existed only to probe the retired broadcast-conformance
+   rule) and `invalid-forms/illegal-forms/dual-body` (the retired "exactly one body form" rule) were
+   removed. The surviving edge/invalid fixtures had their `EXPECTED.md` verdicts rewritten to cite
+   SPEC.md's FT‑invariants and the current diagnostic codes (`dimension-mismatch`, `ragged-grid`,
+   `non-canonical-range`, `dollar-in-filename`, `degenerate-range`, `overlap`).
+4. **`FORMAT.md`** was replaced by a superseded-pointer to `SPEC.md` + `docs/format.md`.
+
+## What this corpus is graded by
+
+- **The 6 valid category workbooks** (`aggregation`, `conditional`, `dates`, `lookup-join`, `model`,
+  `text`) are loaded through `charlie-model` and their cells graded against the frozen value oracle by
+  `charlie-model/tests/render_conformance.rs` (the render zero-divergence gate). This is the live gate
+  that proves the migration was value-preserving.
+- **The `conformance-forms` / `invalid-forms` fixtures** carry per-fixture and consolidated
+  `EXPECTED.md` ledgers documenting the expected static verdict (a filename/grid rejection or an
+  overlap). They are the human-readable oracle for the encoding rules; each was verified against
+  `charlie check` during the migration.
 
 ## Fingerprint (oracle-input purity)
 
-`MANIFEST.sha256` records a `sha256sum` line for **every** migrated file (113 files: the corpus, the
-per-fixture and consolidated EXPECTED ledgers, and `FORMAT.md`) — everything except this file and the
+`MANIFEST.sha256` records a `sha256sum` line for **every** corpus file (105 files: `FORMAT.md`, the
+`artifacts/` tree, and the two `oracle/*/EXPECTED.md` ledgers) — everything except this file and the
 manifest itself. Re-verify at any time from this directory:
 
 ```
@@ -50,35 +68,10 @@ sha256sum -c MANIFEST.sha256 --quiet   # exit 0 == corpus is byte-identical to t
 Digest of the manifest itself (a single value pinning the whole set):
 
 ```
-sha256(MANIFEST.sha256) = daee80c604c7244b157197c589664edceb15a6c7d1202d08110d25d6014eb4e0
+sha256(MANIFEST.sha256) = 75f106aefb3d882f9351c07aecea876b0b3c5bd40f19c444dd3c80173daf61d0
 ```
 
-This check is **mechanically enforced at two sites**, both with the **system** `sha256sum`
-(deliberately **not** a crypto crate: `charlie-model` depends only on `charlie-ast`, and pulling a
-hashing dependency in to re-hash fixtures would violate the workspace's dependency-minimal posture —
-so both call sites shell out to the system tool instead):
-
-1. **CI** — `.github/workflows/build.yml` runs `sha256sum -c MANIFEST.sha256 --quiet` (in this
-   directory) on every push and pull request.
-2. **The grading site** — `charlie-model/tests/encoding_conformance.rs`
-   (`corpus_matches_frozen_fingerprint_at_the_grading_site`) re-runs the SAME `sha256sum -c` during a
-   plain `cargo test` (the commit gate's observed test step) by shelling to the system tool. It also
-   pins `sha256(MANIFEST.sha256)` to the digest above **in code** and asserts it, so a rewrite that
-   regenerates BOTH the fixtures AND the manifest — which would still pass `sha256sum -c` — is caught
-   too. This means the corpus's purity is asserted *where verdicts are actually graded*, not only in
-   CI: a local grading run can no longer score `charlie-model` against tampered fixtures.
-
-Enforcing it at the grading site is what makes purity load-bearing rather than advisory — do not rely
-on the *verdict* assertions to catch an edit: the harness grades the 6 valid workbooks on
-parse+conform+overlap only, **not** cell values, so editing a literal inside a valid workbook would
-flip no verdict. The fingerprint check (both sites) is what makes that edit visible. If the corpus is
-ever deliberately GROWN (the coverage ratchet permits growth, never silent rewrite), regenerate
-`MANIFEST.sha256` and update BOTH this pinned digest and `PINNED_MANIFEST_DIGEST` in the harness in
-the same reviewed commit.
-
-## Coverage ratchet (seed)
-
-`charlie-model/tests/encoding_conformance.rs` is the machine encoding of the EXPECTED ledgers: every
-corpus item is asserted against charlie-model's verdict, each assertion citing the fixture + the
-`FORMAT.md §` it exercises. This is the seed of the coverage ratchet — new W2 encoding rules land
-with a fixture here and an assertion there, and this corpus may only GROW.
+`.github/workflows/build.yml` runs `sha256sum -c MANIFEST.sha256 --quiet` in this directory on every
+push and pull request. If the corpus is ever deliberately GROWN or re-migrated (never silently
+rewritten), regenerate `MANIFEST.sha256` and update the pinned digest above in the same reviewed
+commit.

@@ -1,4 +1,4 @@
-// Concern: the single-sourced DIAGNOSTIC registry — the stable `Code` enum (one code string + severity + summary + spreadsheet-error class per refusal), the `Loc` a refusal points at (filename byte / body line-col / tab / sheet-qualified file), and the located `Diagnostic` value with an ASCII `Display`; every model refusal is one of these, never a panic or a silent drop | Non-concern: DETECTING any violation (the filename/body/conformance/overlap modules AND the demand-driven eval engine in `workbook.rs` — which raises the cycle/formula-syntax/depth-limit/range-too-large eval-time codes — raise these) and the formula-eval error taxonomy (charlie-ast's `ErrKind` owns that; a `Code` only cites the class it belongs to) | IO: (`Code`, `Loc`, message) -> a rendered ASCII refusal
+// Concern: the single-sourced DIAGNOSTIC registry — the stable `Code` enum (one code string + severity + summary + spreadsheet-error class per refusal), the `Loc` a refusal points at (filename byte / body line-col / tab / sheet-qualified file), and the located `Diagnostic` value with an ASCII `Display`; every model refusal is one of these, never a panic or a silent drop | Non-concern: DETECTING any violation (the filename/grid/overlap modules AND the demand-driven eval engine in `workbook.rs` — which raises the cycle/depth-limit/range-too-large eval-time codes — raise these) and the formula-eval error taxonomy (charlie-ast's `ErrKind` owns that; a `Code` only cites the class it belongs to) | IO: (`Code`, `Loc`, message) -> a rendered ASCII refusal
 //! Diagnostics: [`Code`] (the single-sourced registry), [`Loc`], [`Severity`], [`Diagnostic`].
 
 use charlie_ast::ErrKind;
@@ -18,29 +18,27 @@ pub enum Severity {
 /// frozen; the code is (ast-standards PART 5, "single-sourced code registry").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
-    /// A filename that is not a well-formed `<addr>.cell` / `<addr>:<addr>.range` (FORMAT §2).
+    /// A filename that is not a well-formed A1 closed range (`A1`, `F2:F11`, `B2:D9`) (FT-3).
     MalformedFilename,
-    /// A lowercase column letter in a filename (`a1.cell`) — non-canonical (FORMAT §2/§11).
+    /// A lowercase column letter in a filename (`a1`) — non-canonical (FT-3).
     LowercaseColumn,
-    /// A leading zero in a filename row (`A01.cell`) — non-canonical (FORMAT §2/§11).
+    /// A leading zero in a filename row (`A01`) — non-canonical (FT-3).
     LeadingZeroRow,
-    /// A `$` in a filename (`$A$1.cell`) — `$` lives in formula bodies only (FORMAT §2/§11).
+    /// A `$` in a filename (`$A$1`) — `$` lives in formula bodies only (FT-3).
     DollarInFilename,
-    /// A range not written top-left`:`bottom-right (`G8:A3.range`) — non-canonical (FORMAT §2/§11).
+    /// A range not written top-left`:`bottom-right (`G8:A3`) — non-canonical (FT-3).
     NonCanonicalRange,
-    /// A 1x1 range (`A1:A1.range`) — a single cell must be `.cell` (FORMAT §2/§11).
+    /// A `1x1` range spelled `A1:A1` — a single cell is the 0-D range `A1` (FT-3).
     DegenerateRange,
-    /// A whole-column / whole-row range (`A:A`, `3:3`) — reserved, not v1 (FORMAT §2).
+    /// A whole-column / whole-row range (`A:A`, `3:3`) — not a closed range, reserved (FT-3).
     WholeColumnRowReserved,
-    /// Line 1 is not a `# `-prefixed annotation (FORMAT §8/§11).
+    /// Line 1 is not a `# `-prefixed annotation.
     MissingAnnotation,
-    /// A body that is both a literal line and a formula, or more than one formula (FORMAT §4/§11).
-    DualBody,
-    /// A literal block with unequal field counts per line (FORMAT §5) — a `#VALUE!`-class refusal.
-    RaggedBlock,
-    /// A body shape that neither matches nor broadcasts to the declared shape (FORMAT §6) — a
-    /// `#SPILL!`-class refusal.
-    NonConforming,
+    /// A TSV grid with unequal field counts per row — a `#VALUE!`-class refusal.
+    RaggedGrid,
+    /// A deserialized grid whose dimensions do not fill the file's declared closed range exactly
+    /// (FT-8) — a located dimension error.
+    DimensionMismatch,
     /// Two files in one tab claim intersecting cells (FORMAT §7).
     Overlap,
     /// A `=formula` cell depends on itself, directly or through a chain (demand-driven eval, B3) —
@@ -72,9 +70,8 @@ impl Code {
         Code::DegenerateRange,
         Code::WholeColumnRowReserved,
         Code::MissingAnnotation,
-        Code::DualBody,
-        Code::RaggedBlock,
-        Code::NonConforming,
+        Code::RaggedGrid,
+        Code::DimensionMismatch,
         Code::Overlap,
         Code::Cycle,
         Code::FormulaSyntax,
@@ -94,9 +91,8 @@ impl Code {
             Code::DegenerateRange => "degenerate-range",
             Code::WholeColumnRowReserved => "whole-column-row-reserved",
             Code::MissingAnnotation => "missing-annotation",
-            Code::DualBody => "dual-body",
-            Code::RaggedBlock => "ragged-block",
-            Code::NonConforming => "non-conforming",
+            Code::RaggedGrid => "ragged-grid",
+            Code::DimensionMismatch => "dimension-mismatch",
             Code::Overlap => "overlap",
             Code::Cycle => "cycle",
             Code::FormulaSyntax => "formula-syntax",
@@ -108,17 +104,16 @@ impl Code {
     /// A one-line summary of the rule this code enforces (docs/help; wording not frozen).
     pub fn summary(self) -> &'static str {
         match self {
-            Code::MalformedFilename => "filename is not a well-formed .cell/.range address",
+            Code::MalformedFilename => "filename is not a well-formed A1 closed range",
             Code::LowercaseColumn => "column letters must be uppercase",
             Code::LeadingZeroRow => "row numbers must not have a leading zero",
             Code::DollarInFilename => "$ is not allowed in a filename (bodies only)",
             Code::NonCanonicalRange => "a range must be written top-left:bottom-right",
-            Code::DegenerateRange => "a single cell must be .cell, never a 1x1 .range",
-            Code::WholeColumnRowReserved => "whole-column/row ranges are reserved, not v1",
+            Code::DegenerateRange => "a single cell is the range A1, never a 1x1 A1:A1",
+            Code::WholeColumnRowReserved => "whole-column/row ranges are not a closed range",
             Code::MissingAnnotation => "line 1 must be a '# ' annotation",
-            Code::DualBody => "a body is exactly one of a literal block or one =formula",
-            Code::RaggedBlock => "a literal block's rows must have equal field counts",
-            Code::NonConforming => "body shape must match or broadcast to the declared shape",
+            Code::RaggedGrid => "a TSV grid's rows must have equal field counts",
+            Code::DimensionMismatch => "the grid must fill the declared range exactly",
             Code::Overlap => "two files in a tab claim intersecting cells",
             Code::Cycle => "a formula cell must not depend on itself (directly or via a chain)",
             Code::FormulaSyntax => "a formula body must parse into a charlie-ast expression",
@@ -132,8 +127,7 @@ impl Code {
     /// `None`. This is the one place the model *cites* (never redefines) the AST error taxonomy.
     pub fn err_class(self) -> Option<ErrKind> {
         match self {
-            Code::RaggedBlock => Some(ErrKind::Value),
-            Code::NonConforming => Some(ErrKind::Spill),
+            Code::RaggedGrid => Some(ErrKind::Value),
             Code::Cycle => Some(ErrKind::Ref),
             Code::DepthLimit => Some(ErrKind::Num),
             Code::RangeTooLarge => Some(ErrKind::Num),
@@ -160,7 +154,7 @@ pub enum Loc {
     Tab { tab: String },
     /// Anchored on a specific file *within a named tab* — a sheet-qualified cell/range file. Used by
     /// the eval-time refusals (cycle / depth-limit / range-too-large / non-conforming), where the
-    /// same A1 address (`A1.cell`) can exist on more than one tab, so a bare filename cannot be
+    /// same A1 address (a file named `A1`) can exist on more than one tab, so a bare filename cannot be
     /// traced back to the offending file.
     TabFile { tab: String, name: String },
 }
@@ -194,7 +188,7 @@ impl Loc {
         }
     }
 
-    /// A sheet-qualified file anchor (`Beta/A1.cell`) — the eval-time refusals' location, so a
+    /// A sheet-qualified file anchor (`Beta/A1`) — the eval-time refusals' location, so a
     /// diagnostic can be traced to the offending file even when the same address exists on two tabs.
     pub fn tab_file(tab: &str, name: &str) -> Loc {
         Loc::TabFile {
@@ -250,7 +244,7 @@ mod tests {
     #[test]
     fn registry_is_self_consistent() {
         // Every variant appears in ALL exactly once, and code strings are unique.
-        assert_eq!(Code::ALL.len(), 16);
+        assert_eq!(Code::ALL.len(), 15);
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();
         codes.sort_unstable();
         let before = codes.len();
@@ -266,39 +260,39 @@ mod tests {
 
     #[test]
     fn err_classes_cite_the_ast_taxonomy() {
-        assert_eq!(Code::RaggedBlock.err_class(), Some(ErrKind::Value));
-        assert_eq!(Code::NonConforming.err_class(), Some(ErrKind::Spill));
+        assert_eq!(Code::RaggedGrid.err_class(), Some(ErrKind::Value));
         assert_eq!(Code::Cycle.err_class(), Some(ErrKind::Ref));
         assert_eq!(Code::DepthLimit.err_class(), Some(ErrKind::Num));
         assert_eq!(Code::RangeTooLarge.err_class(), Some(ErrKind::Num));
         assert_eq!(Code::MalformedFilename.err_class(), None);
+        assert_eq!(Code::DimensionMismatch.err_class(), None);
         assert_eq!(Code::FormulaSyntax.err_class(), None);
     }
 
     #[test]
     fn tab_file_loc_is_sheet_qualified() {
         // The eval-time anchor spells the tab AND the file, so the same address on two tabs is
-        // unambiguous (`Beta/A1.cell`, not a bare `A1.cell`).
+        // unambiguous (`Beta/A1`, not a bare `A1`).
         let d = Diagnostic::new(
             Code::Cycle,
-            Loc::tab_file("Beta", "A1.cell"),
+            Loc::tab_file("Beta", "A1"),
             "circular reference".to_string(),
         );
         let s = d.to_string();
         assert!(s.is_ascii());
-        assert!(s.contains("--> Beta/A1.cell"), "{s}");
+        assert!(s.contains("--> Beta/A1"), "{s}");
     }
 
     #[test]
     fn display_is_ascii_and_located() {
         let d = Diagnostic::new(
             Code::DollarInFilename,
-            Loc::file_at("$A$1.cell", 0),
+            Loc::file_at("$A$1", 0),
             "no $ in a filename".to_string(),
         );
         let s = d.to_string();
         assert!(s.is_ascii());
         assert!(s.contains("error[dollar-in-filename]"));
-        assert!(s.contains("--> $A$1.cell (byte 0)"));
+        assert!(s.contains("--> $A$1 (byte 0)"));
     }
 }

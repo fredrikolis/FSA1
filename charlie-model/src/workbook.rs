@@ -1,4 +1,4 @@
-// Concern: the DEMAND-DRIVEN evaluation engine (bet B3) — load a sheet-directory (tabs=folders, cells/ranges=files) into an in-memory `Workbook` via the W2 `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it and, when its body is a `=formula`, EVALUATING it through `charlie_ast::eval` with THIS workbook as the resolver — the PULL; a multi-cell `=formula` range DRAG-FILLS (each cell offsets the body's relative refs by its delta from the top-left anchor via `offset_refs`, a top-level bare range instead ARRAY-places under §6), results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an array formula range's evaluated result shape is checked against the declared range under the pinned §6 broadcast-conformance rule, a mismatch becoming the static `#SPILL!`-class refusal (closing the B1<->engine shape handoff); an AD-HOC `=formula` string is also evaluated against this loaded workbook via `eval_formula` (the `charlie eval` entry) — parsed through `charlie_ast`, evaluated with THIS workbook as the resolver (unqualified refs resolving against a caller-named tab), and returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, each already `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval and the `offset_refs` ref-shift), the filename/body/conformance/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`/`classify_placement`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
+// Concern: the DEMAND-DRIVEN evaluation engine — load a sheet-directory (tabs=folders, files=closed ranges) into an in-memory `Workbook` via `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it, reading its grid cell at the local offset, and — when that cell is a `=formula` — EVALUATING the parsed `Expr` through `charlie_ast::eval` with THIS workbook as the resolver (the PULL); a cell's value derives only from its own content (FT-9), so there is no drag-fill/offset anywhere; results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an AD-HOC `=formula` string is also evaluated against this loaded workbook via `eval_formula` (the `charlie eval` entry) — parsed through `charlie_ast`, evaluated with THIS workbook as the resolver (unqualified refs resolving against a caller-named tab), and returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, each already `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
 //! Demand-driven evaluation: [`Workbook`] loads a sheet-directory and implements [`Resolver`] over
 //! it, so `charlie_ast::eval` pulls cell values through the model (the "swap the impl, the engine is
 //! unchanged" firewall made live over a real store). Memoized, cycle-safe, and lazy: an off-request
@@ -9,16 +9,14 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::rc::Rc;
 
 use charlie_ast::{
-    ArrayView, CellRef, ErrKind, Expr, RangeRef, Resolver, Shape, SheetId, Value, eval,
-    offset_refs, parse, system_now_secs, unix_secs_to_serial,
+    ArrayView, CellRef, ErrKind, RangeRef, Resolver, Shape, SheetId, Value, eval, parse,
+    system_now_secs, unix_secs_to_serial,
 };
 
-use crate::body::Body;
-use crate::conformance::{Placement, validate_conformance};
 use crate::diagnostic::{Code, Diagnostic, Loc};
+use crate::grid::{Cell as GridCell, Grid};
 use crate::overlap::{Rect, detect_overlaps};
 use crate::{ParsedFile, parse_file};
 
@@ -54,20 +52,17 @@ const MAX_PULL_DEPTH: u32 = 256;
 /// range (a 1000-column × 1000-row block); only a pathological reference reaches it.
 const MAX_RANGE_CELLS: u64 = 1_000_000;
 
-/// One loaded file: its declaration (name/region/shape/kind) plus its classified body and, for a
-/// *literal* body, the §6 placement fixed at load. A formula body's per-cell values are computed at
-/// eval (drag-fill / array-place) and cached in [`Workbook::memo`] and [`Workbook::plans`], not here.
+/// One loaded file: its name and claimed region plus its deserialized [`Grid`] (each coordinate a
+/// literal value or a parsed formula). A formula cell's value is computed at eval and cached in
+/// [`Workbook::memo`], not here.
 #[derive(Clone, Debug)]
 struct LoadedFile {
     name: String,
     region: Rect,
-    declared_shape: Shape,
-    body: Body,
+    grid: Grid,
     /// The file's line-1 `# ` annotation, verbatim (the `# ` prefix included). Preserved at load so
     /// the render surface can show each range's annotation without re-reading the file.
     annotation: String,
-    /// `Some` for a literal body (fixed at load); `None` for a formula body (resolved at eval).
-    lit_placement: Option<Placement>,
 }
 
 /// One tab (folder): its sheet name and the files that partition its used region.
@@ -78,35 +73,13 @@ struct Tab {
 }
 
 /// The identity of a formula file within the workbook: `(sheet index, file index within the tab)`.
-/// The per-file PLAN cache and the file-level "already refused" guard are keyed by this.
+/// The file-level anchor for an eval-time refusal is keyed by this.
 type FileId = (u32, usize);
 
 /// The identity of one rendered cell: `(sheet index, zero-based col, zero-based row)`. The per-cell
-/// memo and the currently-evaluating (cycle-detection) set are keyed by this — each DRAG-FILLED cell
-/// of a range is a DISTINCT computation, so the cache and the cycle guard must be per cell, not per
-/// file (per-file would either mis-share drag-filled values or, if dropped, re-evaluate exponentially).
+/// memo and the currently-evaluating (cycle-detection) set are keyed by this — each grid cell is a
+/// DISTINCT computation, so the cache and the cycle guard must be per cell, not per file.
 type CellKey = (u32, u32, u32);
-
-/// A formula file's parsed, classified plan — computed once per file and cached. Whether a cell of a
-/// multi-cell `=formula` range DRAG-FILLS (relative refs shift per cell) or ARRAY-PLACES (a bare-range
-/// result spread under the §6 broadcast-conformance rule) is a purely SYNTACTIC property of the parsed
-/// body: the only construct this scalar-v1 engine evaluates to a `Value::Array` at top level is a bare
-/// [`Expr::Range`] (`=A1:A3`) — every operator and (corpus) function scalarizes — so a top-level range
-/// is the array/spill case and everything else drags. Classifying without evaluating is what keeps a
-/// non-anchor cell from spuriously depending on the anchor (which would forge cycles under drag-fill).
-#[derive(Debug)]
-enum Plan {
-    /// A scalar-valued formula: the cell at delta `(dr, dc)` from the anchor evaluates
-    /// `offset_refs(body, dr, dc)` — each cell its own scalar (`docs/format.md` §10 drag-fill).
-    DragFill(Expr),
-    /// A top-level bare range (`=A1:A3`): evaluate once and place the array under §6
-    /// broadcast-conformance (exact / row- or col-broadcast, or a `#SPILL!`-class refusal). The
-    /// deferred-v1 ARRAY case that §6 governs, kept distinct from drag-fill.
-    ArrayRange(Expr),
-    /// The body did not parse; every cell of the file reads `#NAME?` (the refusal is recorded once,
-    /// when the plan is first built).
-    ParseError,
-}
 
 /// An in-memory charlie workbook that evaluates on demand.
 ///
@@ -115,8 +88,8 @@ enum Plan {
 /// [`charlie_ast::eval`] as a [`Resolver`]. Evaluation is **demand-driven** (only requested cells,
 /// transitively, compute), **memoized per cell** (each rendered cell computes at most once, so a
 /// diamond / deep DAG stays linear and never re-evaluates exponentially), and **cycle-safe** (a
-/// reference cycle is a located `#REF!`-class refusal, never a hang). A multi-cell `=formula` range
-/// **drag-fills** — each cell offsets the body's relative refs by its delta from the anchor.
+/// reference cycle is a located `#REF!`-class refusal, never a hang). Each grid cell derives its value
+/// only from its own content (FT-9) — a range file is an explicit grid, never a drag-filled formula.
 #[derive(Debug)]
 pub struct Workbook {
     tabs: Vec<Tab>,
@@ -128,20 +101,14 @@ pub struct Workbook {
     /// cross-sheet pull sees the right context. `Cell` because it is a plain copyable scalar.
     current_sheet: Cell<u32>,
     /// Per-CELL result cache (the memo): each rendered cell computes at most once, keyed by its
-    /// resolved `(sheet, col, row)`. Per-cell (not per-file) is what simultaneously makes DRAG-FILL
-    /// correct — each offset cell of a range is a distinct value — AND makes a diamond / deep DAG
-    /// evaluate LINEARLY: a cell reached through many reference paths computes once and is thereafter
+    /// resolved `(sheet, col, row)`. Per-cell (not per-file) is what simultaneously makes an EXPLICIT
+    /// GRID correct — each cell of a range file is a distinct computation (FT-9) — AND makes a diamond
+    /// / deep DAG evaluate LINEARLY: a cell reached through many reference paths computes once and is thereafter
     /// read from here, so re-evaluation can never grow exponentially (the anti-hang guarantee).
     memo: RefCell<HashMap<CellKey, Value>>,
     /// The cells whose evaluation is in progress — the cycle detector. Re-entering a cell (a direct or
     /// transitive self-reference) is a located `#REF!`-class refusal returned at once, never a hang.
     visiting: RefCell<HashSet<CellKey>>,
-    /// Per-file parsed+classified [`Plan`] cache — so a body parses once, its drag-fill/array
-    /// classification is fixed once, and a parse-error diagnostic is recorded once.
-    plans: RefCell<HashMap<FileId, Rc<Plan>>>,
-    /// Formula files that have already recorded a file-level refusal (a non-conforming array
-    /// `#SPILL!`), so a multi-cell array range surfaces that refusal ONCE, not once per placed cell.
-    refused: RefCell<HashSet<FileId>>,
     /// The live cross-cell pull depth — how many nested formula files are currently on the native
     /// stack. Bounds a finite-but-deep (acyclic) chain to [`MAX_PULL_DEPTH`] so it refuses rather
     /// than overflowing. `Cell` because it is a plain copyable scalar (like `current_sheet`).
@@ -181,14 +148,15 @@ pub enum FormulaOutcome {
 /// outlive it.
 #[derive(Clone, Copy, Debug)]
 pub struct CellSource<'a> {
-    /// The covering file's name (`A1.cell`, `A3:G8.range`).
+    /// The covering file's name (`A1`, `A3:G8`).
     pub file_name: &'a str,
     /// The declared region the file claims.
     pub region: Rect,
     /// The file's verbatim line-1 `# ` annotation.
     pub annotation: &'a str,
-    /// The classified body — a `=formula` or a literal block (un-evaluated).
-    pub body: &'a Body,
+    /// The specific grid cell at the requested coordinate — a parsed `=formula` (with its source
+    /// text) or a literal value (un-evaluated).
+    pub cell: &'a GridCell,
 }
 
 impl Workbook {
@@ -252,11 +220,9 @@ impl Workbook {
             for (fname, contents) in files {
                 match parse_file(&fname, &contents) {
                     Ok(ParsedFile {
-                        kind: _,
                         region,
-                        declared_shape,
-                        body,
-                        placement,
+                        declared_shape: _,
+                        grid,
                     }) => {
                         // Line 1 is the mandatory `# ` annotation (parse_file verified it); preserve
                         // it verbatim for the render `--annotation` mode. `split_once` mirrors the
@@ -269,10 +235,8 @@ impl Workbook {
                         loaded.push(LoadedFile {
                             name: fname,
                             region,
-                            declared_shape,
-                            body,
+                            grid,
                             annotation,
-                            lit_placement: placement,
                         });
                     }
                     Err(d) => diags.push(d),
@@ -291,8 +255,6 @@ impl Workbook {
                 current_sheet: Cell::new(0),
                 memo: RefCell::new(HashMap::new()),
                 visiting: RefCell::new(HashSet::new()),
-                plans: RefCell::new(HashMap::new()),
-                refused: RefCell::new(HashSet::new()),
                 pull_depth: Cell::new(0),
                 depth_refusals: Cell::new(0),
                 current_file: Cell::new(None),
@@ -393,11 +355,13 @@ impl Workbook {
     /// most one file covers a cell.
     pub fn source_at(&self, sheet: u32, col: u32, row: u32) -> Option<CellSource<'_>> {
         let (_, file) = self.covering(sheet, col, row)?;
+        let dr = row - file.region.min_row;
+        let dc = col - file.region.min_col;
         Some(CellSource {
             file_name: &file.name,
             region: file.region,
             annotation: &file.annotation,
-            body: &file.body,
+            cell: file.grid.cell_at(dr, dc),
         })
     }
 
@@ -453,10 +417,9 @@ impl Workbook {
 
     /// Resolve one formula-backed cell to its value — the per-cell PULL, memoized and cycle-safe.
     ///
-    /// `key` is the resolved `(sheet, col, row)`; `id` its covering formula file; `(dr, dc)` its delta
-    /// from that file's top-left anchor. The value is the file [`Plan`] applied at this offset: a
-    /// drag-fill offsets the body's relative refs by `(dr, dc)` and evaluates a scalar; an array range
-    /// evaluates once and places under §6; a parse error is `#NAME?`.
+    /// `key` is the resolved `(sheet, col, row)`; `id` its covering file; `(dr, dc)` the cell's local
+    /// offset into that file's grid. The value is the grid cell's parsed formula evaluated as-written
+    /// (FT-9: no offset/drag-fill), collapsed to a scalar for its scalar cell position.
     ///
     /// Cycle-safe: `key` is inserted into [`Workbook::visiting`] for the duration of its own
     /// evaluation; re-entering it (a direct or transitive self-reference) is a located `#REF!`-class
@@ -535,84 +498,22 @@ impl Workbook {
         value
     }
 
-    /// The value of the covering formula file at offset `(dr, dc)`, per its cached [`Plan`]: a
-    /// drag-fill offsets the body's relative refs and evaluates a scalar; an array range evaluates
-    /// once and places under §6 broadcast-conformance; a parse error fills `#NAME?`. Runs *inside* the
-    /// [`Workbook::formula_value`] guards (cycle / depth / memo), so it never manages them itself.
+    /// The value of the covering file's grid cell at offset `(dr, dc)`. The cell holds a parsed
+    /// `Expr` (FT-9: evaluated exactly as written — no offset/drag-fill), collapsed to a scalar for
+    /// its scalar cell position by [`scalar_cell`]. Runs *inside* the [`Workbook::formula_value`]
+    /// guards (cycle / depth / memo), so it never manages them itself.
     fn compute_formula(&self, id: FileId, dr: u32, dc: u32) -> Value {
-        let plan = self.plan(id);
-        match &*plan {
-            Plan::ParseError => Value::Error(ErrKind::Name),
-            Plan::DragFill(body) => {
-                // DRAG-FILL: shift the body's RELATIVE refs by this cell's delta from the anchor, then
-                // evaluate. A ref that offsets off-sheet (a relative axis driven below the grid) makes
-                // the whole cell `#REF!`. A drag-fill cell is scalar-valued, so collapse the result to
-                // a scalar: a 1×1 array is its single cell, and a genuinely multi-cell array (a rare
-                // top-level array-arithmetic body like `=A1:A3>2` written into a single cell — array
-                // spill is the `ArrayRange` plan's job, deferred in v1) is `#VALUE!` in this scalar
-                // position. Every scalar body already returns a scalar, so this is behaviour-preserving.
-                match offset_refs(body, i64::from(dr), i64::from(dc)) {
-                    Some(shifted) => scalar_cell(eval(&shifted, self)),
-                    None => Value::Error(ErrKind::Ref),
-                }
-            }
-            Plan::ArrayRange(body) => {
-                // ARRAY/spill (deferred v1): evaluate the bare range once and place it under §6. The
-                // arena caches the materialized range, so re-evaluating per placed cell is cheap; the
-                // non-conforming `#SPILL!` refusal is recorded once via `refused`.
-                let result = eval(body, self);
-                let name = self.file_name(id);
-                let declared = self.tabs[id.0 as usize].files[id.1].declared_shape;
-                match validate_conformance(&name, declared, shape_of(&result)) {
-                    Ok(placement) => place_result(&result, placement, dr, dc),
-                    Err(mut diag) => {
-                        if self.refused.borrow_mut().insert(id) {
-                            // The B1<->engine shape handoff, recorded once per file: re-anchor it
-                            // sheet-qualified (validate_conformance is shared with the load-time
-                            // literal check, which needs only the bare filename).
-                            diag.loc = Loc::tab_file(&self.tab_name(id.0), &name);
-                            self.refuse(diag);
-                        }
-                        Value::Error(ErrKind::Spill)
-                    }
-                }
-            }
+        // FT-9: a cell's value derives only from its own content. The grid cell holds a parsed `Expr`,
+        // evaluated exactly as written — no offset/drag-fill. A formula in a scalar cell position that
+        // evaluates to an array (a bare range like `=A1:A3`) is collapsed by `scalar_cell` (a 1×1
+        // array to its single cell, a genuinely multi-cell array to `#VALUE!`).
+        let file = &self.tabs[id.0 as usize].files[id.1];
+        match file.grid.cell_at(dr, dc) {
+            GridCell::Formula { expr, .. } => scalar_cell(eval(expr, self)),
+            // `compute_formula` is only reached for a formula cell (see `Resolver::value`); a literal
+            // cell never routes here, but is total-passed-through defensively rather than panicking.
+            GridCell::Value(v) => v.clone(),
         }
-    }
-
-    /// The cached parse+classification of a formula file's body (built once). Parsing once here fixes
-    /// the drag-fill/array split for the whole file and records a parse-error refusal a single time.
-    fn plan(&self, id: FileId) -> Rc<Plan> {
-        if let Some(p) = self.plans.borrow().get(&id) {
-            return p.clone();
-        }
-        let (formula, name) = {
-            let file = &self.tabs[id.0 as usize].files[id.1];
-            let formula = match &file.body {
-                Body::Formula(s) => s.clone(),
-                // `plan` is only reached for a formula file (see `value`); an empty body would route
-                // through `parse("")` to a located `FormulaSyntax` refusal below, never a panic.
-                Body::Literal(_) => String::new(),
-            };
-            (formula, file.name.clone())
-        };
-        let plan = match parse(&formula) {
-            Err(diag) => {
-                self.refuse(Diagnostic::new(
-                    Code::FormulaSyntax,
-                    Loc::tab_file(&self.tab_name(id.0), &name),
-                    format!("cannot parse formula {formula:?}: {}", diag.message),
-                ));
-                Plan::ParseError
-            }
-            // A top-level bare range is the only construct that evaluates to a multi-cell array here,
-            // so it is the §6 array/spill case; everything else is a per-cell scalar drag-fill.
-            Ok(expr @ Expr::Range(_)) => Plan::ArrayRange(expr),
-            Ok(expr) => Plan::DragFill(expr),
-        };
-        let rc = Rc::new(plan);
-        self.plans.borrow_mut().insert(id, rc.clone());
-        rc
     }
 
     /// The tab (sheet) name for a sheet index, for a sheet-qualified [`Loc::tab_file`] anchor.
@@ -647,14 +548,10 @@ impl Resolver for Workbook {
         };
         let dr = cell.row - file.region.min_row;
         let dc = cell.col - file.region.min_col;
-        match &file.body {
-            Body::Literal(block) => {
-                // A literal cell needs no evaluation: place the parsed block per its load-time §6
-                // placement (Fill / Exact / BroadcastDown / BroadcastAcross).
-                let placement = file.lit_placement.unwrap_or(Placement::Fill);
-                place_from_cells(block.shape, &block.cells, placement, dr, dc)
-            }
-            Body::Formula(_) => self.formula_value((sheet, cell.col, cell.row), id, dr, dc),
+        match file.grid.cell_at(dr, dc) {
+            // A literal cell needs no evaluation — it is its own value.
+            GridCell::Value(v) => v.clone(),
+            GridCell::Formula { .. } => self.formula_value((sheet, cell.col, cell.row), id, dr, dc),
         }
     }
 
@@ -662,7 +559,7 @@ impl Resolver for Workbook {
         // Resolve `sheet: None` to the current context and key the arena by the qualified range, so a
         // memoized `A1:A3` on one sheet is never mistaken for `A1:A3` on another. Normalize the key's
         // corners to canonical min/max (top-left..bottom-right) — matching the materialization loop
-        // below — so a reversed or drag-fill-inverted spelling (`B2:A1`) maps to the SAME arena entry
+        // below — so a reversed spelling (`B2:A1`) maps to the SAME arena entry
         // as `A1:B2` rather than materializing the identical rectangle twice under two keys.
         let eff = SheetId(self.resolve_sheet(range.start.sheet));
         let c0 = range.start.col.min(range.end.col);
@@ -749,11 +646,10 @@ impl Resolver for Workbook {
     }
 }
 
-/// Collapse a drag-fill formula's evaluated result to the single scalar a `.cell`/filled range cell
-/// holds: a 1×1 array is its lone cell, a genuinely multi-cell array is `#VALUE!` (an array in a
-/// scalar cell position — the array/spill case is the `ArrayRange` plan's job, deferred in v1), and a
-/// scalar passes through. This mirrors the engine's scalar-position rule; a scalar-valued body (the
-/// only kind a `DragFill` plan carries) always passes through unchanged.
+/// Collapse a formula's evaluated result to the single scalar a grid cell holds: a 1×1 array is its
+/// lone cell, a genuinely multi-cell array (a bare range like `=A1:A3` written into one cell) is
+/// `#VALUE!` (an array in a scalar cell position), and a scalar passes through. This mirrors the
+/// engine's scalar-position rule; a scalar-valued formula always passes through unchanged.
 fn scalar_cell(v: Value) -> Value {
     match v {
         Value::Array(shape, mut cells) if shape.rows == 1 && shape.cols == 1 => {
@@ -762,59 +658,6 @@ fn scalar_cell(v: Value) -> Value {
         Value::Array(..) => Value::Error(ErrKind::Value),
         scalar => scalar,
     }
-}
-
-/// The result shape of an evaluated formula value: an array's own shape, or `1x1` for any scalar.
-fn shape_of(v: &Value) -> Shape {
-    match v {
-        Value::Array(shape, _) => *shape,
-        _ => Shape { rows: 1, cols: 1 },
-    }
-}
-
-/// Which `(row, col)` of the *result* a region cell at offset `(dr, dc)` reads, per placement: a
-/// Fill reads the single scalar; an Exact reads cell-for-cell; a row/col broadcast pins the copied
-/// axis to `0`.
-fn index_for(placement: Placement, dr: u32, dc: u32) -> (u32, u32) {
-    match placement {
-        Placement::Fill => (0, 0),
-        Placement::Exact => (dr, dc),
-        Placement::BroadcastDown => (0, dc),
-        Placement::BroadcastAcross => (dr, 0),
-    }
-}
-
-/// Place an evaluated formula result: a scalar answers every offset with itself; an array is indexed
-/// per [`index_for`] (an out-of-range index defensively reads `Blank` rather than panicking).
-fn place_result(result: &Value, placement: Placement, dr: u32, dc: u32) -> Value {
-    match result {
-        Value::Array(shape, cells) => place_from_cells(*shape, cells, placement, dr, dc),
-        scalar => scalar.clone(),
-    }
-}
-
-/// Place a row-major `(shape, cells)` block (a literal block, or an array result) into a region cell
-/// at offset `(dr, dc)` under `placement`. Total: an out-of-range index reads `Blank`.
-fn place_from_cells(
-    shape: Shape,
-    cells: &[Value],
-    placement: Placement,
-    dr: u32,
-    dc: u32,
-) -> Value {
-    let (r, c) = index_for(placement, dr, dc);
-    let idx = (r as usize) * (shape.cols as usize) + (c as usize);
-    // Invariant (DbC): `validate_conformance` guarantees every Placement case indexes within the
-    // validated shape, so `idx` is always in range. Fail LOUD in tests if that invariant ever
-    // breaks; the total `unwrap_or(Blank)` fallback still keeps the render path panic-free in release.
-    debug_assert!(
-        idx < cells.len(),
-        "place_from_cells: index {idx} out of range for a {}x{} block under {placement:?} at \
-         offset ({dr},{dc}) -- validate_conformance should guarantee an in-range index",
-        shape.rows,
-        shape.cols,
-    );
-    cells.get(idx).cloned().unwrap_or(Value::Blank)
 }
 
 /// The wall-clock "now" as an Excel date-time serial. The [`Workbook`] must STORE `now` (so
@@ -917,14 +760,7 @@ mod tests {
     fn chain_a_to_b_to_c_pulls_through_the_model() {
         // A1 = 1 (literal); B1 = A1 + 1 (formula); C1 = B1 * 10 (formula). Requesting C1 pulls B1,
         // which pulls A1 — the demand-driven chain.
-        let wb = load_one_tab(
-            "Sheet1",
-            &[
-                ("A1.cell", "1"),
-                ("B1.cell", "=A1+1"),
-                ("C1.cell", "=B1*10"),
-            ],
-        );
+        let wb = load_one_tab("Sheet1", &[("A1", "1"), ("B1", "=A1+1"), ("C1", "=B1*10")]);
         assert_eq!(wb.value_at(0, 2, 0), Value::Number(20.0)); // C1
         assert_eq!(wb.value_at(0, 1, 0), Value::Number(2.0)); // B1
         assert!(wb.eval_diagnostics().is_empty());
@@ -933,7 +769,7 @@ mod tests {
     #[test]
     fn a_direct_cycle_is_a_ref_refusal_not_a_hang() {
         // A1 = B1; B1 = A1 — a two-cell cycle. Must refuse with #REF!, never overflow the stack.
-        let wb = load_one_tab("Sheet1", &[("A1.cell", "=B1"), ("B1.cell", "=A1")]);
+        let wb = load_one_tab("Sheet1", &[("A1", "=B1"), ("B1", "=A1")]);
         assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Ref)); // A1
         let diags = wb.eval_diagnostics();
         assert!(diags.iter().any(|d| d.code == Code::Cycle), "{diags:?}");
@@ -942,7 +778,7 @@ mod tests {
     #[test]
     fn a_self_reference_is_a_cycle() {
         // A1 = A1 + 1 references its own cell.
-        let wb = load_one_tab("Sheet1", &[("A1.cell", "=A1+1")]);
+        let wb = load_one_tab("Sheet1", &[("A1", "=A1+1")]);
         assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Ref));
         assert!(wb.eval_diagnostics().iter().any(|d| d.code == Code::Cycle));
     }
@@ -952,13 +788,13 @@ mod tests {
         // Inputs!A1 = 10; Summary!A1 = Inputs!A1 * 2 -> 20. Also proves an UNQUALIFIED ref inside a
         // Summary formula resolves against Summary, not tab 0.
         let wb = Workbook::from_tabs(&[
-            ("Inputs", &[("A1.cell", &file("10"))]),
+            ("Inputs", &[("A1", &file("10"))]),
             (
                 "Summary",
                 &[
-                    ("A1.cell", &file("=Inputs!A1*2")),
-                    ("A2.cell", &file("100")),
-                    ("A3.cell", &file("=A2+1")), // unqualified A2 must mean Summary!A2
+                    ("A1", &file("=Inputs!A1*2")),
+                    ("A2", &file("100")),
+                    ("A3", &file("=A2+1")), // unqualified A2 must mean Summary!A2
                 ],
             ),
         ])
@@ -968,20 +804,19 @@ mod tests {
     }
 
     #[test]
-    fn a_range_reference_pulls_every_cell_and_a_scalar_formula_drag_fills() {
-        // A1:A3 literal col vector 1,2,3. D1 = SUM(A1:A3) -> 6 (range PULL through the model).
-        // B1:B3.range = A1  -> a scalar `=formula` DRAG-FILLS: the anchor holds `=A1`, and each cell
-        // below offsets the RELATIVE ref by its row delta, so B1=A1=1, B2=A2=2, B3=A3=3 (NOT a fill).
+    fn an_explicit_grid_gives_each_cell_its_own_formula() {
+        // FT-9: a range file's content is the EXPLICIT grid — no drag-fill. A1:A3 is a literal column
+        // vector 1,2,3. B1:B3 is a 3x1 grid of THREE explicit formulas `=A1`, `=A2`, `=A3` (one per
+        // cell, written out), so B1=A1=1, B2=A2=2, B3=A3=3. D1 = SUM(A1:A3) pulls the whole range.
         let wb = load_one_tab(
             "Sheet1",
             &[
-                ("A1:A3.range", "1\n2\n3"),
-                ("D1.cell", "=SUM(A1:A3)"),
-                ("B1:B3.range", "=A1"),
+                ("A1:A3", "1\n2\n3"),
+                ("D1", "=SUM(A1:A3)"),
+                ("B1:B3", "=A1\n=A2\n=A3"),
             ],
         );
         assert_eq!(wb.value_at(0, 3, 0), Value::Number(6.0)); // D1
-        // The drag-fill: B1 reads A1, B2 reads A2, B3 reads A3.
         assert_eq!(wb.value_at(0, 1, 0), Value::Number(1.0)); // B1 = A1
         assert_eq!(wb.value_at(0, 1, 1), Value::Number(2.0)); // B2 = A2
         assert_eq!(wb.value_at(0, 1, 2), Value::Number(3.0)); // B3 = A3
@@ -989,34 +824,42 @@ mod tests {
     }
 
     #[test]
-    fn drag_fill_offsets_relative_refs_but_pins_absolute_ones() {
-        // The canonical drag-fill: C2:C4.range body `=A2*B$1` (relative col A row 2; column B, row
-        // ABSOLUTE). A is `1,2,3` down; B1 (the pinned row) is 10. Each cell offsets the relative A
-        // ref by its row delta but keeps B$1 fixed: C2=A2*B1=10, C3=A3*B1=20, C4=A4*B1=30.
+    fn an_explicit_grid_evaluates_absolute_and_relative_refs_as_written() {
+        // The explicit-grid replacement for the old drag-fill: C2:C4 is a 3x1 grid whose three cells
+        // are written out `=A2*B$1`, `=A3*B$1`, `=A4*B$1`. A is 1,2,3 down; B1 (the `$`-pinned row) is
+        // 10. Each cell evaluates its OWN formula as written: C2=A2*B1=10, C3=A3*B1=20, C4=A4*B1=30.
         let wb = load_one_tab(
             "Sheet1",
             &[
-                ("A2:A4.range", "1\n2\n3"),
-                ("B1.cell", "10"),
-                ("C2:C4.range", "=A2*B$1"),
+                ("A2:A4", "1\n2\n3"),
+                ("B1", "10"),
+                ("C2:C4", "=A2*B$1\n=A3*B$1\n=A4*B$1"),
             ],
         );
-        assert_eq!(wb.value_at(0, 2, 1), Value::Number(10.0)); // C2 = A2*B1
-        assert_eq!(wb.value_at(0, 2, 2), Value::Number(20.0)); // C3 = A3*B1
-        assert_eq!(wb.value_at(0, 2, 3), Value::Number(30.0)); // C4 = A4*B1
+        assert_eq!(wb.value_at(0, 2, 1), Value::Number(10.0)); // C2
+        assert_eq!(wb.value_at(0, 2, 2), Value::Number(20.0)); // C3
+        assert_eq!(wb.value_at(0, 2, 3), Value::Number(30.0)); // C4
         assert!(wb.eval_diagnostics().is_empty());
+    }
+
+    #[test]
+    fn a_bare_range_formula_in_a_scalar_cell_is_a_value_error() {
+        // A formula that evaluates to a genuinely multi-cell array (`=A1:A3`) written into a single
+        // scalar cell has no scalar meaning — `scalar_cell` collapses it to `#VALUE!`.
+        let wb = load_one_tab("Sheet1", &[("A1:A3", "1\n2\n3"), ("C1", "=A1:A3")]);
+        assert_eq!(wb.value_at(0, 2, 0), Value::Error(ErrKind::Value)); // C1
     }
 
     #[test]
     fn a_diamond_dag_evaluates_each_cell_once_never_exponentially() {
         // A diamond that, WITHOUT per-cell memoization, re-evaluates the shared base exponentially:
-        // each level references the one below TWICE, so a naive drag-fill re-eval is 2^depth. With
-        // the per-cell memo it is linear and returns instantly. A1=1; each A{n}=A{n+1}+A{n+1} down a
-        // long column, so A1 = 2^(len-1). Reaching the assert at all proves no exponential hang.
+        // each level references the one below TWICE, so a naive re-eval is 2^depth. With the per-cell
+        // memo it is linear and returns instantly. A1=1; each A{n}=A{n+1}+A{n+1} down a long column,
+        // so A1 = 2^(len-1). Reaching the assert at all proves no exponential hang.
         let len = 40usize; // 2^39 ~ 5.5e11 re-evals if exponential; instant if memoized
         let owned: Vec<(String, String)> = (0..len)
             .map(|i| {
-                let name = format!("A{}.cell", i + 1);
+                let name = format!("A{}", i + 1);
                 let body = if i + 1 < len {
                     format!("=A{n}+A{n}", n = i + 2)
                 } else {
@@ -1038,65 +881,10 @@ mod tests {
     }
 
     #[test]
-    fn a_formula_range_result_that_matches_the_declared_shape_is_placed_exact() {
-        // C1:C3.range = A1:A3 -> a 3x1 array result exactly matches the declared 3x1 range: each
-        // cell reads the corresponding source cell.
-        let wb = load_one_tab(
-            "Sheet1",
-            &[("A1:A3.range", "10\n20\n30"), ("C1:C3.range", "=A1:A3")],
-        );
-        assert_eq!(wb.value_at(0, 2, 0), Value::Number(10.0)); // C1
-        assert_eq!(wb.value_at(0, 2, 1), Value::Number(20.0)); // C2
-        assert_eq!(wb.value_at(0, 2, 2), Value::Number(30.0)); // C3
-        assert!(wb.eval_diagnostics().is_empty());
-    }
-
-    #[test]
-    fn a_formula_result_shape_that_neither_matches_nor_broadcasts_is_a_spill_refusal() {
-        // C1:C2.range = A1:A3 -> a 3x1 result into a declared 2x1 range: neither exact nor a
-        // broadcast -> the static #SPILL!-class refusal (the B1<->engine shape handoff, live).
-        let wb = load_one_tab(
-            "Sheet1",
-            &[("A1:A3.range", "1\n2\n3"), ("C1:C2.range", "=A1:A3")],
-        );
-        assert_eq!(wb.value_at(0, 2, 0), Value::Error(ErrKind::Spill)); // C1
-        let diags = wb.eval_diagnostics();
-        assert!(
-            diags.iter().any(|d| d.code == Code::NonConforming),
-            "{diags:?}"
-        );
-    }
-
-    #[test]
-    fn only_requested_cells_evaluate_the_effectively_infinite_sheet() {
-        // Tab "Live" has an independent literal we will request. Tab "Dead" holds a cycle and a
-        // spill — formulas that WOULD refuse if evaluated. Requesting only Live's cell must leave
-        // Dead untouched: no diagnostics, proving off-request cells never compute.
-        let wb = Workbook::from_tabs(&[
-            ("Live", &[("A1.cell", &file("=6*7"))]),
-            (
-                "Dead",
-                &[
-                    ("A1.cell", &file("=B1")),
-                    ("B1.cell", &file("=A1")), // a cycle, never triggered
-                    ("C1:C2.range", &file("=A1:A3")), // a spill, never triggered
-                ],
-            ),
-        ])
-        .expect("loads clean");
-        assert_eq!(wb.value_at(0, 0, 0), Value::Number(42.0)); // Live!A1
-        assert!(
-            wb.eval_diagnostics().is_empty(),
-            "the Dead tab must not have been evaluated: {:?}",
-            wb.eval_diagnostics()
-        );
-    }
-
-    #[test]
     fn memoization_gives_a_stable_answer_on_repeated_pulls() {
         // Re-requesting the same formula cell (and its dependents) yields the same value — the memo
         // does not corrupt state across pulls.
-        let wb = load_one_tab("Sheet1", &[("A1.cell", "5"), ("B1.cell", "=A1*A1")]);
+        let wb = load_one_tab("Sheet1", &[("A1", "5"), ("B1", "=A1*A1")]);
         assert_eq!(wb.value_at(0, 1, 0), Value::Number(25.0));
         assert_eq!(wb.value_at(0, 1, 0), Value::Number(25.0));
         assert!(wb.eval_diagnostics().is_empty());
@@ -1104,23 +892,32 @@ mod tests {
 
     #[test]
     fn a_gap_cell_reads_blank() {
-        let wb = load_one_tab("Sheet1", &[("A1.cell", "1")]);
+        let wb = load_one_tab("Sheet1", &[("A1", "1")]);
         // Z9 is claimed by no file.
         assert_eq!(wb.value_at(0, 25, 8), Value::Blank);
     }
 
     #[test]
     fn load_surfaces_overlap_and_bad_files() {
-        // Two files claiming intersecting cells -> a load-time overlap refusal.
+        // Two files claiming intersecting cells -> a load-time overlap refusal. A1:C3 declares 3x3, so
+        // its body is a full 3x3 grid; B2 is a single cell inside it.
         let err = Workbook::from_tabs(&[(
             "Sheet1",
             &[
-                ("A1:C3.range", &file("1\t2\t3\n4\t5\t6\n7\t8\t9")),
-                ("B2.cell", &file("x")),
+                ("A1:C3", &file("1\t2\t3\n4\t5\t6\n7\t8\t9")),
+                ("B2", &file("x")),
             ],
         )])
         .unwrap_err();
         assert!(err.iter().any(|d| d.code == Code::Overlap), "{err:?}");
+    }
+
+    #[test]
+    fn an_unparseable_formula_is_a_load_time_refusal_not_a_panic() {
+        // A formula is parsed at load (the grid holds a parsed `Expr`), so an unparseable formula is a
+        // located load-time refusal, never a panic.
+        let err = Workbook::from_tabs(&[("Sheet1", &[("A1", &file("=SUM("))])]).unwrap_err();
+        assert!(err.iter().any(|d| d.code == Code::FormulaSyntax), "{err:?}");
     }
 
     #[test]
@@ -1138,8 +935,8 @@ mod tests {
         let summary = base.join("Summary");
         std::fs::create_dir_all(&inputs).unwrap();
         std::fs::create_dir_all(&summary).unwrap();
-        std::fs::write(inputs.join("A1.cell"), file("7")).unwrap();
-        std::fs::write(summary.join("A1.cell"), file("=Inputs!A1*6")).unwrap();
+        std::fs::write(inputs.join("A1"), file("7")).unwrap();
+        std::fs::write(summary.join("A1"), file("=Inputs!A1*6")).unwrap();
 
         let wb = Workbook::load_dir(&base)
             .expect("fs read ok")
@@ -1151,24 +948,13 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
-    #[test]
-    fn an_unparseable_formula_is_a_located_refusal_not_a_panic() {
-        let wb = load_one_tab("Sheet1", &[("A1.cell", "=SUM(")]);
-        assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Name));
-        assert!(
-            wb.eval_diagnostics()
-                .iter()
-                .any(|d| d.code == Code::FormulaSyntax)
-        );
-    }
-
     /// Build a single-column chain `A1=A2(+1), A2=A3(+1), ..., A{len-1}=A{len}(+1)` with the bottom
     /// cell `A{len}` a literal `0`. Each `+1` makes the top cell's value the chain length minus one
     /// when it fully evaluates, so a computed answer proves the whole chain was walked.
     fn chain_files(len: usize) -> Vec<(String, String)> {
         (0..len)
             .map(|i| {
-                let name = format!("A{}.cell", i + 1);
+                let name = format!("A{}", i + 1);
                 let body = if i + 1 < len {
                     format!("=A{}+1", i + 2)
                 } else {
@@ -1181,8 +967,8 @@ mod tests {
 
     #[test]
     fn a_legal_deep_chain_under_the_bound_computes_fully() {
-        // A chain well within [`MAX_PULL_DEPTH`] evaluates end-to-end: the depth guard never fires
-        // on a legal sheet, only on a pathologically deep one.
+        // A chain well within [`MAX_PULL_DEPTH`] evaluates end-to-end: the depth guard never fires on
+        // a legal sheet, only on a pathologically deep one.
         let len = (MAX_PULL_DEPTH / 2) as usize; // comfortably under the bound
         let owned = chain_files(len);
         let refs: Vec<(&str, &str)> = owned
@@ -1200,10 +986,10 @@ mod tests {
 
     #[test]
     fn a_deep_acyclic_chain_refuses_instead_of_overflowing_the_stack() {
-        // A finite, entirely acyclic chain deeper than the bound. The `visiting` cycle set never
-        // trips (nothing is re-entered), so ONLY the pull-depth guard stands between this and a
-        // native stack overflow: reaching the assertions at all proves no SIGABRT. The deepest link
-        // is a located #NUM!-class refusal that propagates up to the requested top cell.
+        // A finite, entirely acyclic chain deeper than the bound. The `visiting` cycle set never trips
+        // (nothing is re-entered), so ONLY the pull-depth guard stands between this and a native stack
+        // overflow: reaching the assertions at all proves no SIGABRT. The deepest link is a located
+        // #NUM!-class refusal that propagates up to the requested top cell.
         let len = (MAX_PULL_DEPTH as usize) + 64;
         let owned = chain_files(len);
         let refs: Vec<(&str, &str)> = owned
@@ -1223,8 +1009,8 @@ mod tests {
 
     #[test]
     fn check_over_a_workbook_containing_a_deep_chain_does_not_crash() {
-        // `lint` drives EVERY cell, so a workbook that merely CONTAINS an over-deep chain must lint
-        // to a located refusal rather than aborting the process.
+        // `lint` drives EVERY cell, so a workbook that merely CONTAINS an over-deep chain must lint to
+        // a located refusal rather than aborting the process.
         let len = (MAX_PULL_DEPTH as usize) + 8;
         let owned = chain_files(len);
         let refs: Vec<(&str, &str)> = owned
@@ -1241,11 +1027,11 @@ mod tests {
 
     #[test]
     fn a_depth_refused_pull_does_not_poison_a_later_shallower_pull() {
-        // Order-independence (the cardinal §6 rule: never falsely reject a computable cell). One
-        // chain A1->A2->...->A320. Pulling A1 FIRST refuses at depth 256 and propagates #NUM! up
-        // through A1..A256 -- but those ancestor outcomes are depth-tainted and must NOT be
-        // memoized, so a LATER direct pull of A256 (whose own chain A256..A320 is only 65 links
-        // deep, legally computable) returns its real value, not a cached #NUM!.
+        // Order-independence (never falsely reject a computable cell). One chain A1->A2->...->A320.
+        // Pulling A1 FIRST refuses at depth 256 and propagates #NUM! up through A1..A256 -- but those
+        // ancestor outcomes are depth-tainted and must NOT be memoized, so a LATER direct pull of A256
+        // (whose own chain A256..A320 is only 65 links deep, legally computable) returns its real
+        // value, not a cached #NUM!.
         let len = (MAX_PULL_DEPTH as usize) + 64; // 320
         let owned = chain_files(len);
         let refs: Vec<(&str, &str)> = owned
@@ -1258,7 +1044,6 @@ mod tests {
         assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Num)); // A1
 
         // A256's own chain is short enough to compute: A256 = A257+1 = ... = A320(0) + 64 = 64.
-        // The bug would return the cached #NUM! left by the A1 pull (poisoning a computable cell).
         let a256 = wb.value_at(0, 0, 255); // A256 is column A (0), zero-based row 255
         assert_eq!(
             a256,
@@ -1270,16 +1055,15 @@ mod tests {
     #[test]
     fn a_depth_tainted_range_is_not_frozen_into_the_arena() {
         // Order-independence for RANGE materialization -- the arena analogue of the per-cell memo
-        // depth guard above. An H-chain H1->..->H99->0 forwards to 0 and is read by `SUM(H1:H1)`. That
-        // range is FIRST demanded from the bottom of a 200-deep A-chain (A1->..->A200 = `=SUM(H1:H1)`):
+        // depth guard. An H-chain H1->..->H99->0 forwards to 0 and is read by `SUM(H1:H1)`. That range
+        // is FIRST demanded from the bottom of a 200-deep A-chain (A1->..->A200 = `=SUM(H1:H1)`):
         // pulling A1 descends ~200 links, so materializing H1:H1 there pushes past MAX_PULL_DEPTH (256)
         // and would freeze a depth-tainted #NUM! into the H1:H1 rectangle. A LATER shallow
-        // `B1 = SUM(H1:H1)` (H1:H1 reached only 99 links deep, legally computable) must recompute to 0;
-        // the bug cached the tainted buffer and returned #NUM! -- an order-dependent wrong output.
+        // `B1 = SUM(H1:H1)` (H1:H1 reached only 99 links deep, legally computable) must recompute to 0.
         let mut owned: Vec<(String, String)> = Vec::new();
         let h_len = 99usize; // H-chain: forwarding, bottom literal 0 => H1 == 0, reached 99 links deep.
         for i in 0..h_len {
-            let name = format!("H{}.cell", i + 1);
+            let name = format!("H{}", i + 1);
             let body = if i + 1 < h_len {
                 format!("=H{}", i + 2)
             } else {
@@ -1289,7 +1073,7 @@ mod tests {
         }
         let a_len = 200usize; // A-chain: forwarding, bottom cell reads SUM(H1:H1) at ~200 links deep.
         for i in 0..a_len {
-            let name = format!("A{}.cell", i + 1);
+            let name = format!("A{}", i + 1);
             let body = if i + 1 < a_len {
                 format!("=A{}", i + 2)
             } else {
@@ -1297,7 +1081,7 @@ mod tests {
             };
             owned.push((name, body));
         }
-        owned.push(("B1.cell".to_string(), "=SUM(H1:H1)".to_string())); // the later SHALLOW demand.
+        owned.push(("B1".to_string(), "=SUM(H1:H1)".to_string())); // the later SHALLOW demand.
         let refs: Vec<(&str, &str)> = owned
             .iter()
             .map(|(n, b)| (n.as_str(), b.as_str()))
@@ -1307,8 +1091,7 @@ mod tests {
         // Pull the DEEP A-chain first: H1:H1 is reached past the depth bound, tainting the range.
         assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Num)); // A1 (deep -> #NUM!)
 
-        // The later SHALLOW pull: H1:H1 is only 99 links deep here, so SUM(H1:H1) computes to 0. The
-        // bug read the cached depth-tainted #NUM! from the arena (order-dependent wrong output).
+        // The later SHALLOW pull: H1:H1 is only 99 links deep here, so SUM(H1:H1) computes to 0.
         assert_eq!(
             wb.value_at(0, 1, 0), // B1 = col 1, row 0
             Value::Number(0.0),
@@ -1319,9 +1102,9 @@ mod tests {
     #[test]
     fn an_inverted_range_reuses_its_normalized_arena_entry() {
         // The arena key is normalized to canonical min/max corners (matching the materialization
-        // loop), so a reversed or drag-fill-inverted spelling (`B2:A1`) maps to the SAME cache entry
-        // as `A1:B2` rather than materializing the identical rectangle twice under two keys.
-        let wb = load_one_tab("Sheet1", &[("A1.cell", "1")]);
+        // loop), so a reversed spelling (`B2:A1`) maps to the SAME cache entry as `A1:B2` rather than
+        // materializing the identical rectangle twice under two keys.
+        let wb = load_one_tab("Sheet1", &[("A1", "1")]);
         let normalized = RangeRef {
             start: CellRef {
                 col: 0,
@@ -1358,10 +1141,10 @@ mod tests {
 
     #[test]
     fn a_reference_to_a_pathologically_large_range_refuses_instead_of_oom() {
-        // =SUM(A2:ZZ100000) references ~70M empty cells (702 cols x ~100k rows). Materializing a
-        // Value per cell would drive an OOM abort; the model caps the range, so the reference
-        // resolves to a located #NUM! rather than allocating. A valid load must never crash on pull.
-        let wb = load_one_tab("Sheet1", &[("A1.cell", "=SUM(A2:ZZ100000)")]);
+        // =SUM(A2:ZZ100000) references ~70M empty cells. Materializing a Value per cell would drive an
+        // OOM abort; the model caps the range, so the reference resolves to a located #NUM! rather
+        // than allocating.
+        let wb = load_one_tab("Sheet1", &[("A1", "=SUM(A2:ZZ100000)")]);
         assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Num)); // A1
         let diags = wb.eval_diagnostics();
         assert!(
@@ -1372,20 +1155,19 @@ mod tests {
         assert!(
             diags.iter().any(|d| matches!(
                 &d.loc,
-                Loc::TabFile { tab, name } if tab == "Sheet1" && name == "A1.cell"
+                Loc::TabFile { tab, name } if tab == "Sheet1" && name == "A1"
             )),
-            "range-too-large refusal must anchor on Sheet1/A1.cell: {diags:?}"
+            "range-too-large refusal must anchor on Sheet1/A1: {diags:?}"
         );
     }
 
     #[test]
     fn a_range_at_the_materialization_bound_still_computes() {
-        // A reference exactly AT the bound is legal and materializes (the cap is a strict `>`), so
-        // the bound only refuses the pathological over-limit case, never a merely-large valid range.
-        // A1:A5.range holds 1..5; =SUM(A1:A5) over 5 cells is well under the bound -> 15.
+        // A merely-large but valid range materializes: A1:A5 holds 1..5; =SUM(A1:A5) over 5 cells is
+        // well under the bound -> 15.
         let wb = load_one_tab(
             "Sheet1",
-            &[("A1:A5.range", "1\n2\n3\n4\n5"), ("C1.cell", "=SUM(A1:A5)")],
+            &[("A1:A5", "1\n2\n3\n4\n5"), ("C1", "=SUM(A1:A5)")],
         );
         assert_eq!(wb.value_at(0, 2, 0), Value::Number(15.0)); // C1
         assert!(wb.eval_diagnostics().is_empty());
@@ -1394,11 +1176,10 @@ mod tests {
     #[test]
     fn a_cross_sheet_cycle_is_located_to_the_sheet_qualified_file() {
         // Sheet1!A1 = Sheet2!A1 and Sheet2!A1 = Sheet1!A1 -- a cross-sheet cycle. The refusal must
-        // name the TAB, not a bare `A1.cell` (which exists on BOTH sheets and is otherwise
-        // untraceable). This is the located-diagnostics fix (W4 adversarial moderate).
+        // name the TAB, not a bare `A1` (which exists on BOTH sheets and is otherwise untraceable).
         let wb = Workbook::from_tabs(&[
-            ("Sheet1", &[("A1.cell", &file("=Sheet2!A1"))]),
-            ("Sheet2", &[("A1.cell", &file("=Sheet1!A1"))]),
+            ("Sheet1", &[("A1", &file("=Sheet2!A1"))]),
+            ("Sheet2", &[("A1", &file("=Sheet1!A1"))]),
         ])
         .expect("loads clean");
         assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Ref)); // Sheet1!A1
@@ -1410,9 +1191,26 @@ mod tests {
         match &cyc.loc {
             Loc::TabFile { tab, name } => {
                 assert!(tab == "Sheet1" || tab == "Sheet2", "unexpected tab {tab:?}");
-                assert_eq!(name, "A1.cell");
+                assert_eq!(name, "A1");
             }
             other => panic!("cross-sheet cycle must be sheet-qualified, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn eval_formula_evaluates_an_ad_hoc_string_against_the_workbook() {
+        // The `charlie eval` entry: an ad-hoc formula string evaluates against the loaded workbook,
+        // referencing stored cells. A clean value is `Value`; a spreadsheet error value is `Error`.
+        let wb = load_one_tab("Sheet1", &[("A1", "6"), ("A2", "7")]);
+        assert_eq!(
+            wb.eval_formula(0, "A1*A2").unwrap(),
+            FormulaOutcome::Value("42".to_string())
+        );
+        assert_eq!(
+            wb.eval_formula(0, "1/0").unwrap(),
+            FormulaOutcome::Error("#DIV/0!".to_string())
+        );
+        // A parse failure is a located refusal.
+        assert!(wb.eval_formula(0, "SUM(").is_err());
     }
 }

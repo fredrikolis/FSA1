@@ -1,0 +1,12 @@
+# Concern: each period's opening balance = prior period's End Balance (drag-fill; F2 re-anchors per row to F2..F12) | Non-concern: period 1's opening balance (B2.cell) | IO: none
+=F2
+=F3
+=F4
+=F5
+=F6
+=F7
+=F8
+=F9
+=F10
+=F11
+=F12

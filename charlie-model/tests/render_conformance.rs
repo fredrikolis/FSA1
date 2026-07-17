@@ -559,11 +559,11 @@ fn viewport_evaluates_only_the_dependency_cone() {
     let wb = Workbook::from_tabs(&[(
         "Sheet1",
         &[
-            ("A1.cell", a1.as_str()),
-            ("B1.cell", b1.as_str()),
-            ("C1.cell", c1.as_str()),
-            ("A5.cell", a5.as_str()),
-            ("A6.cell", a6.as_str()),
+            ("A1", a1.as_str()),
+            ("B1", b1.as_str()),
+            ("C1", c1.as_str()),
+            ("A5", a5.as_str()),
+            ("A6", a6.as_str()),
         ],
     )])
     .expect("poison workbook loads clean");

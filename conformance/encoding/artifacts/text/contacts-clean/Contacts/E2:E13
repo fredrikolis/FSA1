@@ -1,0 +1,13 @@
+# Concern: normalized email = trimmed and lowercased, so case/whitespace variants collapse | Non-concern: the dedupe flag computed from it (F) | IO: none
+=LOWER(TRIM(B2))
+=LOWER(TRIM(B3))
+=LOWER(TRIM(B4))
+=LOWER(TRIM(B5))
+=LOWER(TRIM(B6))
+=LOWER(TRIM(B7))
+=LOWER(TRIM(B8))
+=LOWER(TRIM(B9))
+=LOWER(TRIM(B10))
+=LOWER(TRIM(B11))
+=LOWER(TRIM(B12))
+=LOWER(TRIM(B13))

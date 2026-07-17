@@ -1,2 +1,0 @@
-# Concern: total revenue per region (criteria SUM group-by) | Non-concern: order counts (C) and averages (D) | IO: output
-=SUMIFS(Sales!E$2:E$13, Sales!B$2:B$13, A2)

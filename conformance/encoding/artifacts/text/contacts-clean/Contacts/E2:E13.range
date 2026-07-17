@@ -1,2 +1,0 @@
-# Concern: normalized email = trimmed and lowercased, so case/whitespace variants collapse | Non-concern: the dedupe flag computed from it (F) | IO: none
-=LOWER(TRIM(B2))

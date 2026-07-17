@@ -111,8 +111,8 @@ mod tests {
     fn disjoint_regions_do_not_overlap() {
         // A1:B2 and C3:D4 are disjoint -> no diagnostic (a gap is Blank).
         let files = vec![
-            ("A1:B2.range".to_string(), rect(0, 0, 1, 1)),
-            ("C3:D4.range".to_string(), rect(2, 2, 3, 3)),
+            ("A1:B2".to_string(), rect(0, 0, 1, 1)),
+            ("C3:D4".to_string(), rect(2, 2, 3, 3)),
         ];
         assert!(detect_overlaps("Orders", &files).is_empty());
     }
@@ -121,25 +121,25 @@ mod tests {
     fn touching_but_not_overlapping_is_fine() {
         // A1:B2 and C1:D2 share an edge boundary but no cell (cols 0-1 vs 2-3).
         let files = vec![
-            ("A1:B2.range".to_string(), rect(0, 0, 1, 1)),
-            ("C1:D2.range".to_string(), rect(2, 0, 3, 1)),
+            ("A1:B2".to_string(), rect(0, 0, 1, 1)),
+            ("C1:D2".to_string(), rect(2, 0, 3, 1)),
         ];
         assert!(detect_overlaps("Orders", &files).is_empty());
     }
 
     #[test]
     fn range_and_cell_overlap_names_both_and_the_contested_cell() {
-        // The FORMAT §7 worked example: A1:D3.range and C2.cell contest exactly C2.
+        // The overlap worked example: files A1:D3 and C2 contest exactly C2.
         let files = vec![
-            ("A1:D3.range".to_string(), rect(0, 0, 3, 2)),
-            ("C2.cell".to_string(), Rect::cell(2, 1)),
+            ("A1:D3".to_string(), rect(0, 0, 3, 2)),
+            ("C2".to_string(), Rect::cell(2, 1)),
         ];
         let diags = detect_overlaps("Orders", &files);
         assert_eq!(diags.len(), 1);
         let d = &diags[0];
         assert_eq!(d.code, Code::Overlap);
-        assert!(d.message.contains("A1:D3.range"));
-        assert!(d.message.contains("C2.cell"));
+        assert!(d.message.contains("A1:D3"));
+        assert!(d.message.contains("C2"));
         assert!(d.message.contains("contested: C2"));
         assert!(d.message.contains("reject"));
     }
@@ -148,8 +148,8 @@ mod tests {
     fn overlapping_ranges_report_the_contested_block() {
         // A1:C3 and B2:D4 contest the B2:C3 block.
         let files = vec![
-            ("A1:C3.range".to_string(), rect(0, 0, 2, 2)),
-            ("B2:D4.range".to_string(), rect(1, 1, 3, 3)),
+            ("A1:C3".to_string(), rect(0, 0, 2, 2)),
+            ("B2:D4".to_string(), rect(1, 1, 3, 3)),
         ];
         let diags = detect_overlaps("T", &files);
         assert_eq!(diags.len(), 1);
@@ -159,8 +159,8 @@ mod tests {
     #[test]
     fn duplicate_cells_overlap() {
         let files = vec![
-            ("C2.cell".to_string(), Rect::cell(2, 1)),
-            ("C2.cell".to_string(), Rect::cell(2, 1)),
+            ("C2".to_string(), Rect::cell(2, 1)),
+            ("C2".to_string(), Rect::cell(2, 1)),
         ];
         assert_eq!(detect_overlaps("T", &files).len(), 1);
     }

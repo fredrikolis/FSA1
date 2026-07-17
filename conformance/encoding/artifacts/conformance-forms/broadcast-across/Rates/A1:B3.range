@@ -1,4 +1,0 @@
-# Concern: one per-row scaling factor column broadcast ACROSS every column | Non-concern: the columns being scaled | IO: input
-10
-20
-30

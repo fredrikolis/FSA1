@@ -9,7 +9,7 @@
 use charlie_ast::a1::{format_column, parse_a1};
 use charlie_ast::{ErrKind, Value, num_to_text};
 
-use crate::body::Body;
+use crate::grid::Cell;
 use crate::overlap::Rect;
 use crate::workbook::Workbook;
 
@@ -89,11 +89,11 @@ fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) ->
     match mode {
         RenderMode::Values => display_value(&wb.value_at(sheet, col, row)),
         RenderMode::Functions => match wb.source_at(sheet, col, row) {
-            // A formula backs the whole range with one text; a literal shows its placed value
-            // (Excel's Ctrl+` "show formulas" view: formulas as text, literals as their value).
-            Some(src) => match src.body {
-                Body::Formula(text) => text.clone(),
-                Body::Literal(_) => display_value(&wb.value_at(sheet, col, row)),
+            // A formula cell shows its source text; a literal cell shows its value (Excel's Ctrl+`
+            // "show formulas" view: formulas as text, literals as their value).
+            Some(src) => match src.cell {
+                Cell::Formula { src: text, .. } => text.clone(),
+                Cell::Value(_) => display_value(&wb.value_at(sheet, col, row)),
             },
             None => String::new(),
         },
@@ -195,10 +195,10 @@ mod tests {
         Workbook::from_tabs(&[(
             "Sheet1",
             &[
-                ("A1.cell", a1.as_str()),
-                ("B1.cell", b1.as_str()),
-                ("C1.cell", c1.as_str()),
-                ("A2:B2.range", a2.as_str()),
+                ("A1", a1.as_str()),
+                ("B1", b1.as_str()),
+                ("C1", c1.as_str()),
+                ("A2:B2", a2.as_str()),
             ],
         )])
         .expect("loads clean")

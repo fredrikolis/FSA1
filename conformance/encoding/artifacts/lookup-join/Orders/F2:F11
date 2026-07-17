@@ -1,0 +1,11 @@
+# Concern: line_total = qty × joined unit_price; the missing-key row (O1006) propagates #N/A from column D | Non-concern: the IFNA-guarded safe total in H | IO: none
+=C2*D2
+=C3*D3
+=C4*D4
+=C5*D5
+=C6*D6
+=C7*D7
+=C8*D8
+=C9*D9
+=C10*D10
+=C11*D11

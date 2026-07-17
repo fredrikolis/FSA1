@@ -1,0 +1,4 @@
+# Concern: order count per region (criteria COUNT group-by) | Non-concern: revenue sums/averages | IO: output
+=COUNTIFS(Sales!B$2:B$13, A2)
+=COUNTIFS(Sales!B$2:B$13, A3)
+=COUNTIFS(Sales!B$2:B$13, A4)
