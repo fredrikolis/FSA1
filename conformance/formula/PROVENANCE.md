@@ -1,3 +1,4 @@
+<!-- Concern: the SOURCE + tamper-fingerprint of the formula-conformance corpus — how its `.fixtures` value probes (context + formula + EXPECTED) were authored, and the ORACLE-INPUT PURITY contract that makes their EXPECTED values authoritative truth the gate and agents never question | Non-concern: the parse/eval grading verdict logic (the `conformance` runner owns that) and the charlie-DERIVED `facts-snapshot.tsv` (a runner output, not an oracle input — deliberately not fingerprinted) | IO: none -->
 # Formula-conformance corpus — provenance and the oracle contract
 
 This directory is the **formula-level** conformance corpus for `charlie-ast`. Each fixture is a

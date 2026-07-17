@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# pre-commit gate: formatting + lint + annotations (all sub-second). Adapted from
-# ~/src/fanuc-tools-dev/fanuc-tools/.githooks/pre-commit.
+# pre-commit gate: formatting + lint + annotations (all sub-second), then the conformance backslide
+# state-guard.
 #
-# W0 posture: there is NO conformance crate yet, so the conformance BACKSLIDE state-guard that
-# fanuc runs after the fast checks is NOT wired here — see the clearly-marked block below where W3
-# adds it. The full test gate (`cargo test --workspace -- --include-ignored`) remains a deliberate,
-# observed step — intentionally NOT run here, so it never gets chained into the commit action.
+# After the fast checks, the conformance BACKSLIDE state-guard runs unconditionally — the `conformance`
+# crate exists and the guard is live (see the clearly-marked block below that grades the formula corpus
+# via `cargo run -p conformance -- backslide`). The full test gate
+# (`cargo test --workspace -- --include-ignored`) remains a deliberate, observed step — intentionally
+# NOT run here, so it never gets chained into the commit action.
 # Enable this hook per clone: git config core.hooksPath .githooks
 set -euo pipefail
 

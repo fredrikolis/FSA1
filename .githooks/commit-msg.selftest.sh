@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# commit-msg.selftest.sh — standalone calibration harness for the commit-msg hook. Adapted from
-# fanuc's; the parser is identical, so these rows lock the same quirks (the ` vs ` delimiter, the
-# keyword-anywhere count match, the severity gate, the state-gated Merge/Revert auto-skip).
+# commit-msg.selftest.sh — standalone calibration harness for the commit-msg hook. These rows lock
+# the parser quirks (the ` vs ` delimiter, the keyword-anywhere count match, the severity gate, the
+# state-gated Merge/Revert auto-skip).
 # Most rows check the MESSAGE FILE only (the trailer checks need no staged diff): write a message to a
 # temp file and invoke `"$HOOK" <msgfile>`, asserting the exit code. The Merge/Revert auto-skip is
 # STATE-gated (it consults MERGE_HEAD/REVERT_HEAD, not the subject prefix alone), so those rows run

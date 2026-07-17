@@ -2,8 +2,7 @@
 # charlie — Commit Gate (rationale)
 
 The mechanism lives in `.githooks/` and `.github/workflows/`; this document is the self-contained
-*why* those files defer to. Adapted from `~/src/fanuc-tools-dev/fanuc-tools/.githooks`. Enable per
-clone once: `git config core.hooksPath .githooks`.
+*why* those files defer to. Enable per clone once: `git config core.hooksPath .githooks`.
 
 **Load-bearing design honesty.** A git hook is bash and cannot invoke an LLM, so it can never
 *perform* a review — it only verifies that a well-formed **attestation** is present. The semantic
@@ -20,9 +19,10 @@ a minimal env):
 3. `annotated-tree --strict-check --include-tests .` — the annotation + architecture gate. The rules
    live in `.annotated-tree.toml`; corpus/fixture exclusion is done at the call site with `-I` globs
    (annotated-tree config has no `ignore` key), kept in sync between the hook and CI.
-4. **Conformance backslide state-guard** — wired in **W3** (no conformance crate exists yet). It will
-   branch on `cargo run -p conformance -- backslide`'s exit code: `0` = no proven fact lost → PASS;
-   `1` = ≥1 backslide → BLOCK; `2` = anchor missing/unreadable → BLOCK (fail SAFE).
+4. **Conformance backslide state-guard** — live and unconditional (the `conformance` crate exists and
+   the guard is wired). It branches on `cargo run -p conformance -- backslide`'s exit code: `0` = no
+   proven fact lost → PASS; `1` = ≥1 backslide → BLOCK; `2` = anchor missing/unreadable → BLOCK (fail
+   SAFE).
 
 The **full test gate** — `cargo test --workspace -- --include-ignored` — is deliberately **NOT** in
 the hook. It stays a deliberate, observed step so it is never chained into the commit action.

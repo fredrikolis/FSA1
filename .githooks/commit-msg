@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# commit-msg: accountability-record gate for independent-review attestations. Adapted faithfully
-# from ~/src/fanuc-tools-dev/fanuc-tools/.githooks/commit-msg (same parser, same two-attestation
-# model); only the standards it POINTS at differ (this repo's AST work is governed by
-# ast-standards.md instead of fanuc's repo-standards.md).
+# commit-msg: accountability-record gate for independent-review attestations. The two-attestation
+# model checks that a well-formed review tally is present; the standards it POINTS at are this repo's
+# (the AST work is governed by ast-standards.md).
 #
 # Arg $1 is the path to the file holding the pending commit message (git's commit-msg contract).
 # This hook fires at COMMIT time — ALL attestation gating happens here, next to the change, before

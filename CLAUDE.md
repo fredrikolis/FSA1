@@ -10,7 +10,9 @@ process document and survives compaction.
 ## Posture (declare every transition)
 
 **Current posture: BUILD-OUT / UNRELEASED.**
-The first product crate has landed — `charlie-ast`, the formula-language contract surface. No
+Three product crates have landed — `charlie-ast` (the formula-language contract surface),
+`charlie-model` (the filesystem spreadsheet model), and `charlie-cli` (the thin CLI shell) — plus the
+`conformance` grading crate; all four are committed workspace members. No
 external consumer depends on these crates yet, so contracts (the formula AST, the
 filesystem-model boundary) are ours to break freely: **break freely and fix every call site in
 the same commit — never a backwards-compat shim across a boundary we own both ends of.**
@@ -57,8 +59,10 @@ rationale: `docs/commit-gate.md`).
 1. **Fast checks** — `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
 2. **Annotations** — `annotated-tree --strict-check --include-tests`, PATH-resolved via `command -v`
    after the hook prepends `$CARGO_HOME/bin` and the npm global bin (non-interactive shells have
-   neither on PATH), with an `npx --yes annotated-tree@0.2.1` fallback if no binary is found. The
-   conformance backslide state-guard is wired here in **W3** (no conformance crate exists yet).
+   neither on PATH), with an `npx --yes annotated-tree@0.2.1` fallback if no binary is found.
+3. **Conformance backslide state-guard** — live and unconditional (`.githooks/pre-commit` builds and
+   grades the formula corpus via `cargo run -p conformance -- backslide`, blocking on any regression):
+   the `conformance` crate exists and the guard is wired.
 
 The **full test gate** — `cargo test --workspace -- --include-ignored` — is deliberately **NOT**
 in the hook; it stays an observed step so it is never chained into the commit action.
@@ -83,4 +87,7 @@ gate, pinned `annotated-tree@0.2.1`) and `build.yml` (`--locked` fmt + clippy + 
 
 ## First-read path
 
-`CLAUDE.md` → `README.md` → (once crates exist) the current crate's plan → `WORKLOG.md`.
+`CLAUDE.md` (this process doc) → `README.md` (orientation) → `SPEC.md` (the product spec — vocabulary
+and invariants) → `docs/architecture.md` (the crate firewall and the fs↔AST boundary) →
+`docs/commit-gate.md` (the gate). Each shipping source file then carries its own first-line
+`Concern | Non-concern | IO` annotation (`annotated-tree` renders the tree from them).

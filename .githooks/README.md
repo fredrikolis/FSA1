@@ -2,15 +2,15 @@
 
 Enable per clone: `git config core.hooksPath .githooks`
 
-Adapted from `~/src/fanuc-tools-dev/fanuc-tools/.githooks`. Full rationale:
-`../docs/commit-gate.md`.
+Full rationale: `../docs/commit-gate.md`.
 
 - **pre-commit** — robust PATH repair, then `cargo fmt --all -- --check` ·
   `cargo clippy --workspace --all-targets -- -D warnings` ·
   `annotated-tree --strict-check --include-tests` (PATH-resolved via `command -v` after prepending
   `$CARGO_HOME/bin` and the npm global bin, with an `npx --yes annotated-tree@0.2.1` fallback). The conformance backslide state-guard is
-  wired here in **W3** (no conformance crate exists yet); the marked block in the hook holds its
-  place. The full test gate stays a deliberate, observed step — never chained into the commit.
+  live and unconditional (the `conformance` crate exists and the marked block in the hook grades the
+  formula corpus via `cargo run -p conformance -- backslide`). The full test gate stays a deliberate,
+  observed step — never chained into the commit.
 - **commit-msg** — a mechanical presence-check for two attestation trailers: **(A standards-review
   or `Review-skip`) AND (B annotation-drift review or `Annotation-skip`)**. It verifies only that
   the trailers are present and well-formed; the reviews themselves are performed out-of-band by an
