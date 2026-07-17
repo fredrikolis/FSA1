@@ -59,7 +59,9 @@ pub fn viewport_cell_count(vp: Rect) -> u64 {
 }
 
 /// Build the render grid for `viewport` on `sheet` under `mode`. Demand-driven: in [`RenderMode::Values`]
-/// each cell is pulled through the workbook, so only the viewport's transitive cone evaluates.
+/// the whole viewport is demanded through the workbook's batched [`Workbook::values_at`], so the
+/// viewport's cells accrete into ONE dependency graph (ENG3) — a dependency shared by several viewport
+/// cells is computed once — and only that transitive cone evaluates.
 ///
 /// The caller must bound `viewport` to [`MAX_VIEWPORT_CELLS`] (see [`viewport_cell_count`]) before
 /// calling — `render` materializes a string per cell, so an unbounded viewport would OOM.
@@ -68,10 +70,25 @@ pub fn render(wb: &Workbook, sheet: u32, viewport: Rect, mode: RenderMode) -> Re
         .map(format_column)
         .collect();
 
+    // In Values mode, demand every viewport cell in ONE plan+evaluate pass so shared dependencies are
+    // computed once (ENG3). The spelled strings are indexed row-major to fill the grid below.
+    let value_strings: Option<Vec<String>> = (mode == RenderMode::Values).then(|| {
+        let coords: Vec<(u32, u32, u32)> = (viewport.min_row..=viewport.max_row)
+            .flat_map(|row| (viewport.min_col..=viewport.max_col).map(move |col| (sheet, col, row)))
+            .collect();
+        wb.values_at(&coords).iter().map(display_value).collect()
+    });
+
+    let width = (viewport.max_col - viewport.min_col + 1) as usize;
     let rows = (viewport.min_row..=viewport.max_row)
-        .map(|row| {
+        .enumerate()
+        .map(|(ri, row)| {
             let cells = (viewport.min_col..=viewport.max_col)
-                .map(|col| cell_text(wb, sheet, col, row, mode))
+                .enumerate()
+                .map(|(ci, col)| match &value_strings {
+                    Some(vs) => vs[ri * width + ci].clone(),
+                    None => cell_text(wb, sheet, col, row, mode),
+                })
                 .collect();
             RenderRow {
                 // 1-based row number gutter.
@@ -84,10 +101,10 @@ pub fn render(wb: &Workbook, sheet: u32, viewport: Rect, mode: RenderMode) -> Re
     RenderGrid { col_labels, rows }
 }
 
-/// The display string for one cell under `mode`.
+/// The display string for one cell under `mode` (the non-`Values` modes; `Values` is batched in
+/// [`render`]). `Functions`/`Annotation` are per-cell source lookups with no cross-cell sharing.
 fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) -> String {
     match mode {
-        RenderMode::Values => display_value(&wb.value_at(sheet, col, row)),
         RenderMode::Functions => match wb.source_at(sheet, col, row) {
             // A formula cell shows its source text; a literal cell shows its value (Excel's Ctrl+`
             // "show formulas" view: formulas as text, literals as their value).
@@ -100,6 +117,12 @@ fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) ->
         RenderMode::Annotation => wb
             .source_at(sheet, col, row)
             .map_or(String::new(), |src| src.annotation.to_string()),
+        // `Values` is materialized once, batched, in [`render`] (the `value_strings` branch), so
+        // `cell_text` is only ever reached when `mode != Values` and this arm is statically dead.
+        // Rather than panic, spell the cell's value the same way the batched path would — total,
+        // never a panic (this engine's never-panic convention), and the correct answer if ever
+        // reached.
+        RenderMode::Values => display_value(&wb.value_at(sheet, col, row)),
     }
 }
 

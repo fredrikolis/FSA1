@@ -1,17 +1,20 @@
-// Concern: the DEMAND-DRIVEN evaluation engine — load a sheet-directory (tabs=folders, files=closed ranges) into an in-memory `Workbook` via `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it, reading its grid cell at the local offset, and — when that cell is a `=formula` — EVALUATING the parsed `Expr` through `charlie_ast::eval` with THIS workbook as the resolver (the PULL); a cell's value derives only from its own content (VAL1), so there is no drag-fill/offset anywhere; results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an AD-HOC `=formula` string is also evaluated against this loaded workbook via `eval_formula` (the `charlie-cli eval` entry) — parsed through `charlie_ast`, evaluated with THIS workbook as the resolver (unqualified refs resolving against a caller-named tab), and returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, each already `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
-//! Demand-driven evaluation: [`Workbook`] loads a sheet-directory and implements [`Resolver`] over
-//! it, so `charlie_ast::eval` pulls cell values through the model (the "swap the impl, the engine is
-//! unchanged" firewall made live over a real store). Memoized, cycle-safe, and lazy: an off-request
-//! cell never computes. Beyond the stored-cell pull, [`Workbook::eval_formula`] evaluates an ad-hoc
-//! `=formula` string against the loaded workbook (the `charlie-cli eval` entry), returning a
-//! [`FormulaOutcome`] that distinguishes a clean value from a spreadsheet error value.
+// Concern: the TWO-PASS evaluation engine (ENG3) — load a sheet-directory (tabs=folders, files=closed ranges) into an in-memory `Workbook` via `parse_file`, then evaluate demanded cells in TWO passes: a PLAN pass builds one private dependency graph (`DepGraph`) of the cells a render demands — the viewport's cells plus their transitive dependencies, ranges expanded to their cells, a dependency shared by several demanded cells merged to a SINGLE node, accreted as more demanded cells are added — and an EVALUATE pass computes each node exactly once (ENG2 compute-once) in dependency order through `charlie_ast::eval` with THIS workbook as the `Resolver` (during evaluate the resolver only READS already-computed results), writing values; a cell's value derives only from its own content (VAL1), so there is no drag-fill/offset; EVERY prior behavior and diagnostic is preserved — a reference cycle is a located `#REF!` (CORE2 / ENG2 cycle-safe), the pull-depth guard is a located `#NUM!`, the range-materialization bound (`MAX_RANGE_CELLS`) is a located `#NUM!`, cross-sheet resolution, range materialization, and totality (never a panic); a clean result is memoized and reused while inputs are unchanged (ENG4) but a depth-tainted (root-relative `#NUM!`) result is not; an AD-HOC `=formula` string is evaluated against the loaded workbook via `eval_formula` (the `charlie-cli eval` entry) through the same two passes, returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), xlsx serde, the CLI render surface, and the dependency-graph type's escape from this module — `DepGraph`/`PlanNode` are private and appear in no other module's surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a demanded cell / a viewport of cells) -> `Value`s, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
+//! Two-pass evaluation (ENG3): [`Workbook`] loads a sheet-directory and implements [`Resolver`] over
+//! it. A demand (one cell via [`Workbook::value_at`], a viewport via [`Workbook::values_at`], or an
+//! ad-hoc formula via [`Workbook::eval_formula`]) runs a PLAN pass that builds one private dependency
+//! graph of the demanded cells and their transitive dependencies (ranges expand to cells; a shared
+//! dependency is one merged node), then an EVALUATE pass that computes each node once in dependency
+//! order through `charlie_ast::eval`. The graph is a contained optimization — its type never leaves
+//! this module and it EQUALS a naive per-cell evaluation (proven by the differential test below). The
+//! engine stays memoized (ENG4), cycle-safe (a reference cycle is a located `#REF!`), and lazy (an
+//! off-request cell never computes).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use charlie_ast::{
-    ArrayView, CellRef, ErrKind, RangeRef, Resolver, Shape, SheetId, Value, eval, parse,
+    ArrayView, CellRef, ErrKind, Expr, RangeRef, Resolver, Shape, SheetId, Value, eval, parse,
     system_now_secs, unix_secs_to_serial,
 };
 
@@ -20,36 +23,34 @@ use crate::grid::{Cell as GridCell, Grid};
 use crate::overlap::{Rect, detect_overlaps};
 use crate::{ParsedFile, parse_file};
 
-/// The maximum cross-cell formula-pull depth before the model refuses. Each link in a `=formula`
-/// dependency chain (`A1=A2`, `A2=A3`, ...) resolves by *native recursion* (`value -> eval_formula
-/// -> charlie_ast::eval -> value`), and every formula gets a fresh [`charlie_ast`] `EvalCtx`, so the
-/// engine's own per-tree depth bound never spans cells — a deep-but-acyclic chain would otherwise
-/// grow the native stack one frame-group per link and abort the process on overflow.
+/// The maximum cross-cell dependency depth the PLAN pass will descend before it refuses. Each link in
+/// a `=formula` dependency chain (`A1=A2`, `A2=A3`, ...) is one level deeper in the plan's dependency
+/// DFS, and the DFS recurses natively (`plan_visit -> plan_visit`), so a deep-but-acyclic chain would
+/// otherwise grow the native stack one frame per link and abort the process on overflow while the
+/// graph is being built.
 ///
-/// This is the model-level counterpart to that engine bound (`ast-standards` PART 9, "every later
-/// walk is stack-safe"): a chain deeper than this is a located `#NUM!`-class refusal, never a crash.
-/// The value is deliberately conservative — chosen to be safe on the *smallest* stack any of our
-/// entry points runs on (the test harness's ~2 MiB worker threads, where a debug build overflows
-/// only well above this), not to match a spreadsheet engine's much larger practical limit. A serial
-/// dependency chain this long is already pathological; the contract is only that it refuses cleanly.
+/// A chain deeper than this is a located `#NUM!`-class refusal recorded at the offending cell, never a
+/// crash. The value is deliberately conservative — chosen to be safe on the *smallest* stack any of
+/// our entry points runs on (the test harness's ~2 MiB worker threads), not to match a spreadsheet
+/// engine's much larger practical limit. A serial dependency chain this long is already pathological;
+/// the contract is only that it refuses cleanly.
 ///
-/// Past this bound, whether a deep acyclic chain's top cell *refuses* or *computes* is deliberately
-/// left order-sensitive: if an intermediate link was already pulled (and depth-clean-memoized) at a
-/// shallower depth, a later deep pull short-circuits on that memo and computes fully rather than
-/// tripping the guard. This is never a *wrong value* — the memo only ever caches true, depth-clean
-/// values, so returning one is always correct. The dangerous direction (a depth-tainted `#NUM!`
-/// poisoning a later shallower, computable pull) is what the `depth_refusals` snapshot guard prevents
-/// (see `a_depth_refused_pull_does_not_poison_a_later_shallower_pull`).
+/// Past this bound the refusal is a property of the DEPTH the chain was reached at, not of the cell:
+/// a `#NUM!` produced here (and every ancestor value that consumes it) is *depth-tainted* and is NOT
+/// memoized, so a later, shallower — and legally computable — demand of the same cell recomputes its
+/// real value rather than reading a poisoned cache entry (see
+/// `a_depth_refused_pull_does_not_poison_a_later_shallower_pull`).
 const MAX_PULL_DEPTH: u32 = 256;
 
-/// The largest rectangular range (in cells) [`Resolver::range`] will MATERIALIZE before it refuses.
-/// A `=formula` may reference a syntactically-valid but pathologically-large rectangle
-/// (`=SUM(A2:ZZ100000)` — ~70M cells); materializing a `Value` for every one of them retains an
-/// arena buffer for the workbook lifetime and drives the process into an OOM abort. Bounding the
-/// materialized area turns that into a located `#NUM!`-class [`Code::RangeTooLarge`] refusal — the
-/// range resolves to a single error cell that the referencing aggregation propagates — so no valid
-/// invocation can crash the process on allocation. The bound is far above any real sheet's used
-/// range (a 1000-column × 1000-row block); only a pathological reference reaches it.
+/// The largest rectangular range (in cells) [`Resolver::range`] will MATERIALIZE before it refuses,
+/// and the largest a range dependency the PLAN pass will EXPAND into its cells. A `=formula` may
+/// reference a syntactically-valid but pathologically-large rectangle (`=SUM(A2:ZZ100000)` — ~70M
+/// cells); expanding or materializing a cell for every one drives the process into an OOM abort.
+/// Bounding the area turns that into a located `#NUM!`-class [`Code::RangeTooLarge`] refusal — the
+/// plan leaves the range unexpanded and [`Resolver::range`] resolves it to a single error cell that
+/// the referencing aggregation propagates — so no valid invocation can crash the process on
+/// allocation. The bound is far above any real sheet's used range (a 1000×1000 block); only a
+/// pathological reference reaches it.
 const MAX_RANGE_CELLS: u64 = 1_000_000;
 
 /// One loaded file: its name and claimed region plus its deserialized [`Grid`] (each coordinate a
@@ -76,57 +77,94 @@ struct Tab {
 /// The file-level anchor for an eval-time refusal is keyed by this.
 type FileId = (u32, usize);
 
-/// The identity of one rendered cell: `(sheet index, zero-based col, zero-based row)`. The per-cell
-/// memo and the currently-evaluating (cycle-detection) set are keyed by this — each grid cell is a
-/// DISTINCT computation, so the cache and the cycle guard must be per cell, not per file.
+/// The identity of one rendered cell: `(sheet index, zero-based col, zero-based row)`. Graph nodes,
+/// the per-cell memo, and the per-pass results/taint sets are keyed by this — each grid cell is a
+/// DISTINCT computation, so the graph and the caches are per cell, not per file.
 type CellKey = (u32, u32, u32);
 
-/// An in-memory charlie workbook that evaluates on demand.
+/// One node of the PLAN pass's dependency graph — how a demanded cell is computed by the EVALUATE
+/// pass. PRIVATE to this module (ENG3 containment): it appears in no other module's surface and is
+/// never re-exported.
+///
+/// A literal cell and a gap are NOT nodes — the EVALUATE pass reads them straight from the grid, so
+/// only cells that need computation (formulas) or a pre-decided refusal (cycle / depth) are nodes.
+enum PlanNode {
+    /// A formula cell: its covering file, the cell's local offset into that file's grid, and the
+    /// dependency cells whose values must be computed first. `deps` is the formula's static references
+    /// (ranges expanded to their cells); a dep that is itself a graph node orders before this one.
+    Formula {
+        file: FileId,
+        dr: u32,
+        dc: u32,
+        deps: Vec<CellKey>,
+    },
+    /// A cell on a reference cycle — a located `#REF!`. Terminal (no deps); its dependents propagate
+    /// the `#REF!`.
+    Cycle,
+    /// A cell reached past [`MAX_PULL_DEPTH`] — a located `#NUM!`. Terminal and depth-tainted, so its
+    /// value is never memoized.
+    DepthRefused,
+}
+
+/// The PLAN pass's dependency graph: one merged node per demanded/depended cell (ENG3). PRIVATE to
+/// this module and never re-exported — the render/check/eval surfaces consume only cell VALUES.
+///
+/// The graph is built up and MERGED across a render pass's demanded cells: [`Workbook::plan_visit`]
+/// accretes each demanded cell (and its transitive dependencies) into the SAME graph, so a dependency
+/// needed by more than one demanded cell becomes a single shared node — removing that sharing changes
+/// performance, never results.
+#[derive(Default)]
+struct DepGraph {
+    nodes: HashMap<CellKey, PlanNode>,
+}
+
+/// An in-memory charlie workbook that evaluates on demand in two passes (ENG3).
 ///
 /// Load with [`Workbook::from_tabs`] (in-memory) or [`Workbook::load_dir`] (a filesystem tree), then
-/// drive evaluation by requesting cells ([`Workbook::value_at`]) or by handing `&Workbook` to
-/// [`charlie_ast::eval`] as a [`Resolver`]. Evaluation is **demand-driven** (only requested cells,
-/// transitively, compute), **memoized per cell** (each rendered cell computes at most once, so a
-/// diamond / deep DAG stays linear and never re-evaluates exponentially), and **cycle-safe** (a
-/// reference cycle is a located `#REF!`-class refusal, never a hang). Each grid cell derives its value
-/// only from its own content (VAL1) — a range file is an explicit grid, never a drag-filled formula.
+/// drive evaluation by requesting cells ([`Workbook::value_at`] / [`Workbook::values_at`]) or by
+/// handing `&Workbook` to [`charlie_ast::eval`] as a [`Resolver`]. Evaluation is **demand-driven**
+/// (only requested cells, transitively, compute), **two-pass** (a plan builds one dependency graph; an
+/// evaluate pass computes each node once in dependency order — a diamond / deep DAG stays linear), and
+/// **cycle-safe** (a reference cycle is a located `#REF!`-class refusal, never a hang). Each grid cell
+/// derives its value only from its own content (VAL1) — a range file is an explicit grid, never a
+/// drag-filled formula.
 #[derive(Debug)]
 pub struct Workbook {
     tabs: Vec<Tab>,
     /// The "now" instant [`Resolver::now_serial`] reports. Defaults to the wall clock at load; a test
     /// pins it with [`Workbook::with_now`]. (Production gets wall-clock time for free.)
     now: f64,
-    /// The sheet an unqualified reference (`sheet: None`) resolves against — the home sheet of the
-    /// formula currently being evaluated. Saved/restored around each formula eval so a nested
-    /// cross-sheet pull sees the right context. `Cell` because it is a plain copyable scalar.
+    /// The sheet an unqualified reference (`sheet: None`) resolves against during the EVALUATE pass —
+    /// the home sheet of the formula node currently being computed. Set per node (evaluation is
+    /// iterative, not nested), and around each ad-hoc [`Workbook::eval_formula`]. `Cell` because it is
+    /// a plain copyable scalar.
     current_sheet: Cell<u32>,
-    /// Per-CELL result cache (the memo): each rendered cell computes at most once, keyed by its
-    /// resolved `(sheet, col, row)`. Per-cell (not per-file) is what simultaneously makes an EXPLICIT
-    /// GRID correct — each cell of a range file is a distinct computation (VAL1) — AND makes a diamond
-    /// / deep DAG evaluate LINEARLY: a cell reached through many reference paths computes once and is thereafter
-    /// read from here, so re-evaluation can never grow exponentially (the anti-hang guarantee).
+    /// Per-CELL result cache (the memo): a cell computed once — and clean (see the pass results) — is
+    /// stored here and reused while its content and everything upstream are unchanged (ENG4). Keyed by
+    /// the resolved `(sheet, col, row)`. Per-cell (not per-file) makes an EXPLICIT GRID correct (each
+    /// cell of a range file is a distinct computation, VAL1) AND makes a shared dependency compute
+    /// once. Only DEPTH-CLEAN values reach here (a depth-tainted `#NUM!` is root-relative — see
+    /// [`Workbook::finish_pass`]).
     memo: RefCell<HashMap<CellKey, Value>>,
-    /// The cells whose evaluation is in progress — the cycle detector. Re-entering a cell (a direct or
-    /// transitive self-reference) is a located `#REF!`-class refusal returned at once, never a hang.
-    visiting: RefCell<HashSet<CellKey>>,
-    /// The live cross-cell pull depth — how many nested formula files are currently on the native
-    /// stack. Bounds a finite-but-deep (acyclic) chain to [`MAX_PULL_DEPTH`] so it refuses rather
-    /// than overflowing. `Cell` because it is a plain copyable scalar (like `current_sheet`).
-    pull_depth: Cell<u32>,
-    /// A monotone count of depth-limit refusals raised so far. Snapshotted around each formula's
-    /// evaluation so a formula whose subtree tripped the depth guard is recognised as
-    /// *depth-tainted* and its (`#NUM!`-carrying) outcome is NOT memoized — the refusal is a
-    /// property of the DEPTH the chain was reached at, not of the cell, so a later shallower pull of
-    /// the same cell (which is legally computable) must not read a poisoned cache entry.
-    depth_refusals: Cell<u64>,
+    /// The current pass's computed values — the EVALUATE pass fills this in dependency order, and the
+    /// [`Resolver`] reads it (then the memo, then the grid) so a formula's evaluation sees its already-
+    /// computed dependencies without recomputing them. Promoted (clean entries only) into the memo and
+    /// cleared at the end of each demand ([`Workbook::finish_pass`]).
+    results: RefCell<HashMap<CellKey, Value>>,
+    /// The current pass's DEPTH-TAINTED cells: a cell that IS a depth refusal, or that (transitively)
+    /// consumed one. Its `#NUM!` is a function of the DEPTH the chain was reached at, not of the cell,
+    /// so it must not be memoized (a later shallower, computable demand would read a poisoned entry).
+    /// [`Resolver::range`] also consults it so a range spanning a tainted cell is not frozen into the
+    /// arena. Cleared at the end of each demand.
+    pass_tainted: RefCell<HashSet<CellKey>>,
     /// The formula file currently being evaluated, if any — the anchor an eval-time refusal raised
-    /// from *inside* eval (e.g. a range-too-large refusal in [`Resolver::range`]) points at. Saved
-    /// and restored around each formula eval, like [`Workbook::current_sheet`].
+    /// from *inside* eval (e.g. a range-too-large refusal in [`Resolver::range`]) points at. Set per
+    /// node in the EVALUATE pass, like [`Workbook::current_sheet`].
     current_file: Cell<Option<FileId>>,
     /// An append-only arena backing the borrowed [`ArrayView`]s that [`Resolver::range`] returns.
     arena: Arena,
-    /// Located refusals surfaced during evaluation (cycles, spills, unparseable bodies). Load-time
-    /// refusals are returned by the loader; these accumulate as cells are pulled.
+    /// Located refusals surfaced during evaluation (cycles, depth limits, over-large ranges, spills).
+    /// Load-time refusals are returned by the loader; these accumulate as cells are planned/pulled.
     diagnostics: RefCell<Vec<Diagnostic>>,
 }
 
@@ -254,9 +292,8 @@ impl Workbook {
                 now: system_now_serial(),
                 current_sheet: Cell::new(0),
                 memo: RefCell::new(HashMap::new()),
-                visiting: RefCell::new(HashSet::new()),
-                pull_depth: Cell::new(0),
-                depth_refusals: Cell::new(0),
+                results: RefCell::new(HashMap::new()),
+                pass_tainted: RefCell::new(HashSet::new()),
                 current_file: Cell::new(None),
                 arena: Arena::default(),
                 diagnostics: RefCell::new(Vec::new()),
@@ -278,27 +315,63 @@ impl Workbook {
     }
 
     /// Resolve one cell to its value — the demand-driven entry a consumer calls. `sheet` is the
-    /// tab index; `col`/`row` are zero-based. Pulls (and memoizes) any formulas it transitively needs.
+    /// tab index; `col`/`row` are zero-based. Runs the two passes over a graph rooted at this one cell
+    /// (unless its value is already memoized), then reads the result.
     pub fn value_at(&self, sheet: u32, col: u32, row: u32) -> Value {
-        self.value(CellRef {
+        let key = (sheet, col, row);
+        if let Some(hit) = self.memo.borrow().get(&key) {
+            return hit.clone();
+        }
+        self.demand(&[key]);
+        let v = self.value(CellRef {
             col,
             row,
             sheet: Some(SheetId(sheet)),
-        })
+        });
+        self.finish_pass();
+        v
     }
 
-    /// The located refusals accumulated during evaluation so far (cycles, spills, unparseable bodies).
-    /// Snapshot — call after driving the cells of interest.
+    /// Resolve a batch of cells to their values in ONE plan+evaluate pass — the render entry (ENG3).
+    /// All the (uncached) demanded cells accrete into a SINGLE dependency graph, so a dependency shared
+    /// by several of them is computed exactly once. Returns the values in the requested order.
+    pub fn values_at(&self, cells: &[CellKey]) -> Vec<Value> {
+        let uncached: Vec<CellKey> = {
+            let memo = self.memo.borrow();
+            cells
+                .iter()
+                .copied()
+                .filter(|k| !memo.contains_key(k))
+                .collect()
+        };
+        if !uncached.is_empty() {
+            self.demand(&uncached);
+        }
+        let out = cells
+            .iter()
+            .map(|&(s, c, r)| {
+                self.value(CellRef {
+                    col: c,
+                    row: r,
+                    sheet: Some(SheetId(s)),
+                })
+            })
+            .collect();
+        self.finish_pass();
+        out
+    }
+
+    /// The located refusals accumulated during evaluation so far (cycles, depth limits, over-large
+    /// ranges, spills, unparseable bodies). Snapshot — call after driving the cells of interest.
     pub fn eval_diagnostics(&self) -> Vec<Diagnostic> {
         self.diagnostics.borrow().clone()
     }
 
     /// Evaluate an AD-HOC formula string against this loaded workbook — the `charlie-cli eval` entry.
-    /// Parses `formula` through `charlie_ast`, then evaluates it with THIS workbook as the
-    /// [`Resolver`], so the formula can reference cells, ranges, and other tabs exactly as a stored
-    /// formula would. Unqualified references (`A1`, `A1:A5`) resolve against `sheet` (the tab index).
-    /// Read-only: no file writes, no cell mutation — it reuses the same memoized pull path stored
-    /// formulas ride, restoring the sheet context afterward.
+    /// Parses `formula` through `charlie_ast`, PLANS + EVALUATES its dependency cone (so the resolver
+    /// reads already-computed values), then evaluates the formula tree with THIS workbook as the
+    /// [`Resolver`]. Unqualified references (`A1`, `A1:A5`) resolve against `sheet` (the tab index).
+    /// Read-only: no file writes, no cell mutation.
     ///
     /// The result is spelled with the SAME [`display_value`](crate::render::display_value) formatting
     /// the render surface uses. A parse failure is a located [`Diagnostic`] (`Err`); an evaluation
@@ -314,11 +387,26 @@ impl Workbook {
                 format!("cannot parse formula {formula:?}: {}", diag.message),
             )
         })?;
-        // Resolve unqualified refs against the requested tab: save/restore `current_sheet` exactly as
-        // the stored-formula pull path does, so this ad-hoc eval never leaves the context dirty.
-        let prev = self.current_sheet.replace(sheet);
+        // PLAN the ad-hoc formula's dependency cells (rooted at `sheet`, the ad-hoc home) into a graph,
+        // then EVALUATE it — exactly the two passes a stored formula rides.
+        let deps = self.expr_deps(&expr, sheet);
+        let mut graph = DepGraph::default();
+        for &d in &deps {
+            let mut on_stack = HashSet::new();
+            self.plan_visit(d, 0, &mut graph, &mut on_stack);
+        }
+        self.evaluate(&graph);
+        // The EVALUATE pass left `current_sheet`/`current_file` at the last node's context; set the
+        // ad-hoc home so this formula's unqualified refs resolve against `sheet` AND a top-level
+        // eval-time refusal (e.g. an over-large range) anchors on the ad-hoc `Loc::tab(sheet)` rather
+        // than the stale last-node file. The ad-hoc formula has no covering file, so `current_file`
+        // is cleared for its evaluation.
+        let prev_sheet = self.current_sheet.replace(sheet);
+        let prev_file = self.current_file.replace(None);
         let value = eval(&expr, self);
-        self.current_sheet.set(prev);
+        self.current_sheet.set(prev_sheet);
+        self.current_file.set(prev_file);
+        self.finish_pass();
         let shown = crate::render::display_value(&value);
         Ok(match value {
             Value::Error(_) => FormulaOutcome::Error(shown),
@@ -365,11 +453,11 @@ impl Workbook {
         })
     }
 
-    /// Lint the whole workbook: drive every cell of every file (so every formula evaluates once,
-    /// memoized) and return the eval-time located refusals — cycles, over-deep chains (`#NUM!`-class),
-    /// formula-result dimension mismatches (`#SPILL!`-class), and unparseable formula bodies.
-    /// Load-time refusals (overlap, literal dimension mismatch, bad filenames) surface from the
-    /// loader, not here.
+    /// Lint the whole workbook: drive every cell of every file (so every formula evaluates, memoized)
+    /// and return the eval-time located refusals — cycles, over-deep chains (`#NUM!`-class), over-large
+    /// ranges, formula-result dimension mismatches (`#SPILL!`-class), and unparseable formula bodies.
+    /// Load-time refusals (overlap, literal dimension mismatch, bad filenames) surface from the loader,
+    /// not here.
     pub fn lint(&self) -> Vec<Diagnostic> {
         // Snapshot the regions first so no `&self.tabs` borrow is held across the `value` pulls.
         let regions: Vec<(u32, Rect)> = self
@@ -385,10 +473,9 @@ impl Workbook {
                 }
             }
         }
-        // Each formula file records its refusal at most once during a full drive (memoization
-        // returns the cached outcome before re-refusing on a repeat pull), so consecutive-duplicate
-        // removal only guards the rare case where two adjacent drives surface the identical located
-        // refusal; it is a cheap tidy, not a cross-file de-duplicator.
+        // Each formula file records its refusal at most once during a full drive (memoization returns
+        // the cached outcome before re-planning on a repeat pull), so consecutive-duplicate removal
+        // only guards the rare case where two adjacent drives surface the identical located refusal.
         let mut diags = self.eval_diagnostics();
         diags.dedup();
         diags
@@ -415,105 +502,292 @@ impl Workbook {
             .map(|(i, f)| ((sheet, i), f))
     }
 
-    /// Resolve one formula-backed cell to its value — the per-cell PULL, memoized and cycle-safe.
-    ///
-    /// `key` is the resolved `(sheet, col, row)`; `id` its covering file; `(dr, dc)` the cell's local
-    /// offset into that file's grid. The value is the grid cell's parsed formula evaluated as-written
-    /// (VAL1: no offset/drag-fill), collapsed to a scalar for its scalar cell position.
-    ///
-    /// Cycle-safe: `key` is inserted into [`Workbook::visiting`] for the duration of its own
-    /// evaluation; re-entering it (a direct or transitive self-reference) is a located `#REF!`-class
-    /// refusal returned immediately — the recursion always terminates because a cell is never
-    /// re-entered while on the stack. **Memoized per cell**, so a diamond / deep DAG computes each cell
-    /// once and can never re-evaluate exponentially (the anti-hang guarantee).
-    ///
-    /// Depth-safe: a finite but deep *acyclic* chain (`A1=A2`, `A2=A3`, ...) recurses one native
-    /// frame-group per link with a fresh `EvalCtx`, so the engine's own depth bound never spans cells.
-    /// [`Workbook::pull_depth`] bounds that native recursion: a chain deeper than [`MAX_PULL_DEPTH`]
-    /// is a located `#NUM!`-class refusal returned before descending further, never a stack overflow.
-    fn formula_value(&self, key: CellKey, id: FileId, dr: u32, dc: u32) -> Value {
-        if let Some(hit) = self.memo.borrow().get(&key) {
-            return hit.clone();
-        }
-        if self.visiting.borrow().contains(&key) {
-            let name = self.file_name(id);
-            let tab = self.tab_name(id.0);
-            self.refuse(Diagnostic::new(
-                Code::Cycle,
-                Loc::tab_file(&tab, &name),
-                format!(
-                    "circular reference: evaluating {tab}/{name} re-entered it through a chain of \
-                     cell references (a cross-sheet chain counts) -- refused as #REF!-class rather \
-                     than looping"
-                ),
-            ));
-            // Not memoized: this is the in-progress cell seen from inside its own evaluation; the
-            // outer call memoizes the final (error-carrying) value.
-            return Value::Error(ErrKind::Ref);
-        }
-        if self.pull_depth.get() >= MAX_PULL_DEPTH {
-            let name = self.file_name(id);
-            let tab = self.tab_name(id.0);
-            // Count this refusal so every ANCESTOR cell on the chain sees its snapshot advance and
-            // declines to memoize its own depth-tainted value (see the memo guard below).
-            self.depth_refusals.set(self.depth_refusals.get() + 1);
-            self.refuse(Diagnostic::new(
-                Code::DepthLimit,
-                Loc::tab_file(&tab, &name),
-                format!(
-                    "formula dependency chain exceeded the pull-depth bound of {MAX_PULL_DEPTH} at \
-                     {tab}/{name} -- refused as #NUM!-class rather than overflowing the stack"
-                ),
-            ));
-            // Not memoized: the refusal is a property of the DEPTH at which this cell was reached,
-            // not of the cell itself. Memoizing it would poison a later shallower pull of the same
-            // cell (which is legal and computes). Its callers up the chain also decline to memoize
-            // their (depth-tainted) values — the memo guard below, keyed off `depth_refusals`.
-            return Value::Error(ErrKind::Num);
-        }
+    // ------------------------------------------------------------------------------------------
+    // PLAN pass — build one dependency graph of the demanded cells and their transitive deps.
+    // ------------------------------------------------------------------------------------------
 
-        self.visiting.borrow_mut().insert(key);
-        self.pull_depth.set(self.pull_depth.get() + 1);
-        let prev_sheet = self.current_sheet.replace(id.0);
-        let prev_file = self.current_file.replace(Some(id));
-        // Snapshot the depth-refusal count: if it advances while this cell's subtree evaluates, the
-        // value is depth-tainted and must not be memoized (order-independence — see below).
-        let depth_refusals_before = self.depth_refusals.get();
-
-        let value = self.compute_formula(id, dr, dc);
-
-        self.current_sheet.set(prev_sheet);
-        self.current_file.set(prev_file);
-        self.pull_depth.set(self.pull_depth.get() - 1);
-        self.visiting.borrow_mut().remove(&key);
-        // Memoize ONLY a depth-clean value. If a depth-limit refusal fired anywhere in this cell's
-        // subtree, the value carries a propagated #NUM! that is a function of the depth this cell was
-        // reached at, not of the cell — caching it would make a later, shallower (and legally
-        // computable) pull of the same cell return the poisoned error, so the same cell would yield
-        // different answers depending on call order. Declining to memoize keeps evaluation
-        // order-independent; a depth-clean pull re-computes and caches the real value.
-        if self.depth_refusals.get() == depth_refusals_before {
-            self.memo.borrow_mut().insert(key, value.clone());
+    /// Build (and merge into) the dependency graph for a set of demanded cells, then run the EVALUATE
+    /// pass over it. Each demanded cell accretes into the SAME [`DepGraph`] (a shared dependency
+    /// becomes one node); an already-memoized cell is a resolved leaf and is not re-planned (ENG4).
+    fn demand(&self, roots: &[CellKey]) {
+        let mut graph = DepGraph::default();
+        for &r in roots {
+            let mut on_stack = HashSet::new();
+            self.plan_visit(r, 0, &mut graph, &mut on_stack);
         }
-        value
+        self.evaluate(&graph);
     }
 
-    /// The value of the covering file's grid cell at offset `(dr, dc)`. The cell holds a parsed
-    /// `Expr` (VAL1: evaluated exactly as written — no offset/drag-fill), collapsed to a scalar for
-    /// its scalar cell position by [`scalar_cell`]. Runs *inside* the [`Workbook::formula_value`]
-    /// guards (cycle / depth / memo), so it never manages them itself.
+    /// Plan one cell into `graph` (recursively planning its dependencies), the PLAN-pass DFS.
+    ///
+    /// `depth` is the number of formula ancestors above this cell (the demanded root is depth 0);
+    /// `on_stack` is the current DFS path, for cycle detection. A cell already in the graph is a shared
+    /// node (returned at once — the merge); a cell already in the memo is a resolved leaf (ENG4). A
+    /// re-entered cell (on the stack) is a located `#REF!` cycle; a cell past [`MAX_PULL_DEPTH`] is a
+    /// located `#NUM!`. Otherwise a formula's static references (ranges expanded to cells) become its
+    /// dependencies and are planned before it becomes a `Formula` node.
+    fn plan_visit(
+        &self,
+        key: CellKey,
+        depth: u32,
+        graph: &mut DepGraph,
+        on_stack: &mut HashSet<CellKey>,
+    ) {
+        if graph.nodes.contains_key(&key) {
+            return; // already planned this pass — the shared/merged node
+        }
+        if self.memo.borrow().contains_key(&key) {
+            return; // a clean, memoized value — a resolved leaf (ENG4 reuse)
+        }
+        if on_stack.contains(&key) {
+            // A reference cycle: the re-entered cell is a located `#REF!`. Its dependents propagate it.
+            graph.nodes.insert(key, PlanNode::Cycle);
+            self.refuse(self.cycle_diag(key));
+            return;
+        }
+        let (sheet, col, row) = key;
+        let Some((id, file)) = self.covering(sheet, col, row) else {
+            return; // a gap reads Blank — not a node; the resolver reads it directly
+        };
+        let dr = row - file.region.min_row;
+        let dc = col - file.region.min_col;
+        // Only a formula cell needs a node; a literal is read straight from the grid at evaluate.
+        let GridCell::Formula { expr, .. } = file.grid.cell_at(dr, dc) else {
+            return;
+        };
+        if depth >= MAX_PULL_DEPTH {
+            // Reached past the pull-depth bound: a located `#NUM!` recorded before descending further,
+            // so the plan DFS cannot overflow the native stack.
+            graph.nodes.insert(key, PlanNode::DepthRefused);
+            self.refuse(self.depth_diag(id));
+            return;
+        }
+        on_stack.insert(key);
+        let deps = self.expr_deps(expr, sheet);
+        for &d in &deps {
+            self.plan_visit(d, depth + 1, graph, on_stack);
+        }
+        on_stack.remove(&key);
+        // A dependency descent may have re-entered THIS cell (a cycle back-edge) and already marked it
+        // a `Cycle` — or the depth guard may have marked it — so do not overwrite a terminal verdict.
+        if !matches!(
+            graph.nodes.get(&key),
+            Some(PlanNode::Cycle | PlanNode::DepthRefused)
+        ) {
+            graph.nodes.insert(
+                key,
+                PlanNode::Formula {
+                    file: id,
+                    dr,
+                    dc,
+                    deps,
+                },
+            );
+        }
+    }
+
+    /// The dependency cells of a formula's parsed tree, resolved to `(sheet, col, row)` keys against
+    /// `home` (the sheet an unqualified reference binds to). Every reference is static in v1 (there are
+    /// no reference-forging functions — `INDIRECT`/`OFFSET` are reserved refusals), so this is the
+    /// formula's complete dependency set. A range expands to its cells; a range over
+    /// [`MAX_RANGE_CELLS`] is left unexpanded (the resolver refuses it as `#NUM!` at evaluate rather
+    /// than allocating a key per cell); an unknown sheet name resolves to no cell (the evaluator maps
+    /// it to `#REF!`).
+    fn expr_deps(&self, expr: &Expr, home: u32) -> Vec<CellKey> {
+        let mut out = Vec::new();
+        self.collect_deps(expr, home, &mut out);
+        out
+    }
+
+    fn collect_deps(&self, expr: &Expr, home: u32, out: &mut Vec<CellKey>) {
+        match expr {
+            Expr::Lit(_) => {}
+            Expr::Ref(r) => {
+                if let Some(cr) = r.resolve(|name| self.sheet_id(name)) {
+                    let s = cr.sheet.map_or(home, |SheetId(i)| i);
+                    out.push((s, cr.col, cr.row));
+                }
+            }
+            Expr::Range(rn) => {
+                if let Some(rr) = rn.resolve(|name| self.sheet_id(name)) {
+                    let s = rr.start.sheet.map_or(home, |SheetId(i)| i);
+                    let c0 = rr.start.col.min(rr.end.col);
+                    let c1 = rr.start.col.max(rr.end.col);
+                    let r0 = rr.start.row.min(rr.end.row);
+                    let r1 = rr.start.row.max(rr.end.row);
+                    let area = (u64::from(r1 - r0) + 1) * (u64::from(c1 - c0) + 1);
+                    if area <= MAX_RANGE_CELLS {
+                        for row in r0..=r1 {
+                            for col in c0..=c1 {
+                                out.push((s, col, row));
+                            }
+                        }
+                    }
+                    // Over the bound: left unexpanded; `Resolver::range` refuses it at evaluate.
+                }
+            }
+            Expr::Unary(_, e) => self.collect_deps(e, home, out),
+            Expr::Binary(_, a, b) => {
+                self.collect_deps(a, home, out);
+                self.collect_deps(b, home, out);
+            }
+            Expr::Call(_, args) => {
+                for a in args {
+                    self.collect_deps(a, home, out);
+                }
+            }
+            Expr::ImplicitIntersect(e) => self.collect_deps(e, home, out),
+            Expr::SpillRef(e) => self.collect_deps(e, home, out),
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // EVALUATE pass — compute each graph node once, in dependency order.
+    // ------------------------------------------------------------------------------------------
+
+    /// Compute every node of `graph` exactly once (ENG2), each after its dependencies. A terminal
+    /// (`Cycle`/`DepthRefused`) yields its located error; a `Formula` node evaluates its tree through
+    /// [`charlie_ast::eval`] — during which the [`Resolver`] reads the already-computed dependency
+    /// values from the pass results. A value that consumed a depth refusal is marked tainted so it is
+    /// not memoized.
+    fn evaluate(&self, graph: &DepGraph) {
+        for key in self.topo_order(graph) {
+            match graph.nodes.get(&key) {
+                Some(PlanNode::Cycle) => {
+                    // A cycle is a permanent, content-deterministic `#REF!` — clean, so it memoizes.
+                    self.results
+                        .borrow_mut()
+                        .insert(key, Value::Error(ErrKind::Ref));
+                }
+                Some(PlanNode::DepthRefused) => {
+                    self.results
+                        .borrow_mut()
+                        .insert(key, Value::Error(ErrKind::Num));
+                    self.pass_tainted.borrow_mut().insert(key);
+                }
+                Some(PlanNode::Formula { file, dr, dc, deps }) => {
+                    let tainted = {
+                        let t = self.pass_tainted.borrow();
+                        deps.iter().any(|d| t.contains(d))
+                    };
+                    self.current_sheet.set(file.0);
+                    self.current_file.set(Some(*file));
+                    let v = self.compute_formula(*file, *dr, *dc);
+                    self.results.borrow_mut().insert(key, v);
+                    if tainted {
+                        self.pass_tainted.borrow_mut().insert(key);
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// A dependency order of `graph`'s nodes (each node after every dependency that is itself a node).
+    /// Iterative post-order DFS — deliberately not recursive, so evaluation order is stack-safe for any
+    /// DAG the plan built (and independent nodes could later be evaluated in parallel). Cycles were
+    /// already broken in the plan (the re-entered cell is a terminal), so the graph handed here is a
+    /// DAG.
+    fn topo_order(&self, graph: &DepGraph) -> Vec<CellKey> {
+        let mut order = Vec::with_capacity(graph.nodes.len());
+        let mut seen: HashSet<CellKey> = HashSet::new();
+        // Seed the DFS from a deterministic (sorted) root order so diagnostics pushed during the
+        // evaluate pass (e.g. RangeTooLarge) have a stable order run-to-run. Values are unaffected
+        // either way — topo order is respected within each cone — and independent nodes could still be
+        // evaluated in parallel later.
+        let mut roots: Vec<CellKey> = graph.nodes.keys().copied().collect();
+        roots.sort_unstable();
+        for root in roots {
+            if seen.contains(&root) {
+                continue;
+            }
+            let mut stack = vec![(root, false)];
+            while let Some((k, emit)) = stack.pop() {
+                if emit {
+                    order.push(k);
+                    continue;
+                }
+                if !seen.insert(k) {
+                    continue;
+                }
+                stack.push((k, true));
+                if let Some(PlanNode::Formula { deps, .. }) = graph.nodes.get(&k) {
+                    for &d in deps {
+                        if graph.nodes.contains_key(&d) && !seen.contains(&d) {
+                            stack.push((d, false));
+                        }
+                    }
+                }
+            }
+        }
+        order
+    }
+
+    /// Promote the pass's clean (non-tainted) results into the memo (ENG4 reuse) and clear the pass
+    /// scratch. A depth-tainted value is dropped, not memoized — its `#NUM!` is root-relative, so a
+    /// later shallower demand must recompute it.
+    fn finish_pass(&self) {
+        {
+            let results = self.results.borrow();
+            let tainted = self.pass_tainted.borrow();
+            let mut memo = self.memo.borrow_mut();
+            for (k, v) in results.iter() {
+                if !tainted.contains(k) {
+                    memo.insert(*k, v.clone());
+                }
+            }
+        }
+        self.results.borrow_mut().clear();
+        self.pass_tainted.borrow_mut().clear();
+    }
+
+    /// The value of the covering file's grid cell at offset `(dr, dc)`. The cell holds a parsed `Expr`
+    /// (VAL1: evaluated exactly as written — no offset/drag-fill), collapsed to a scalar for its scalar
+    /// cell position by [`scalar_cell`]. Called from the EVALUATE pass with `current_sheet`/
+    /// `current_file` already set to this cell's context; the [`Resolver`] it evaluates against only
+    /// READS already-computed dependency values (never recurses).
     fn compute_formula(&self, id: FileId, dr: u32, dc: u32) -> Value {
-        // VAL1: a cell's value derives only from its own content. The grid cell holds a parsed `Expr`,
-        // evaluated exactly as written — no offset/drag-fill. A formula in a scalar cell position that
-        // evaluates to an array (a bare range like `=A1:A3`) is collapsed by `scalar_cell` (a 1×1
-        // array to its single cell, a genuinely multi-cell array to `#VALUE!`).
         let file = &self.tabs[id.0 as usize].files[id.1];
         match file.grid.cell_at(dr, dc) {
             GridCell::Formula { expr, .. } => scalar_cell(eval(expr, self)),
-            // `compute_formula` is only reached for a formula cell (see `Resolver::value`); a literal
-            // cell never routes here, but is total-passed-through defensively rather than panicking.
+            // `compute_formula` is only reached for a formula node; a literal is total-passed-through
+            // defensively rather than panicking.
             GridCell::Value(v) => v.clone(),
         }
+    }
+
+    /// The located `#REF!`-class cycle refusal for a re-entered cell, anchored on its sheet-qualified
+    /// file.
+    fn cycle_diag(&self, key: CellKey) -> Diagnostic {
+        let (id, _) = self
+            .covering(key.0, key.1, key.2)
+            .expect("a cycle cell is a formula cell and is therefore covered");
+        let name = self.file_name(id);
+        let tab = self.tab_name(id.0);
+        Diagnostic::new(
+            Code::Cycle,
+            Loc::tab_file(&tab, &name),
+            format!(
+                "circular reference: evaluating {tab}/{name} re-entered it through a chain of \
+                 cell references (a cross-sheet chain counts) -- refused as #REF!-class rather \
+                 than looping"
+            ),
+        )
+    }
+
+    /// The located `#NUM!`-class depth refusal for a cell reached past [`MAX_PULL_DEPTH`], anchored on
+    /// its sheet-qualified file.
+    fn depth_diag(&self, id: FileId) -> Diagnostic {
+        let name = self.file_name(id);
+        let tab = self.tab_name(id.0);
+        Diagnostic::new(
+            Code::DepthLimit,
+            Loc::tab_file(&tab, &name),
+            format!(
+                "formula dependency chain exceeded the pull-depth bound of {MAX_PULL_DEPTH} at \
+                 {tab}/{name} -- refused as #NUM!-class rather than overflowing the stack"
+            ),
+        )
     }
 
     /// The tab (sheet) name for a sheet index, for a sheet-qualified [`Loc::tab_file`] anchor.
@@ -540,27 +814,46 @@ impl Workbook {
 }
 
 impl Resolver for Workbook {
+    /// READ a cell's value — during the EVALUATE pass the value has already been computed (a formula
+    /// node) or is read straight from the grid (a literal or a gap). The pass results win, then the
+    /// memo, then the grid; a formula cell is never recomputed here (the plan guaranteed it computes
+    /// first, in dependency order).
     fn value(&self, cell: CellRef) -> Value {
         let sheet = self.resolve_sheet(cell.sheet);
-        let Some((id, file)) = self.covering(sheet, cell.col, cell.row) else {
-            // A gap (no file claims this cell) reads as Blank (the overlap policy: gaps are Blank,
-            // not errors -- see `overlap`).
+        let key = (sheet, cell.col, cell.row);
+        if let Some(v) = self.results.borrow().get(&key) {
+            return v.clone();
+        }
+        if let Some(v) = self.memo.borrow().get(&key) {
+            return v.clone();
+        }
+        let Some((_, file)) = self.covering(sheet, cell.col, cell.row) else {
+            // A gap (no file claims this cell) reads as Blank (the overlap policy: gaps are Blank).
             return Value::Blank;
         };
         let dr = cell.row - file.region.min_row;
         let dc = cell.col - file.region.min_col;
         match file.grid.cell_at(dr, dc) {
-            // A literal cell needs no evaluation — it is its own value.
             GridCell::Value(v) => v.clone(),
-            GridCell::Formula { .. } => self.formula_value((sheet, cell.col, cell.row), id, dr, dc),
+            // A formula cell that is neither in the results nor the memo was not planned — unreachable
+            // in a proper demand (the plan is a superset of what eval reads). The debug_assert fails
+            // loud in tests if a future planning change under-approximates deps (fail-fast); release
+            // stays total and never panics (CORE2).
+            GridCell::Formula { .. } => {
+                debug_assert!(
+                    false,
+                    "unplanned formula cell read at ({sheet}, {}, {})",
+                    cell.col, cell.row
+                );
+                Value::Blank
+            }
         }
     }
 
     fn range(&self, range: RangeRef) -> ArrayView<'_> {
         // Resolve `sheet: None` to the current context and key the arena by the qualified range, so a
         // memoized `A1:A3` on one sheet is never mistaken for `A1:A3` on another. Normalize the key's
-        // corners to canonical min/max (top-left..bottom-right) — matching the materialization loop
-        // below — so a reversed spelling (`B2:A1`) maps to the SAME arena entry
+        // corners to canonical min/max so a reversed spelling (`B2:A1`) maps to the SAME arena entry
         // as `A1:B2` rather than materializing the identical rectangle twice under two keys.
         let eff = SheetId(self.resolve_sheet(range.start.sheet));
         let c0 = range.start.col.min(range.end.col);
@@ -588,8 +881,8 @@ impl Resolver for Workbook {
         if area > MAX_RANGE_CELLS {
             // A syntactically-valid but pathologically-large reference (`A2:ZZ100000`): refuse
             // (located) instead of materializing a `Value` per cell into an OOM abort. The range
-            // resolves to a single #NUM! cell that the referencing aggregation propagates, so the
-            // formula reports #NUM! cleanly. Cached under `key` like any other materialized range.
+            // resolves to a single #NUM! cell that the referencing aggregation propagates. The
+            // refusal is deterministic (a function of the range size, not of order), so it caches.
             self.refuse(Diagnostic::new(
                 Code::RangeTooLarge,
                 self.eval_loc(),
@@ -605,18 +898,19 @@ impl Resolver for Workbook {
                 vec![Value::Error(ErrKind::Num)],
             );
         }
-        // Materialize the rectangle by PULLING each cell (demand-driven: a range reference demands
-        // exactly its own cells). No arena borrow is held across these `value` calls, which may
-        // recursively push more range buffers. Snapshot the depth-refusal count first: if it advances
-        // while the rectangle materializes, some cell tripped the pull-depth guard and froze a
-        // depth-tainted `#NUM!` into this buffer — a value that is a function of the DEPTH the range
-        // was first demanded at, not of the range. Caching such a buffer would poison every later,
-        // shallower (and legally computable) demand of the same range with that stale `#NUM!`, making
-        // the range order-dependent. This mirrors the per-cell memo's depth guard in `formula_value`.
-        let depth_refusals_before = self.depth_refusals.get();
+        // Materialize the rectangle by READING each cell (its value was computed earlier in the pass,
+        // as a planned dependency). If any cell is DEPTH-TAINTED, the buffer's `#NUM!` is a function of
+        // the DEPTH the range was first demanded at, not of the range — caching it would poison a later
+        // shallower (computable) demand — so return a borrowed view over a stable buffer WITHOUT
+        // recording the key (mirrors the per-cell memo's depth guard). No arena borrow is held across
+        // these `value` calls, which may recursively push more range buffers.
         let mut buf = Vec::with_capacity((rows as usize) * (cols as usize));
+        let mut tainted = false;
         for r in r0..=r1 {
             for c in c0..=c1 {
+                if self.pass_tainted.borrow().contains(&(eff.0, c, r)) {
+                    tainted = true;
+                }
                 buf.push(self.value(CellRef {
                     col: c,
                     row: r,
@@ -625,13 +919,10 @@ impl Resolver for Workbook {
             }
         }
         let shape = Shape { rows, cols };
-        if self.depth_refusals.get() == depth_refusals_before {
-            // Depth-clean: commit to the keyed cache like any other materialized range.
-            self.arena.insert(key, shape, buf)
-        } else {
-            // Depth-tainted: return a borrowed view (backed by a stable buffer) WITHOUT recording the
-            // key, so a later shallower demand misses, re-materializes, and caches the real value.
+        if tainted {
             self.arena.insert_uncached(shape, buf)
+        } else {
+            self.arena.insert(key, shape, buf)
         }
     }
 
@@ -714,10 +1005,10 @@ impl Arena {
 
     /// Own a range buffer for the lifetime of `&self` (so its [`ArrayView`] can be returned) but do
     /// **not** record it in the key index — a later demand for the same key misses and re-materializes.
-    /// Used for a DEPTH-TAINTED buffer (the depth guard fired during its materialization): its `#NUM!`
-    /// is a function of the depth the range was first reached at, not the range, so committing it to
-    /// the keyed cache would poison a later shallower (computable) demand. Mirrors the per-cell memo's
-    /// depth guard in [`Workbook::formula_value`], keeping range evaluation order-independent.
+    /// Used for a DEPTH-TAINTED buffer (a cell of the range consumed a depth refusal): its `#NUM!` is a
+    /// function of the depth the range was first reached at, not the range, so committing it to the
+    /// keyed cache would poison a later shallower (computable) demand. Keeps range evaluation
+    /// order-independent, mirroring the per-cell memo's depth guard in [`Workbook::finish_pass`].
     fn insert_uncached(&self, shape: Shape, cells: Vec<Value>) -> ArrayView<'_> {
         let ptr: *const [Value] = {
             let mut bufs = self.bufs.borrow_mut();
@@ -853,11 +1144,11 @@ mod tests {
 
     #[test]
     fn a_diamond_dag_evaluates_each_cell_once_never_exponentially() {
-        // A diamond that, WITHOUT per-cell memoization, re-evaluates the shared base exponentially:
-        // each level references the one below TWICE, so a naive re-eval is 2^depth. With the per-cell
-        // memo it is linear and returns instantly. A1=1; each A{n}=A{n+1}+A{n+1} down a long column,
-        // so A1 = 2^(len-1). Reaching the assert at all proves no exponential hang.
-        let len = 40usize; // 2^39 ~ 5.5e11 re-evals if exponential; instant if memoized
+        // A diamond that, WITHOUT single-node sharing, re-evaluates the shared base exponentially:
+        // each level references the one below TWICE, so a naive re-eval is 2^depth. The two-pass graph
+        // merges the shared node so it is linear and returns instantly. A1=1; each A{n}=A{n+1}+A{n+1}
+        // down a long column, so A1 = 2^(len-1). Reaching the assert at all proves no exponential hang.
+        let len = 40usize; // 2^39 ~ 5.5e11 re-evals if exponential; instant if shared
         let owned: Vec<(String, String)> = (0..len)
             .map(|i| {
                 let name = format!("A{}", i + 1);
@@ -987,10 +1278,10 @@ mod tests {
 
     #[test]
     fn a_deep_acyclic_chain_refuses_instead_of_overflowing_the_stack() {
-        // A finite, entirely acyclic chain deeper than the bound. The `visiting` cycle set never trips
-        // (nothing is re-entered), so ONLY the pull-depth guard stands between this and a native stack
-        // overflow: reaching the assertions at all proves no SIGABRT. The deepest link is a located
-        // #NUM!-class refusal that propagates up to the requested top cell.
+        // A finite, entirely acyclic chain deeper than the bound. The cycle detector never trips
+        // (nothing is re-entered), so ONLY the pull-depth guard stands between the plan DFS and a
+        // native stack overflow: reaching the assertions at all proves no SIGABRT. The deepest link is
+        // a located #NUM!-class refusal that propagates up to the requested top cell.
         let len = (MAX_PULL_DEPTH as usize) + 64;
         let owned = chain_files(len);
         let refs: Vec<(&str, &str)> = owned
@@ -1213,5 +1504,260 @@ mod tests {
         );
         // A parse failure is a located refusal.
         assert!(wb.eval_formula(0, "SUM(").is_err());
+    }
+
+    #[test]
+    fn a_shared_dependency_computes_once_across_a_batch_render() {
+        // ENG3 sharing: a viewport demanded via `values_at` builds ONE merged graph, so a dependency
+        // referenced by several viewport cells is computed once. A1=2 (shared base); B1=A1+1, C1=A1+1
+        // (both read A1); the batch returns all three from one pass.
+        let wb = load_one_tab("Sheet1", &[("A1", "2"), ("B1", "=A1+1"), ("C1", "=A1+1")]);
+        let vals = wb.values_at(&[(0, 0, 0), (0, 1, 0), (0, 2, 0)]);
+        assert_eq!(
+            vals,
+            vec![Value::Number(2.0), Value::Number(3.0), Value::Number(3.0)]
+        );
+        assert!(wb.eval_diagnostics().is_empty());
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // NAIVE reference oracle + the ENG3 differential test (the graph EQUALS a naive per-cell eval).
+    // ------------------------------------------------------------------------------------------
+
+    /// An independent, dead-simple per-cell evaluator — the TEST-ONLY reference the differential test
+    /// grades the two-pass engine against. It evaluates a demanded cell straight from the grids by
+    /// native recursion through `charlie_ast::eval`, with a `visiting` set for basic cycle protection
+    /// and a tiny memo so a shared/diamond ancestor does not re-evaluate exponentially. It shares NONE
+    /// of the two-pass algorithm (no `DepGraph`, no plan, no `topo_order`) — only the workbook's
+    /// structural cell-location plumbing (`covering`) and the `Arena`/`scalar_cell` resolver helpers,
+    /// which are not evaluation logic. Its verdict is VALUES; the differential test asserts nothing
+    /// about how either side reaches them.
+    ///
+    /// NAMED COVERAGE BOUNDARY: this oracle has no pull-depth guard and unconditionally memoizes every
+    /// result, so it structurally cannot model the two-pass path's depth-tainted `#NUM!` — that value is
+    /// deliberately NOT memoized and is root-relative/order-dependent (see `MAX_PULL_DEPTH`,
+    /// `finish_pass`, and the range-materialization `#NUM!` bound). The differential cases here therefore
+    /// exercise only CLEAN-value shapes (diamond, deep-but-under-bound chain, cross-tab, shared range).
+    /// The memo/taint interactions the oracle can't represent are frozen separately by single-path
+    /// `assert_eq` tests (`a_legal_deep_chain…`, the `#NUM!` depth tests, the range-too-large test) —
+    /// they are not graded against this oracle.
+    struct NaiveOracle<'w> {
+        wb: &'w Workbook,
+        cur: Cell<u32>,
+        memo: RefCell<HashMap<CellKey, Value>>,
+        visiting: RefCell<HashSet<CellKey>>,
+        arena: Arena,
+    }
+
+    impl<'w> NaiveOracle<'w> {
+        fn new(wb: &'w Workbook) -> NaiveOracle<'w> {
+            NaiveOracle {
+                wb,
+                cur: Cell::new(0),
+                memo: RefCell::new(HashMap::new()),
+                visiting: RefCell::new(HashSet::new()),
+                arena: Arena::default(),
+            }
+        }
+
+        fn eval_cell(&self, sheet: u32, col: u32, row: u32) -> Value {
+            self.value(CellRef {
+                col,
+                row,
+                sheet: Some(SheetId(sheet)),
+            })
+        }
+    }
+
+    impl Resolver for NaiveOracle<'_> {
+        fn value(&self, cell: CellRef) -> Value {
+            let sheet = cell.sheet.map_or_else(|| self.cur.get(), |SheetId(i)| i);
+            let key = (sheet, cell.col, cell.row);
+            if let Some(v) = self.memo.borrow().get(&key) {
+                return v.clone();
+            }
+            if self.visiting.borrow().contains(&key) {
+                return Value::Error(ErrKind::Ref); // basic cycle protection
+            }
+            let Some((id, file)) = self.wb.covering(sheet, cell.col, cell.row) else {
+                return Value::Blank;
+            };
+            let dr = cell.row - file.region.min_row;
+            let dc = cell.col - file.region.min_col;
+            let v = match file.grid.cell_at(dr, dc) {
+                GridCell::Value(v) => v.clone(),
+                GridCell::Formula { expr, .. } => {
+                    self.visiting.borrow_mut().insert(key);
+                    let prev = self.cur.replace(id.0);
+                    let r = scalar_cell(eval(expr, self));
+                    self.cur.set(prev);
+                    self.visiting.borrow_mut().remove(&key);
+                    r
+                }
+            };
+            self.memo.borrow_mut().insert(key, v.clone());
+            v
+        }
+
+        fn range(&self, range: RangeRef) -> ArrayView<'_> {
+            let eff = SheetId(cell_sheet(range.start.sheet, self.cur.get()));
+            let c0 = range.start.col.min(range.end.col);
+            let c1 = range.start.col.max(range.end.col);
+            let r0 = range.start.row.min(range.end.row);
+            let r1 = range.start.row.max(range.end.row);
+            let (rows, cols) = (r1 - r0 + 1, c1 - c0 + 1);
+            let key = RangeRef {
+                start: CellRef {
+                    col: c0,
+                    row: r0,
+                    sheet: Some(eff),
+                },
+                end: CellRef {
+                    col: c1,
+                    row: r1,
+                    sheet: Some(eff),
+                },
+            };
+            if let Some(view) = self.arena.get(key) {
+                return view;
+            }
+            let mut buf = Vec::with_capacity((rows as usize) * (cols as usize));
+            for r in r0..=r1 {
+                for c in c0..=c1 {
+                    buf.push(self.value(CellRef {
+                        col: c,
+                        row: r,
+                        sheet: Some(eff),
+                    }));
+                }
+            }
+            self.arena.insert(key, Shape { rows, cols }, buf)
+        }
+
+        fn sheet_id(&self, name: &str) -> Option<SheetId> {
+            self.wb.sheet_id(name)
+        }
+
+        fn now_serial(&self) -> f64 {
+            self.wb.now
+        }
+    }
+
+    fn cell_sheet(sheet: Option<SheetId>, home: u32) -> u32 {
+        sheet.map_or(home, |SheetId(i)| i)
+    }
+
+    /// Assert the naive oracle and the two-pass engine agree on the VALUE of every demanded cell —
+    /// values only, never the graph's shape/node-count/traversal order (asserting internals would
+    /// freeze "how" and block a future parallel-execution refactor).
+    fn assert_agrees(wb: &Workbook, cells: &[(u32, u32, u32)]) {
+        let oracle = NaiveOracle::new(wb);
+        // Interleave demands so the two-pass memo/arena is exercised across cells, and evaluate the
+        // batch through the merged-graph path too.
+        let batch = wb.values_at(cells);
+        for (&(s, c, r), two_pass) in cells.iter().zip(batch) {
+            let naive = oracle.eval_cell(s, c, r);
+            assert_eq!(
+                naive, two_pass,
+                "naive vs two-pass diverge at (sheet {s}, col {c}, row {r}): \
+                 naive={naive:?} two_pass={two_pass:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn differential_diamond_shared_ancestor() {
+        // A diamond: one shared base A1 reached by many cells and by a two-path top. B1,C1 both read
+        // A1; D1 reads B1 and C1 (A1 via two paths); wide fan-out E1,F1 also read A1.
+        let wb = load_one_tab(
+            "Sheet1",
+            &[
+                ("A1", "3"),
+                ("B1", "=A1+1"),
+                ("C1", "=A1*2"),
+                ("D1", "=B1+C1"),
+                ("E1", "=A1*10"),
+                ("F1", "=A1-1+E1"),
+            ],
+        );
+        assert_agrees(
+            &wb,
+            &[
+                (0, 0, 0),
+                (0, 1, 0),
+                (0, 2, 0),
+                (0, 3, 0),
+                (0, 4, 0),
+                (0, 5, 0),
+            ],
+        );
+    }
+
+    #[test]
+    fn differential_deep_linear_chain() {
+        // A deep (but under-bound) linear chain shared by a top demand and interior demands.
+        let len = 60usize;
+        let owned = chain_files(len); // A1=A2+1, ..., A60=0
+        let refs: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_str()))
+            .collect();
+        let wb = load_one_tab("Sheet1", &refs);
+        assert_agrees(&wb, &[(0, 0, 0), (0, 0, 29), (0, 0, 59), (0, 0, 10)]);
+    }
+
+    #[test]
+    fn differential_cross_tab_shared_ancestor() {
+        // A cross-tab shared ancestor: Base!A1 feeds several formulas on two other tabs, and a cell
+        // that combines both tabs (a cross-tab diamond bottoming out at Base!A1).
+        let wb = Workbook::from_tabs(&[
+            ("Base", &[("A1", &file("100"))]),
+            (
+                "R1",
+                &[("A1", &file("=Base!A1*2")), ("A2", &file("=Base!A1+A1"))],
+            ),
+            (
+                "R2",
+                &[
+                    ("A1", &file("=Base!A1-10")),
+                    ("A2", &file("=R1!A1+R2!A1+Base!A1")),
+                ],
+            ),
+        ])
+        .expect("loads clean");
+        assert_agrees(
+            &wb,
+            &[
+                (0, 0, 0), // Base!A1
+                (1, 0, 0), // R1!A1
+                (1, 0, 1), // R1!A2
+                (2, 0, 0), // R2!A1
+                (2, 0, 1), // R2!A2 (combines both tabs + Base)
+            ],
+        );
+    }
+
+    #[test]
+    fn differential_one_large_range_aggregated_by_several_cells() {
+        // One large shared range (a 100-cell column) aggregated by several cells: SUM, an offset SUM,
+        // and a formula that reads two aggregates. Every aggregate shares the SAME 100 ancestor cells.
+        let column: String = (1..=100)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let wb = load_one_tab(
+            "Sheet1",
+            &[
+                ("A1:A100", column.as_str()),
+                ("C1", "=SUM(A1:A100)"),
+                ("C2", "=SUM(A1:A100)+1"),
+                ("C3", "=C1+C2"),
+                ("C4", "=AVERAGE(A1:A100)"),
+            ],
+        );
+        assert_agrees(
+            &wb,
+            &[(0, 2, 0), (0, 2, 1), (0, 2, 2), (0, 2, 3), (0, 0, 49)],
+        );
     }
 }
