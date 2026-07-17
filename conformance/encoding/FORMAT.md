@@ -5,17 +5,17 @@
 > endings, a broadcast-conformance dimension rule, and a single-`=formula` drag-fill body). Those
 > constructs have been **retired**. The authoritative on-disk-format contract is now:
 >
-> - **`SPEC.md`** (repo root) — the vocabulary and invariants (FT‑1 … FT‑14) the implementation
->   satisfies. In particular: a file's name **is** a closed range with **no ending** (FT‑3); its
->   content deserializes to an **explicit grid** that fills the range exactly (FT‑4/FT‑8), one cell per
->   coordinate; the current deserializer is **TSV** (FT‑5), an empty field a Blank cell; a cell's value
->   derives only from its own content, never its position (FT‑9) — there is no drag-fill anywhere.
+> - **`SPEC.md`** (repo root) — the vocabulary and invariants (CORE1 … CLI1) the implementation
+>   satisfies. In particular: a file's name **is** a closed range with **no ending** (FS2); its
+>   content deserializes to an **explicit grid** that fills the range exactly (GRID1/GRID4), one cell per
+>   coordinate; the current deserializer is **TSV** (GRID2), an empty field a Blank cell; a cell's value
+>   derives only from its own content, never its position (VAL1) — there is no drag-fill anywhere.
 > - **`charlie-cli --guide`** — the terse, agent-facing tour of the on-disk model, plus
 >   **`charlie-cli sample <dir>`**, which writes a live tutorial workbook you can render, check, and edit.
 >   (These replace the former `docs/format.md` format guide, whose rationale now lives in the governing
 >   `charlie-model` / `charlie-ast` code itself.)
 >
-> The `EXPECTED.md` verdict ledgers in this corpus cite SPEC.md's FT‑invariants directly. This corpus
+> The `EXPECTED.md` verdict ledgers in this corpus cite SPEC.md's subsystem-scoped invariants directly. This corpus
 > was migrated **value-preservingly** to the current form (filenames dropped their endings; every
 > former drag-fill body was expanded to the explicit per-cell grid it denoted, so rendered values are
 > unchanged). See `PROVENANCE.md`.

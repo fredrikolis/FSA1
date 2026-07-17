@@ -18,26 +18,26 @@ pub enum Severity {
 /// frozen; the code is (ast-standards PART 5, "single-sourced code registry").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
-    /// A filename that is not a well-formed A1 closed range (`A1`, `F2:F11`, `B2:D9`) (FT-3).
+    /// A filename that is not a well-formed A1 closed range (`A1`, `F2:F11`, `B2:D9`) (FS2).
     MalformedFilename,
-    /// A lowercase column letter in a filename (`a1`) — non-canonical (FT-3).
+    /// A lowercase column letter in a filename (`a1`) — non-canonical (FS2).
     LowercaseColumn,
-    /// A leading zero in a filename row (`A01`) — non-canonical (FT-3).
+    /// A leading zero in a filename row (`A01`) — non-canonical (FS2).
     LeadingZeroRow,
-    /// A `$` in a filename (`$A$1`) — `$` lives in formula bodies only (FT-3).
+    /// A `$` in a filename (`$A$1`) — `$` lives in formula bodies only (FS2).
     DollarInFilename,
-    /// A range not written top-left`:`bottom-right (`G8:A3`) — non-canonical (FT-3).
+    /// A range not written top-left`:`bottom-right (`G8:A3`) — non-canonical (FS2).
     NonCanonicalRange,
-    /// A `1x1` range spelled `A1:A1` — a single cell is the 0-D range `A1` (FT-3).
+    /// A `1x1` range spelled `A1:A1` — a single cell is the 0-D range `A1` (FS2).
     DegenerateRange,
-    /// A whole-column / whole-row range (`A:A`, `3:3`) — not a closed range, reserved (FT-3).
+    /// A whole-column / whole-row range (`A:A`, `3:3`) — not a closed range, reserved (FS2).
     WholeColumnRowReserved,
     /// Line 1 is not a `# `-prefixed annotation.
     MissingAnnotation,
     /// A TSV grid with unequal field counts per row — a `#VALUE!`-class refusal.
     RaggedGrid,
     /// A deserialized grid whose dimensions do not fill the file's declared closed range exactly
-    /// (FT-8) — a located dimension error.
+    /// (GRID4) — a located dimension error.
     DimensionMismatch,
     /// Two files in one tab claim intersecting cells (a hard reject; the overlap policy lives in
     /// [`crate::overlap`]).

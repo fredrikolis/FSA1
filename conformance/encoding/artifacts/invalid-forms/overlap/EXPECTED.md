@@ -9,7 +9,7 @@ are a hard error; precedence is REJECT, never a guessed winner.
 ## Inputs
 - `Orders/A1:C3` declares cols A..C × rows 1..3 (a 3×3 explicit grid).
 - `Orders/B2:D4` declares cols B..D × rows 2..4 (a 3×3 explicit grid).
-- Both grids fill their ranges (FT‑8), so both load; within one tab their declared cells must be
+- Both grids fill their ranges (GRID4), so both load; within one tab their declared cells must be
   pairwise disjoint. These two intersect at B2:C3.
 
 ## Verdict: **REJECT — overlap. No precedence; the tab fails to load.**

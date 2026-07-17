@@ -19,9 +19,9 @@ below (**oracle-input purity**) makes any silent byte change in a fixture or an 
 ## The value-preserving migration to the current form
 
 The engine was changed so that a file's name **is** a closed range with **no `.range`/`.cell` ending**
-(SPEC.md FT‑3), its content deserializes to an **explicit grid** that must fill the range exactly
-(FT‑4/FT‑8) via the **TSV** deserializer (FT‑5), and a cell's value derives only from its own content
-(FT‑9) — there is **no broadcast/drag-fill**. This corpus was migrated to match, preserving every
+(SPEC.md FS2), its content deserializes to an **explicit grid** that must fill the range exactly
+(GRID1/GRID4) via the **TSV** deserializer (GRID2), and a cell's value derives only from its own content
+(VAL1) — there is **no broadcast/drag-fill**. This corpus was migrated to match, preserving every
 rendered value:
 
 1. **Filenames lost their endings.** Every `<range>.range` / `<addr>.cell` file was renamed to the
@@ -40,7 +40,7 @@ rendered value:
    square-disambiguator}` fixtures (which existed only to probe the retired broadcast-conformance
    rule) and `invalid-forms/illegal-forms/dual-body` (the retired "exactly one body form" rule) were
    removed. The surviving edge/invalid fixtures had their `EXPECTED.md` verdicts rewritten to cite
-   SPEC.md's FT‑invariants and the current diagnostic codes (`dimension-mismatch`, `ragged-grid`,
+   SPEC.md's subsystem-scoped invariants and the current diagnostic codes (`dimension-mismatch`, `ragged-grid`,
    `non-canonical-range`, `dollar-in-filename`, `degenerate-range`, `overlap`).
 4. **`FORMAT.md`** was replaced by a superseded-pointer to `SPEC.md` + `charlie-cli --guide` (the former
    `docs/format.md` guide is retired; its rationale now lives in the governing code).

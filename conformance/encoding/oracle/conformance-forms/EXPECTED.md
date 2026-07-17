@@ -10,14 +10,14 @@ trivially preserved.
 
 > **Migration note (value-preserving, no-endings + explicit-grid + TSV deserializer).** Under the
 > current spec (SPEC.md) a file's name IS a closed range (no `.range`/`.cell` ending) and a range file
-> is an **explicit grid** that fills its range exactly (FT‑8) — there is no broadcast/drag-fill. The
+> is an **explicit grid** that fills its range exactly (GRID4) — there is no broadcast/drag-fill. The
 > former `broadcast-across`, `broadcast-down`, and `square-disambiguator` fixtures existed only to
 > probe the retired broadcast-conformance rule and have been **deleted**. Only the degenerate-range
 > edge case survives, because it is still a filename-grammar rejection.
 
 | Fixture | File | Declared (R×C) | Verdict | Diagnostic code | SPEC.md |
 |---|---|---|---|---|---|
-| degenerate-1×1-range | `Cell/A1:A1` | 1×1 (rejected at filename) | **REJECT** | `degenerate-range` | FT‑3 |
+| degenerate-1×1-range | `Cell/A1:A1` | 1×1 (rejected at filename) | **REJECT** | `degenerate-range` | FS2 |
 
 ## The degenerate-range edge case
 `A1:A1` is a `left:right` spelling of a single cell. A closed range's endpoints must differ; a 1×1

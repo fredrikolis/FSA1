@@ -77,13 +77,13 @@ originally expressed each derived column as a **single scalar `=formula` stored 
 `.range`** and expected the reader to **drag-fill** it — to offset the body's relative references
 per-cell across the region (the former format spec illustrated this with "a `5×1` drag-fill
 `Orders/D2:D6` with body `=B2*C2` … its per-cell offsetting is a W3 eval concern"). charlie has **no
-such mechanism**: by **FT-9** a cell's value derives *only from its own content*, so there is no
+such mechanism**: by **VAL1** a cell's value derives *only from its own content*, so there is no
 offset/drag-fill anywhere in the engine (`charlie-model/src/workbook.rs`). charlie therefore
 evaluated the stored scalar once and Filled the region with that one result, while the oracle
 computed the drag-fill per row — so **every derived column diverged** across all six workbooks,
 recorded as standing FACTS in the anchor.
 
-**That standing class is now RESOLVED — by aligning the corpus to FT-9, never by adding drag-fill.**
+**That standing class is now RESOLVED — by aligning the corpus to VAL1, never by adding drag-fill.**
 Each derived column is now an **explicit per-cell grid**: the range file spells out one formula per
 row with its own literal references (e.g. `conformance/encoding/artifacts/lookup-join/Orders/D2:D11`
 writes `=XLOOKUP(B2,Products!$A$2:$A$7,Products!$C$2:$C$7)` through `=XLOOKUP(B11,…)` in full), which

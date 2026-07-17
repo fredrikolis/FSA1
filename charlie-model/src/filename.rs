@@ -1,4 +1,4 @@
-// Concern: the FILENAME grammar (FT-3) — parse a bare filename that is a closed A1 range (`A1`, `F2:F11`, `B2:D9`; a single cell is the 0-D range `A1`) into a `FileName` (its `Rect` region + declared `Shape`), layering canonical-form POLICY on charlie-ast's A1 address grammar: reject `$`, lowercase, leading zeros, a reversed/degenerate(`A1:A1`)/whole-column range, each a named located diagnostic; never panics on a hostile name | Non-concern: the A1 address grammar itself (charlie-ast::a1 owns tokenizing an address), the file's grid (grid.rs), and whether the grid FILLS the range (FT-8, lib.rs) | IO: (a filename `&str`) -> `Result<FileName, Diagnostic>`
+// Concern: the FILENAME grammar (FS2) — parse a bare filename that is a closed A1 range (`A1`, `F2:F11`, `B2:D9`; a single cell is the 0-D range `A1`) into a `FileName` (its `Rect` region + declared `Shape`), layering canonical-form POLICY on charlie-ast's A1 address grammar: reject `$`, lowercase, leading zeros, a reversed/degenerate(`A1:A1`)/whole-column range, each a named located diagnostic; never panics on a hostile name | Non-concern: the A1 address grammar itself (charlie-ast::a1 owns tokenizing an address), the file's grid (grid.rs), and whether the grid FILLS the range (GRID4, lib.rs) | IO: (a filename `&str`) -> `Result<FileName, Diagnostic>`
 //! Filename parser: [`parse_filename`], [`FileName`].
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -9,7 +9,7 @@ use charlie_ast::a1::{A1Address, A1Error, parse_a1};
 /// A well-formed, canonical filename: the closed A1 range it declares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileName {
-    /// The grid region the file claims (the input to the [`crate::overlap`] detector and the FT-8
+    /// The grid region the file claims (the input to the [`crate::overlap`] detector and the GRID4
     /// grid dimension check).
     pub region: Rect,
     /// `(rows, cols)` = `(maxRow-minRow+1, maxCol-minCol+1)`.
@@ -105,7 +105,7 @@ fn parse_range(name: &str, left: &str, right: &str) -> Result<FileName, Diagnost
 }
 
 /// Apply the filename canonical-form policy to one parsed address: no `$`, uppercase only, no leading
-/// zero (FT-3). `offset` is the address's byte position within the whole filename, so the diagnostic
+/// zero (FS2). `offset` is the address's byte position within the whole filename, so the diagnostic
 /// points at the right place in the name.
 fn enforce_canonical(name: &str, offset: usize, a: &A1Address) -> Result<(), Diagnostic> {
     // A file's own address is intrinsically fixed, so a `$` absolute-marker is meaningless in a

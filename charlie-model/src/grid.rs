@@ -1,10 +1,10 @@
-// Concern: the GRID (FT-4) — the resolved cells of a file's closed range: for every coordinate one `Cell`, either an explicit literal `Value` or a parsed formula (`Expr`, plus its verbatim source for the "show formulas" render) — and the TSV DESERIALIZER (FT-5, the current on-disk format): tab-separated columns, newline-separated rows; a field beginning with `=` is a parsed formula, any other field a lexed literal, an empty field a Blank; a ragged grid is a located `#VALUE!`-class refusal. Includes the per-token literal lexer (number/bool/error/text with force-text and quoted-string escapes) | Non-concern: whether the grid fills its file's declared range exactly (FT-8 — the dimension check lives in `parse_file`), EVALUATING a formula (charlie-ast owns eval; workbook.rs drives it), and the filename that declares the range (filename.rs) | IO: (a file's post-annotation content `&str`) -> `Result<Grid, Diagnostic>`
+// Concern: the GRID (GRID1) — the resolved cells of a file's closed range: for every coordinate one `Cell`, either an explicit literal `Value` or a parsed formula (`Expr`, plus its verbatim source for the "show formulas" render) — and the TSV DESERIALIZER (GRID2, the current on-disk format): tab-separated columns, newline-separated rows; a field beginning with `=` is a parsed formula, any other field a lexed literal, an empty field a Blank; a ragged grid is a located `#VALUE!`-class refusal. Includes the per-token literal lexer (number/bool/error/text with force-text and quoted-string escapes) | Non-concern: whether the grid fills its file's declared range exactly (GRID4 — the dimension check lives in `parse_file`), EVALUATING a formula (charlie-ast owns eval; workbook.rs drives it), and the filename that declares the range (filename.rs) | IO: (a file's post-annotation content `&str`) -> `Result<Grid, Diagnostic>`
 //! The grid and its TSV deserializer: [`Grid`], [`Cell`], [`deserialize_tsv`], [`lex_literal`].
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use charlie_ast::{ErrKind, Expr, Shape, Value, parse};
 
-/// One resolved cell of a [`Grid`]: an explicit literal value, or a parsed `=formula` (FT-4/FT-10).
+/// One resolved cell of a [`Grid`]: an explicit literal value, or a parsed `=formula` (GRID1/VAL2).
 /// A formula keeps both its parsed [`Expr`] (what the engine evaluates) and its verbatim `src` text
 /// (what the `--functions` "show formulas" render echoes), so the model never re-parses to display.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -15,7 +15,7 @@ pub enum Cell {
     Formula { src: String, expr: Expr },
 }
 
-/// The resolved cells of a file's closed range (FT-4): a [`Shape`] and one [`Cell`] per coordinate,
+/// The resolved cells of a file's closed range (GRID1): a [`Shape`] and one [`Cell`] per coordinate,
 /// stored row-major. The engine (workbook.rs) evaluates over this grid; the deserializer builds it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Grid {
@@ -40,14 +40,14 @@ impl Grid {
     }
 }
 
-/// Deserialize a file's post-annotation content into a [`Grid`] (FT-5, the TSV format): each physical
+/// Deserialize a file's post-annotation content into a [`Grid`] (GRID2, the TSV format): each physical
 /// line is a row split on tabs; a field beginning with `=` parses to a formula cell, any other field
 /// lexes to a literal, and an empty field is a `Blank`. Never panics; a ragged grid or an unparseable
 /// formula is a located [`Diagnostic`]. `file` names the file for diagnostics; body line `n` reports
 /// as file line `n + 1` (line 1 is the mandatory `# ` annotation, stripped by the caller).
 ///
 /// The grid's own dimensions come from the content; whether they FILL the file's declared range
-/// (FT-8) is checked separately in [`crate::parse_file`].
+/// (GRID4) is checked separately in [`crate::parse_file`].
 pub fn deserialize_tsv(file: &str, content: &str) -> Result<Grid, Diagnostic> {
     // A single trailing newline is stripped and ignored (a lone trailing CR after it tolerated too),
     // so a stray CRLF at end-of-file adds no phantom row. An interior CR is NOT stripped — it rides
@@ -58,7 +58,7 @@ pub fn deserialize_tsv(file: &str, content: &str) -> Result<Grid, Diagnostic> {
     // An empty body is a single Blank cell (the 0-D range `A1` written with no body). This resolves
     // toward ACCEPT for the single-cell case (ast-standards PART 6: a false-reject is the cardinal
     // sin) — a `1x1` Blank fills an `A1` file exactly; for a multi-cell range it is short and the
-    // FT-8 fills-range check refuses it. Consistent with an unclaimed gap already reading Blank.
+    // GRID4 fills-range check refuses it. Consistent with an unclaimed gap already reading Blank.
     if content.is_empty() {
         return Ok(Grid {
             shape: Shape { rows: 1, cols: 1 },
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn an_explicit_grid_mixes_literals_and_formulas_cell_by_cell() {
-        // FT-9: a range file's content is the EXPLICIT grid — each cell independently a literal or a
+        // VAL1: a range file's content is the EXPLICIT grid — each cell independently a literal or a
         // formula, no single-formula drag-fill. Here row 1 is two literals, row 2 two formulas.
         let g = grid("10\t20\n=A1\t=B1*2");
         assert_eq!(g.shape, Shape { rows: 2, cols: 2 });
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn a_double_tab_makes_the_middle_field_blank() {
-        // FT-5: an empty field is a Blank cell — a double tab blanks the middle cell.
+        // GRID2: an empty field is a Blank cell — a double tab blanks the middle cell.
         let g = grid("a\t\tb");
         assert_eq!(g.shape, Shape { rows: 1, cols: 3 });
         assert_eq!(

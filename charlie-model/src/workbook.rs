@@ -1,4 +1,4 @@
-// Concern: the DEMAND-DRIVEN evaluation engine — load a sheet-directory (tabs=folders, files=closed ranges) into an in-memory `Workbook` via `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it, reading its grid cell at the local offset, and — when that cell is a `=formula` — EVALUATING the parsed `Expr` through `charlie_ast::eval` with THIS workbook as the resolver (the PULL); a cell's value derives only from its own content (FT-9), so there is no drag-fill/offset anywhere; results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an AD-HOC `=formula` string is also evaluated against this loaded workbook via `eval_formula` (the `charlie-cli eval` entry) — parsed through `charlie_ast`, evaluated with THIS workbook as the resolver (unqualified refs resolving against a caller-named tab), and returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, each already `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
+// Concern: the DEMAND-DRIVEN evaluation engine — load a sheet-directory (tabs=folders, files=closed ranges) into an in-memory `Workbook` via `parse_file`, then implement `charlie_ast::Resolver` OVER that model so a requested cell is resolved by finding the file that covers it, reading its grid cell at the local offset, and — when that cell is a `=formula` — EVALUATING the parsed `Expr` through `charlie_ast::eval` with THIS workbook as the resolver (the PULL); a cell's value derives only from its own content (VAL1), so there is no drag-fill/offset anywhere; results are memoized PER CELL by resolved `(sheet,col,row)` so a diamond/deep DAG evaluates linearly and never exponentially, a currently-evaluating set turns a reference cycle into a located `#REF!`-class refusal (never a hang/overflow), and only cells transitively requested ever compute (the effectively-infinite-sheet property); an AD-HOC `=formula` string is also evaluated against this loaded workbook via `eval_formula` (the `charlie-cli eval` entry) — parsed through `charlie_ast`, evaluated with THIS workbook as the resolver (unqualified refs resolving against a caller-named tab), and returned as a `FormulaOutcome` (a clean value vs a spreadsheet error value, each already `display_value`-spelled) so the CLI sets its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), xlsx serde, and the CLI render surface | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a `CellRef`/`RangeRef`, pulling formulas) -> a `Value`/`ArrayView`, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
 //! Demand-driven evaluation: [`Workbook`] loads a sheet-directory and implements [`Resolver`] over
 //! it, so `charlie_ast::eval` pulls cell values through the model (the "swap the impl, the engine is
 //! unchanged" firewall made live over a real store). Memoized, cycle-safe, and lazy: an off-request
@@ -89,7 +89,7 @@ type CellKey = (u32, u32, u32);
 /// transitively, compute), **memoized per cell** (each rendered cell computes at most once, so a
 /// diamond / deep DAG stays linear and never re-evaluates exponentially), and **cycle-safe** (a
 /// reference cycle is a located `#REF!`-class refusal, never a hang). Each grid cell derives its value
-/// only from its own content (FT-9) — a range file is an explicit grid, never a drag-filled formula.
+/// only from its own content (VAL1) — a range file is an explicit grid, never a drag-filled formula.
 #[derive(Debug)]
 pub struct Workbook {
     tabs: Vec<Tab>,
@@ -102,7 +102,7 @@ pub struct Workbook {
     current_sheet: Cell<u32>,
     /// Per-CELL result cache (the memo): each rendered cell computes at most once, keyed by its
     /// resolved `(sheet, col, row)`. Per-cell (not per-file) is what simultaneously makes an EXPLICIT
-    /// GRID correct — each cell of a range file is a distinct computation (FT-9) — AND makes a diamond
+    /// GRID correct — each cell of a range file is a distinct computation (VAL1) — AND makes a diamond
     /// / deep DAG evaluate LINEARLY: a cell reached through many reference paths computes once and is thereafter
     /// read from here, so re-evaluation can never grow exponentially (the anti-hang guarantee).
     memo: RefCell<HashMap<CellKey, Value>>,
@@ -419,7 +419,7 @@ impl Workbook {
     ///
     /// `key` is the resolved `(sheet, col, row)`; `id` its covering file; `(dr, dc)` the cell's local
     /// offset into that file's grid. The value is the grid cell's parsed formula evaluated as-written
-    /// (FT-9: no offset/drag-fill), collapsed to a scalar for its scalar cell position.
+    /// (VAL1: no offset/drag-fill), collapsed to a scalar for its scalar cell position.
     ///
     /// Cycle-safe: `key` is inserted into [`Workbook::visiting`] for the duration of its own
     /// evaluation; re-entering it (a direct or transitive self-reference) is a located `#REF!`-class
@@ -499,11 +499,11 @@ impl Workbook {
     }
 
     /// The value of the covering file's grid cell at offset `(dr, dc)`. The cell holds a parsed
-    /// `Expr` (FT-9: evaluated exactly as written — no offset/drag-fill), collapsed to a scalar for
+    /// `Expr` (VAL1: evaluated exactly as written — no offset/drag-fill), collapsed to a scalar for
     /// its scalar cell position by [`scalar_cell`]. Runs *inside* the [`Workbook::formula_value`]
     /// guards (cycle / depth / memo), so it never manages them itself.
     fn compute_formula(&self, id: FileId, dr: u32, dc: u32) -> Value {
-        // FT-9: a cell's value derives only from its own content. The grid cell holds a parsed `Expr`,
+        // VAL1: a cell's value derives only from its own content. The grid cell holds a parsed `Expr`,
         // evaluated exactly as written — no offset/drag-fill. A formula in a scalar cell position that
         // evaluates to an array (a bare range like `=A1:A3`) is collapsed by `scalar_cell` (a 1×1
         // array to its single cell, a genuinely multi-cell array to `#VALUE!`).
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn an_explicit_grid_gives_each_cell_its_own_formula() {
-        // FT-9: a range file's content is the EXPLICIT grid — no drag-fill. A1:A3 is a literal column
+        // VAL1: a range file's content is the EXPLICIT grid — no drag-fill. A1:A3 is a literal column
         // vector 1,2,3. B1:B3 is a 3x1 grid of THREE explicit formulas `=A1`, `=A2`, `=A3` (one per
         // cell, written out), so B1=A1=1, B2=A2=2, B3=A3=3. D1 = SUM(A1:A3) pulls the whole range.
         let wb = load_one_tab(

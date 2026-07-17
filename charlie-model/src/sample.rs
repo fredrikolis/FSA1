@@ -1,4 +1,4 @@
-// Concern: the canonical TUTORIAL workbook exposed as DATA — a `Vec<(relative path, file content)>` that IS a valid charlie workbook (two tabs; a header row; a column of EXPLICIT per-row `=B2*C2` formulas, FT-9; a `=SUM` aggregate; a cross-sheet `=Orders!D5`), so the format is taught by a real, renderable, editable artifact rather than prose; the `charlie-cli sample <dir>` CLI writes it to disk, and the liveness test loads it, asserts a clean lint, and pins rendered values so the tutorial can never silently go stale | Non-concern: WRITING the files to disk (charlie-cli owns that IO), evaluating the grid (workbook.rs), and the filename/grid grammar it exercises (filename.rs/grid.rs) | IO: () -> `Vec<(PathBuf, String)>` (in-memory data; no filesystem access)
+// Concern: the canonical TUTORIAL workbook exposed as DATA — a `Vec<(relative path, file content)>` that IS a valid charlie workbook (two tabs; a header row; a column of EXPLICIT per-row `=B2*C2` formulas, VAL1; a `=SUM` aggregate; a cross-sheet `=Orders!D5`), so the format is taught by a real, renderable, editable artifact rather than prose; the `charlie-cli sample <dir>` CLI writes it to disk, and the liveness test loads it, asserts a clean lint, and pins rendered values so the tutorial can never silently go stale | Non-concern: WRITING the files to disk (charlie-cli owns that IO), evaluating the grid (workbook.rs), and the filename/grid grammar it exercises (filename.rs/grid.rs) | IO: () -> `Vec<(PathBuf, String)>` (in-memory data; no filesystem access)
 //! The live sample workbook: [`sample_workbook`] returns the canonical tutorial as `(path, content)`
 //! data. It is a real charlie workbook — the `charlie-cli sample` command writes it out, and a reader
 //! learns the on-disk model by rendering, checking, and editing it. A colocated liveness test loads
@@ -17,7 +17,7 @@ fn file(annotation: &str, body: &str) -> String {
 ///
 /// - **`Orders/`** — a header row (`A1:D1`), three product rows (name / unit price / quantity), a
 ///   `D2:D4` column of EXPLICIT per-row formulas (`=B2*C2`, `=B3*C3`, `=B4*C4` — one per cell, no
-///   drag-fill; FT-9), and a `=SUM(D2:D4)` grand total in `D5`.
+///   drag-fill; VAL1), and a `=SUM(D2:D4)` grand total in `D5`.
 /// - **`Summary/`** — a header row and a single cell (`B2`) that reads the Orders total cross-sheet
 ///   with `=Orders!D5`.
 ///
@@ -58,7 +58,7 @@ pub fn sample_workbook() -> Vec<(PathBuf, String)> {
         (
             PathBuf::from("Orders/D2:D4"),
             file(
-                "# Concern: per-line revenue = unit price x quantity, one explicit formula per row (FT-9) | Non-concern: the grand total (D5) | IO: none",
+                "# Concern: per-line revenue = unit price x quantity, one explicit formula per row (VAL1) | Non-concern: the grand total (D5) | IO: none",
                 "=B2*C2\n=B3*C3\n=B4*C4",
             ),
         ),

@@ -2,7 +2,7 @@
 # EXPECTED — illegal-forms: stray `$` in filename
 
 **Fixture:** `Sheet/$A$1`
-**Rule under test:** SPEC.md FT‑3 (a file's name is a closed range) + the canonical-form policy
+**Rule under test:** SPEC.md FS2 (a file's name is a closed range) + the canonical-form policy
 (no `$` in filenames).
 
 ## Inputs
@@ -21,5 +21,5 @@ error[dollar-in-filename]: $ is not allowed in a filename (it lives in formula b
 ```
 
 ## Why (citation)
-SPEC.md FT‑3 + FT‑1: A1 addressing uses `$` (`$C$7`) inside formula bodies; a filename is a bare
+SPEC.md FS2 + CORE1: A1 addressing uses `$` (`$C$7`) inside formula bodies; a filename is a bare
 canonical closed range with no `$`.
