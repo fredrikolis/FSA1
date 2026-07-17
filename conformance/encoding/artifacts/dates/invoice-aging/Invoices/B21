@@ -1,2 +1,1 @@
-# Concern: total invoice count across all buckets (reconciles to row count = 12) | Non-concern: dollar total (C21) | IO: output
 =SUM(B17:B20)

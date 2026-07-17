@@ -1,4 +1,3 @@
-# Concern: the raw sales order records (12 orders, exact 12x5 array block) | Non-concern: any per-group rollup (see Summary) | IO: input
 1001	EMEA	Widget	10	1200
 1002	AMER	Gadget	5	750
 1003	APAC	Widget	8	960

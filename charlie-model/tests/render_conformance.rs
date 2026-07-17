@@ -547,8 +547,8 @@ fn resnapshot_render_anchor() {
 /// the poison is genuinely poisonous — so the earlier silence was non-evaluation, not an inert cell.
 #[test]
 fn viewport_evaluates_only_the_dependency_cone() {
-    let ann = "# Concern: c | Non-concern: n | IO: i\n";
-    let f = |b: &str| format!("{ann}{b}");
+    // A file's content is exactly its grid (GRID1) — no annotation line.
+    let f = |b: &str| b.to_string();
     // On-cone chain in row 1: A1=10 (literal), B1==A1+5 (formula), C1==B1*2 (formula).
     // Off-cone POISON in rows 5-6: A5==A6, A6==A5 — a two-cell cycle that refuses if touched.
     let a1 = f("10");

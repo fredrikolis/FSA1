@@ -1,2 +1,1 @@
-# Concern: sales-ledger column headers | Non-concern: the record rows and totals below | IO: input
 OrderID	Region	Product	Units	Revenue

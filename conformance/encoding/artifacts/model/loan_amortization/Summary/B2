@@ -1,2 +1,1 @@
-# Concern: total interest paid over the loan = sum of the schedule's Interest column | Non-concern: the principal repaid (that just equals the loan amount) | IO: output
 =SUM(Amortization!D2:D13)

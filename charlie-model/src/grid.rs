@@ -1,4 +1,4 @@
-// Concern: the GRID (GRID1) — the resolved cells of a file's closed range: for every coordinate one `Cell`, either an explicit literal `Value` or a parsed formula (`Expr`, plus its verbatim source for the "show formulas" render) — and the TSV DESERIALIZER (GRID2, the current on-disk format): tab-separated columns, newline-separated rows; a field beginning with `=` is a parsed formula, any other field a lexed literal, an empty field a Blank; a ragged grid is a located `#VALUE!`-class refusal. Includes the per-token literal lexer (number/bool/error/text with force-text and quoted-string escapes) | Non-concern: whether the grid fills its file's declared range exactly (GRID4 — the dimension check lives in `parse_file`), EVALUATING a formula (charlie-ast owns eval; workbook.rs drives it), and the filename that declares the range (filename.rs) | IO: (a file's post-annotation content `&str`) -> `Result<Grid, Diagnostic>`
+// Concern: the GRID (GRID1) — the resolved cells of a file's closed range: for every coordinate one `Cell`, either an explicit literal `Value` or a parsed formula (`Expr`, plus its verbatim source for the "show formulas" render) — and the TSV DESERIALIZER (GRID2, the current on-disk format): tab-separated columns, newline-separated rows; a field beginning with `=` is a parsed formula, any other field a lexed literal, an empty field a Blank; a ragged grid is a located `#VALUE!`-class refusal. Includes the per-token literal lexer (number/bool/error/text with force-text and quoted-string escapes) | Non-concern: whether the grid fills its file's declared range exactly (GRID4 — the dimension check lives in `parse_file`), EVALUATING a formula (charlie-ast owns eval; workbook.rs drives it), and the filename that declares the range (filename.rs) | IO: (a file's content `&str`) -> `Result<Grid, Diagnostic>`
 //! The grid and its TSV deserializer: [`Grid`], [`Cell`], [`deserialize_tsv`], [`lex_literal`].
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -40,11 +40,11 @@ impl Grid {
     }
 }
 
-/// Deserialize a file's post-annotation content into a [`Grid`] (GRID2, the TSV format): each physical
-/// line is a row split on tabs; a field beginning with `=` parses to a formula cell, any other field
-/// lexes to a literal, and an empty field is a `Blank`. Never panics; a ragged grid or an unparseable
-/// formula is a located [`Diagnostic`]. `file` names the file for diagnostics; body line `n` reports
-/// as file line `n + 1` (line 1 is the mandatory `# ` annotation, stripped by the caller).
+/// Deserialize a file's content into a [`Grid`] (GRID2, the TSV format): each physical line is a row
+/// split on tabs; a field beginning with `=` parses to a formula cell, any other field lexes to a
+/// literal, and an empty field is a `Blank`. Never panics; a ragged grid or an unparseable formula is
+/// a located [`Diagnostic`]. `file` names the file for diagnostics; the entire content is the grid
+/// (GRID1) — there is no header/annotation line, so grid row `n` is file line `n` (1-based).
 ///
 /// The grid's own dimensions come from the content; whether they FILL the file's declared range
 /// (GRID4) is checked separately in [`crate::parse_file`].
@@ -74,7 +74,7 @@ pub fn deserialize_tsv(file: &str, content: &str) -> Result<Grid, Diagnostic> {
         if fields.len() != cols {
             return Err(Diagnostic::new(
                 Code::RaggedGrid,
-                Loc::body(file, (row_idx + 2) as u32, 1),
+                Loc::body(file, (row_idx + 1) as u32, 1),
                 format!(
                     "ragged TSV grid: row {} has {} field(s), expected {} (#VALUE!-class)",
                     row_idx + 1,
@@ -87,7 +87,7 @@ pub fn deserialize_tsv(file: &str, content: &str) -> Result<Grid, Diagnostic> {
         // the exact column (line byte offset + the refusal's span into the token, 1-based).
         let mut byte = 0usize;
         for field in fields {
-            cells.push(deserialize_field(file, (row_idx + 2) as u32, byte, field)?);
+            cells.push(deserialize_field(file, (row_idx + 1) as u32, byte, field)?);
             byte += field.len() + 1; // + the tab separator
         }
     }
@@ -279,8 +279,9 @@ mod tests {
     fn an_unparseable_formula_is_a_located_refusal() {
         let d = deserialize_tsv("A1", "=SUM(").unwrap_err();
         assert_eq!(d.code, Code::FormulaSyntax);
-        // Located on the body line (file line 2; the annotation is line 1) at the refusal's column.
-        assert!(matches!(d.loc, Loc::Body { line: 2, .. }), "{:?}", d.loc);
+        // Located on the first grid row (file line 1 — the whole content is the grid) at the refusal's
+        // column.
+        assert!(matches!(d.loc, Loc::Body { line: 1, .. }), "{:?}", d.loc);
     }
 
     #[test]

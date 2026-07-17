@@ -1,2 +1,1 @@
-# Concern: count of invoices in the 61-90 day bucket | Non-concern: their dollar total (C19) | IO: none
 =COUNTIFS(E2:E13,">=61",E2:E13,"<=90")

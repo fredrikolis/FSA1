@@ -17,5 +17,6 @@
 >
 > The `EXPECTED.md` verdict ledgers in this corpus cite SPEC.md's subsystem-scoped invariants directly. This corpus
 > was migrated **value-preservingly** to the current form (filenames dropped their endings; every
-> former drag-fill body was expanded to the explicit per-cell grid it denoted, so rendered values are
-> unchanged). See `PROVENANCE.md`.
+> former drag-fill body was expanded to the explicit per-cell grid it denoted; and each file's former
+> line-1 `# Concern…` annotation was removed so the content is exactly the grid — the first line is the
+> first row (GRID1) — so rendered values are unchanged). See `PROVENANCE.md`.

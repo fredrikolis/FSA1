@@ -1,2 +1,1 @@
-# Concern: total outstanding dollars in the 0-30 day bucket | Non-concern: the invoice count (B17) | IO: none
 =SUMIFS(D2:D13,E2:E13,">=0",E2:E13,"<=30")

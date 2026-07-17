@@ -1,4 +1,3 @@
-# Concern: the product catalog — the lookup source keyed by product_id with its unit_price | Non-concern: the orders that reference it (see Orders tab) | IO: input
 P001	Widget	2.50
 P002	Gadget	5.00
 P003	Sprocket	1.25

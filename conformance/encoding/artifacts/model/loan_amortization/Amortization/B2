@@ -1,2 +1,1 @@
-# Concern: opening balance of period 1 = the loan principal | Non-concern: later periods' opening balance (B3:B13 roll from prior End Balance) | IO: none
 =Inputs!B2

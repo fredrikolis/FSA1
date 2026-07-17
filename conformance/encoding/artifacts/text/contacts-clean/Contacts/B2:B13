@@ -1,4 +1,3 @@
-# Concern: hand-entered emails, deliberately dirty (mixed case, stray whitespace, case-variant duplicates) | Non-concern: the normalized email (E) and dedupe flag (F) | IO: input
 John.Smith@Example.COM
  jane.doe@example.com
 BOB.JONES@Example.com

@@ -1,4 +1,3 @@
-# Concern: hand-entered full names, deliberately dirty (leading/trailing/double spaces, mixed case) | Non-concern: the parsed first/last split (C:D) | IO: input
   John Smith
 Jane Doe
 Bob  Jones

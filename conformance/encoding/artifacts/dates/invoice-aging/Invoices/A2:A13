@@ -1,4 +1,3 @@
-# Concern: invoice identifiers (leaf key) | Non-concern: customer/date/amount in sibling columns | IO: input
 INV-001
 INV-002
 INV-003

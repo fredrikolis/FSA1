@@ -1,4 +1,4 @@
-// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename->closed-range parser (`filename`, FS2), the TSV DESERIALIZER and the GRID it produces (`grid`, GRID1/GRID2), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula/annotation strings for the CLI to draw, the canonical live TUTORIAL workbook as data (`sample`, what `charlie-cli sample` writes out), and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling each formula cell through `charlie_ast::eval`, memoized and cycle-safe; `parse_file` ties the filename+annotation+deserializer into one loaded `ParsedFile` (its declared range and its grid), enforcing GRID4 (the grid fills the range exactly); `Workbook` resolves cells to `Value`s on demand and additionally exposes `Workbook::eval_formula`, the AD-HOC `=formula` evaluator (the `charlie-cli eval` entry) returning a `FormulaOutcome` so the CLI branches its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
+// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename->closed-range parser (`filename`, FS2), the TSV DESERIALIZER and the GRID it produces (`grid`, GRID1/GRID2), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula strings for the CLI to draw, the canonical live TUTORIAL workbook as data (`sample`, what `charlie-cli sample` writes out), and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling each formula cell through `charlie_ast::eval`, memoized and cycle-safe; `parse_file` ties the filename+deserializer into one loaded `ParsedFile` (its declared range and its grid), enforcing GRID4 (the grid fills the range exactly); `Workbook` resolves cells to `Value`s on demand and additionally exposes `Workbook::eval_formula`, the AD-HOC `=formula` evaluator (the `charlie-cli eval` entry) returning a `FormulaOutcome` so the CLI branches its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
 //! # charlie-model — the filesystem spreadsheet model
 //!
 //! **CHARTER.** `charlie-model` owns the on-disk encoding: a tab is a folder and a file's *name* is a
@@ -46,30 +46,14 @@ pub struct ParsedFile {
     pub grid: Grid,
 }
 
-/// Load one file from its name and contents: parse the filename to a closed range, verify the line-1
-/// `# ` annotation, deserialize the body to a [`Grid`], and enforce GRID4 (the grid fills the declared
-/// range exactly). Never panics; the first violation is returned as a located [`Diagnostic`].
+/// Load one file from its name and contents: parse the filename to a closed range, deserialize the
+/// content to a [`Grid`], and enforce GRID4 (the grid fills the declared range exactly). The entire
+/// file content is the grid — there is no header, annotation, or metadata line, and the first line is
+/// the first row (GRID1). Never panics; the first violation is returned as a located [`Diagnostic`].
 pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Diagnostic> {
     let declared = parse_filename(name)?;
 
-    // Line 1 is the mandatory `# ` annotation; the body is everything after it.
-    let (line1, rest) = match contents.split_once('\n') {
-        Some((first, rest)) => (first, rest),
-        None => (contents, ""),
-    };
-    // The prefix is `# ` WITH the trailing space, not a bare `#`: the space disambiguates an
-    // annotation from a line-1 literal that merely starts with `#` — e.g. the error token `#REF!`,
-    // which has no following space — so a single-cell file whose sole value is `#REF!` is not
-    // mistaken for a (malformed) annotation.
-    if !line1.starts_with("# ") {
-        return Err(Diagnostic::new(
-            Code::MissingAnnotation,
-            Loc::body(name, 1, 1),
-            "line 1 must be a '# ' annotation".to_string(),
-        ));
-    }
-
-    let grid = deserialize_tsv(name, rest)?;
+    let grid = deserialize_tsv(name, contents)?;
     // GRID4: the deserialized grid must fill the file's closed range exactly.
     if grid.shape != declared.declared_shape {
         return Err(Diagnostic::new(
@@ -96,16 +80,14 @@ pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Diagnostic> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use charlie_ast::Value;
+    use charlie_ast::{ErrKind, Value};
     use grid::Cell;
-
-    const ANN: &str = "# Concern: x | Non-concern: y | IO: input\n";
 
     #[test]
     fn loads_a_header_row_exact_match() {
-        // A1:D1, declared 1x4, a 1x4 literal row -> fills the range.
-        let contents = format!("{ANN}Product\tUnit Price\tQty\tLine Total");
-        let f = parse_file("A1:D1", &contents).unwrap();
+        // A1:D1, declared 1x4, a 1x4 literal row -> fills the range. The entire content is the grid
+        // (GRID1): the first line is the first row, with no header/annotation line.
+        let f = parse_file("A1:D1", "Product\tUnit Price\tQty\tLine Total").unwrap();
         assert_eq!(f.declared_shape, Shape { rows: 1, cols: 4 });
         assert_eq!(f.grid.shape, Shape { rows: 1, cols: 4 });
         assert_eq!(
@@ -117,8 +99,7 @@ mod tests {
     #[test]
     fn loads_a_single_formula_cell() {
         // A1 with a formula body -> a 1x1 grid whose one cell is a parsed formula.
-        let contents = format!("{ANN}=B2*C2");
-        let f = parse_file("A1", &contents).unwrap();
+        let f = parse_file("A1", "=B2*C2").unwrap();
         assert!(matches!(&f.grid.cells[0], Cell::Formula { src, .. } if src == "=B2*C2"));
     }
 
@@ -126,8 +107,7 @@ mod tests {
     fn loads_an_explicit_mixed_grid() {
         // VAL1: a range file's content is the EXPLICIT grid; each cell is independently a literal or
         // a formula. B2:D4 declares 3x3, and the body is a full 3x3 grid.
-        let contents = format!("{ANN}1\t2\t3\n=A1\t=B1\t=C1\n7\t8\t9");
-        let f = parse_file("B2:D4", &contents).unwrap();
+        let f = parse_file("B2:D4", "1\t2\t3\n=A1\t=B1\t=C1\n7\t8\t9").unwrap();
         assert_eq!(f.grid.shape, Shape { rows: 3, cols: 3 });
         assert_eq!(f.grid.cells[0], Cell::Value(Value::Number(1.0)));
         assert!(matches!(&f.grid.cells[3], Cell::Formula { src, .. } if src == "=A1"));
@@ -135,29 +115,31 @@ mod tests {
 
     #[test]
     fn loads_a_blank_cell() {
-        let f = parse_file("A1", "# ann only, no body").unwrap();
+        // Empty content is a single Blank cell (the 0-D range `A1` written with no body).
+        let f = parse_file("A1", "").unwrap();
         assert_eq!(f.grid.shape, Shape { rows: 1, cols: 1 });
         assert_eq!(f.grid.cells, vec![Cell::Value(Value::Blank)]);
     }
 
     #[test]
-    fn missing_annotation_is_rejected() {
-        // First line is data, not a `# ` annotation.
-        let d = parse_file("A1:D1", "Product\tPrice\tQty\tTotal").unwrap_err();
-        assert_eq!(d.code, Code::MissingAnnotation);
+    fn a_single_cell_ref_error_reads_as_the_error_literal() {
+        // The content is exactly the grid (GRID1): a lone `#REF!` is the first (and only) row, so it
+        // lexes to the error literal directly — no annotation line to disambiguate against.
+        let f = parse_file("A1", "#REF!").unwrap();
+        assert_eq!(f.grid.shape, Shape { rows: 1, cols: 1 });
+        assert_eq!(f.grid.cells, vec![Cell::Value(Value::Error(ErrKind::Ref))]);
     }
 
     #[test]
     fn a_grid_that_does_not_fill_the_range_is_a_dimension_error() {
         // GRID4: B2:D4 declares 3x3, but the body is only 2x2 -> a located dimension error.
-        let contents = format!("{ANN}1\t2\n3\t4");
-        let d = parse_file("B2:D4", &contents).unwrap_err();
+        let d = parse_file("B2:D4", "1\t2\n3\t4").unwrap_err();
         assert_eq!(d.code, Code::DimensionMismatch);
     }
 
     #[test]
     fn a_bad_filename_is_rejected_before_the_body() {
-        let d = parse_file("g8:a3", &format!("{ANN}1\t2")).unwrap_err();
+        let d = parse_file("g8:a3", "1\t2").unwrap_err();
         // Lowercase is caught per-address before the ordering check.
         assert_eq!(d.code, Code::LowercaseColumn);
     }

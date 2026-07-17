@@ -1,4 +1,3 @@
-# Concern: order count per product (criteria COUNT group-by) | Non-concern: revenue sums/averages | IO: output
 =COUNTIFS(Sales!C$2:C$13, A7)
 =COUNTIFS(Sales!C$2:C$13, A8)
 =COUNTIFS(Sales!C$2:C$13, A9)

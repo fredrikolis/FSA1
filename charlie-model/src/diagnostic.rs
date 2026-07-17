@@ -32,8 +32,6 @@ pub enum Code {
     DegenerateRange,
     /// A whole-column / whole-row range (`A:A`, `3:3`) — not a closed range, reserved (FS2).
     WholeColumnRowReserved,
-    /// Line 1 is not a `# `-prefixed annotation.
-    MissingAnnotation,
     /// A TSV grid with unequal field counts per row — a `#VALUE!`-class refusal.
     RaggedGrid,
     /// A deserialized grid whose dimensions do not fill the file's declared closed range exactly
@@ -70,7 +68,6 @@ impl Code {
         Code::NonCanonicalRange,
         Code::DegenerateRange,
         Code::WholeColumnRowReserved,
-        Code::MissingAnnotation,
         Code::RaggedGrid,
         Code::DimensionMismatch,
         Code::Overlap,
@@ -91,7 +88,6 @@ impl Code {
             Code::NonCanonicalRange => "non-canonical-range",
             Code::DegenerateRange => "degenerate-range",
             Code::WholeColumnRowReserved => "whole-column-row-reserved",
-            Code::MissingAnnotation => "missing-annotation",
             Code::RaggedGrid => "ragged-grid",
             Code::DimensionMismatch => "dimension-mismatch",
             Code::Overlap => "overlap",
@@ -112,7 +108,6 @@ impl Code {
             Code::NonCanonicalRange => "a range must be written top-left:bottom-right",
             Code::DegenerateRange => "a single cell is the range A1, never a 1x1 A1:A1",
             Code::WholeColumnRowReserved => "whole-column/row ranges are not a closed range",
-            Code::MissingAnnotation => "line 1 must be a '# ' annotation",
             Code::RaggedGrid => "a TSV grid's rows must have equal field counts",
             Code::DimensionMismatch => "the grid must fill the declared range exactly",
             Code::Overlap => "two files in a tab claim intersecting cells",
@@ -149,9 +144,6 @@ impl Code {
             }
             Code::WholeColumnRowReserved => {
                 "use a closed rectangle naming both corners (e.g. `A1:A100`); whole-column/row spans (`A:A`, `3:3`) are reserved"
-            }
-            Code::MissingAnnotation => {
-                "add a `# Concern: ... | Non-concern: ... | IO: ...` annotation as line 1 of the file body"
             }
             Code::RaggedGrid => {
                 "give every TSV row the same number of tab-separated fields (pad short rows with empty fields)"
@@ -236,7 +228,7 @@ pub enum Loc {
         span: Option<ByteSpan>,
     },
     /// Anchored on a file's body over a 1-based `line`:`col` start to an `end_line`:`end_col` end
-    /// (line 1 is the annotation). A point anchor spells `end == start`.
+    /// (line 1 is the first grid row). A point anchor spells `end == start`.
     Body {
         file: String,
         line: u32,
@@ -373,7 +365,7 @@ mod tests {
     #[test]
     fn registry_is_self_consistent() {
         // Every variant appears in ALL exactly once, and code strings are unique.
-        assert_eq!(Code::ALL.len(), 15);
+        assert_eq!(Code::ALL.len(), 14);
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();
         codes.sort_unstable();
         let before = codes.len();

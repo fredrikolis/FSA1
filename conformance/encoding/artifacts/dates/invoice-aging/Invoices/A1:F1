@@ -1,2 +1,1 @@
-# Concern: invoice-aging column headers | Non-concern: the data rows and the summary block below | IO: input
 InvoiceID	Customer	Invoice Date	Amount	Days Outstanding	Bucket

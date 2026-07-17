@@ -61,9 +61,6 @@ struct LoadedFile {
     name: String,
     region: Rect,
     grid: Grid,
-    /// The file's line-1 `# ` annotation, verbatim (the `# ` prefix included). Preserved at load so
-    /// the render surface can show each range's annotation without re-reading the file.
-    annotation: String,
 }
 
 /// One tab (folder): its sheet name and the files that partition its used region.
@@ -182,16 +179,13 @@ pub enum FormulaOutcome {
 }
 
 /// A read-only view of the single file that covers a requested cell — the un-evaluated source the
-/// render surface shows in `--functions`/`--annotation` mode. Borrows the workbook, so it cannot
-/// outlive it.
+/// render surface shows in `--functions` mode. Borrows the workbook, so it cannot outlive it.
 #[derive(Clone, Copy, Debug)]
 pub struct CellSource<'a> {
     /// The covering file's name (`A1`, `A3:G8`).
     pub file_name: &'a str,
     /// The declared region the file claims.
     pub region: Rect,
-    /// The file's verbatim line-1 `# ` annotation.
-    pub annotation: &'a str,
     /// The specific grid cell at the requested coordinate — a parsed `=formula` (with its source
     /// text) or a literal value (un-evaluated).
     pub cell: &'a GridCell,
@@ -262,19 +256,11 @@ impl Workbook {
                         declared_shape: _,
                         grid,
                     }) => {
-                        // Line 1 is the mandatory `# ` annotation (parse_file verified it); preserve
-                        // it verbatim for the render `--annotation` mode. `split_once` mirrors the
-                        // loader's own line-1 split.
-                        let annotation = contents
-                            .split_once('\n')
-                            .map_or(contents.as_str(), |(a, _)| a)
-                            .to_string();
                         regions.push((fname.clone(), region));
                         loaded.push(LoadedFile {
                             name: fname,
                             region,
                             grid,
-                            annotation,
                         });
                     }
                     Err(d) => diags.push(d),
@@ -444,9 +430,8 @@ impl Workbook {
     }
 
     /// A read-only view of the file that covers `(col,row)` on `sheet` — its name, declared region,
-    /// line-1 annotation, and (un-evaluated) body — for the render `--functions`/`--annotation`
-    /// surface. `None` for a gap (no file claims the cell). Overlaps are rejected at load, so at
-    /// most one file covers a cell.
+    /// and (un-evaluated) body — for the render `--functions` surface. `None` for a gap (no file
+    /// claims the cell). Overlaps are rejected at load, so at most one file covers a cell.
     pub fn source_at(&self, sheet: u32, col: u32, row: u32) -> Option<CellSource<'_>> {
         let (_, file) = self.covering(sheet, col, row)?;
         let dr = row - file.region.min_row;
@@ -454,7 +439,6 @@ impl Workbook {
         Some(CellSource {
             file_name: &file.name,
             region: file.region,
-            annotation: &file.annotation,
             cell: file.grid.cell_at(dr, dc),
         })
     }
@@ -1019,11 +1003,10 @@ impl Arena {
 mod tests {
     use super::*;
 
-    const ANN: &str = "# Concern: c | Non-concern: n | IO: input\n";
-
-    /// Build a file's contents: the mandatory annotation line 1 plus a body.
+    /// A file's content is exactly its grid (GRID1) — no annotation line. This helper owns the body
+    /// string so the `&file("…")` call sites hand an owned contents to the loader.
     fn file(body: &str) -> String {
-        format!("{ANN}{body}")
+        body.to_string()
     }
 
     /// Load a single-tab workbook from `(filename, body)` pairs, asserting a clean load.

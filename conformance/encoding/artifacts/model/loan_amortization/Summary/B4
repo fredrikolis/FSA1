@@ -1,2 +1,1 @@
-# Concern: payoff month = count of periods that still carry a positive opening balance | Non-concern: the closing balance sign-noise at period 12 (~0) | IO: output
 =COUNTIF(Amortization!B2:B13,">0")

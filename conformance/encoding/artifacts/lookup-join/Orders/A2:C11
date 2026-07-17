@@ -1,4 +1,3 @@
-# Concern: hand-entered order lines — order_id, the product_id join key, and quantity | Non-concern: the enriched price/total columns D:H computed from these | IO: input
 O1001	P001	4
 O1002	P003	10
 O1003	P002	2

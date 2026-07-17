@@ -1,4 +1,3 @@
-# Concern: unit_price with the missing-key case handled — IFNA wraps the XLOOKUP so an unmatched product_id falls back to 0 instead of #N/A | Non-concern: the raw #N/A-propagating path in D/F | IO: none
 =IFNA(XLOOKUP(B2,Products!$A$2:$A$7,Products!$C$2:$C$7),0)
 =IFNA(XLOOKUP(B3,Products!$A$2:$A$7,Products!$C$2:$C$7),0)
 =IFNA(XLOOKUP(B4,Products!$A$2:$A$7,Products!$C$2:$C$7),0)

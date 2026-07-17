@@ -1,4 +1,4 @@
-// Concern: the canonical TUTORIAL workbook exposed as DATA — a `Vec<(relative path, file content)>` that IS a valid charlie workbook (two tabs; a header row; a column of EXPLICIT per-row `=B2*C2` formulas, VAL1; a `=SUM` aggregate; a cross-sheet `=Orders!D5`), so the format is taught by a real, renderable, editable artifact rather than prose; the `charlie-cli sample <dir>` CLI writes it to disk, and the liveness test loads it, asserts a clean lint, and pins rendered values so the tutorial can never silently go stale | Non-concern: WRITING the files to disk (charlie-cli owns that IO), evaluating the grid (workbook.rs), and the filename/grid grammar it exercises (filename.rs/grid.rs) | IO: () -> `Vec<(PathBuf, String)>` (in-memory data; no filesystem access)
+// Concern: the canonical TUTORIAL workbook exposed as DATA — a `Vec<(relative path, file content)>` that IS a valid charlie workbook (two tabs; a header row; a column of EXPLICIT per-row `=B2*C2` formulas, VAL1; a `=SUM` aggregate; a cross-sheet `=Orders!D5`), each file's content being exactly its grid (GRID1, no annotation line), so the format is taught by a real, renderable, editable artifact rather than prose; the `charlie-cli sample <dir>` CLI writes it to disk, and the liveness test loads it, asserts a clean lint, and pins rendered values so the tutorial can never silently go stale | Non-concern: WRITING the files to disk (charlie-cli owns that IO), evaluating the grid (workbook.rs), and the filename/grid grammar it exercises (filename.rs/grid.rs) | IO: () -> `Vec<(PathBuf, String)>` (in-memory data; no filesystem access)
 //! The live sample workbook: [`sample_workbook`] returns the canonical tutorial as `(path, content)`
 //! data. It is a real charlie workbook — the `charlie-cli sample` command writes it out, and a reader
 //! learns the on-disk model by rendering, checking, and editing it. A colocated liveness test loads
@@ -6,14 +6,14 @@
 
 use std::path::PathBuf;
 
-/// One tutorial file: its line-1 `# ` annotation glued to its TSV body (the two joined by a newline,
-/// exactly as an on-disk file is laid out).
-fn file(annotation: &str, body: &str) -> String {
-    format!("{annotation}\n{body}")
+/// One tutorial file: its content is exactly its TSV grid (GRID1) — no header/annotation line, the
+/// first line is the first row. Owns the string for the `(path, content)` data below.
+fn file(body: &str) -> String {
+    body.to_string()
 }
 
-/// The canonical tutorial workbook as `(relative path, file content)` data — a valid, annotated,
-/// closed-range charlie workbook that teaches the format by being real. Two tabs:
+/// The canonical tutorial workbook as `(relative path, file content)` data — a valid, closed-range
+/// charlie workbook that teaches the format by being real. Two tabs:
 ///
 /// - **`Orders/`** — a header row (`A1:D1`), three product rows (name / unit price / quantity), a
 ///   `D2:D4` column of EXPLICIT per-row formulas (`=B2*C2`, `=B3*C3`, `=B4*C4` — one per cell, no
@@ -29,75 +29,21 @@ pub fn sample_workbook() -> Vec<(PathBuf, String)> {
         // --- Orders tab -----------------------------------------------------------------------
         (
             PathBuf::from("Orders/A1:D1"),
-            file(
-                "# Concern: the order-book column headers | Non-concern: the data rows below | IO: input",
-                "Product\tUnit Price\tQty\tLine Total",
-            ),
+            file("Product\tUnit Price\tQty\tLine Total"),
         ),
-        (
-            PathBuf::from("Orders/A2:A4"),
-            file(
-                "# Concern: the product names | Non-concern: their prices and quantities | IO: input",
-                "Widget\nGadget\nGizmo",
-            ),
-        ),
-        (
-            PathBuf::from("Orders/B2:B4"),
-            file(
-                "# Concern: the per-product unit price | Non-concern: quantity and line totals | IO: input",
-                "10\n15\n4",
-            ),
-        ),
-        (
-            PathBuf::from("Orders/C2:C4"),
-            file(
-                "# Concern: the per-product quantity ordered | Non-concern: price and line totals | IO: input",
-                "4\n2\n10",
-            ),
-        ),
+        (PathBuf::from("Orders/A2:A4"), file("Widget\nGadget\nGizmo")),
+        (PathBuf::from("Orders/B2:B4"), file("10\n15\n4")),
+        (PathBuf::from("Orders/C2:C4"), file("4\n2\n10")),
         (
             PathBuf::from("Orders/D2:D4"),
-            file(
-                "# Concern: per-line revenue = unit price x quantity, one explicit formula per row (VAL1) | Non-concern: the grand total (D5) | IO: none",
-                "=B2*C2\n=B3*C3\n=B4*C4",
-            ),
+            file("=B2*C2\n=B3*C3\n=B4*C4"),
         ),
-        (
-            PathBuf::from("Orders/A5"),
-            file(
-                "# Concern: the total-row label | Non-concern: the total value (D5) | IO: input",
-                "Total",
-            ),
-        ),
-        (
-            PathBuf::from("Orders/D5"),
-            file(
-                "# Concern: the grand total revenue = SUM of every line | Non-concern: the per-line math (D2:D4) | IO: output",
-                "=SUM(D2:D4)",
-            ),
-        ),
+        (PathBuf::from("Orders/A5"), file("Total")),
+        (PathBuf::from("Orders/D5"), file("=SUM(D2:D4)")),
         // --- Summary tab ----------------------------------------------------------------------
-        (
-            PathBuf::from("Summary/A1:B1"),
-            file(
-                "# Concern: the summary metric labels | Non-concern: the metric values | IO: input",
-                "Metric\tValue",
-            ),
-        ),
-        (
-            PathBuf::from("Summary/A2"),
-            file(
-                "# Concern: the revenue metric label | Non-concern: its value (B2) | IO: input",
-                "Total Revenue",
-            ),
-        ),
-        (
-            PathBuf::from("Summary/B2"),
-            file(
-                "# Concern: total revenue pulled cross-sheet from the Orders tab | Non-concern: how Orders computes it | IO: none",
-                "=Orders!D5",
-            ),
-        ),
+        (PathBuf::from("Summary/A1:B1"), file("Metric\tValue")),
+        (PathBuf::from("Summary/A2"), file("Total Revenue")),
+        (PathBuf::from("Summary/B2"), file("=Orders!D5")),
     ]
 }
 

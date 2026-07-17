@@ -1,2 +1,1 @@
-# Concern: grand total of the IFNA-guarded safe line totals — the reportable revenue figure, clean despite the missing key | Non-concern: the poisoned raw total in F12 | IO: output
 =SUM(H2:H11)

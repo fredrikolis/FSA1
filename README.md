@@ -19,14 +19,14 @@ commit gate.
 The binary is `charlie-cli` (crate `charlie-cli`). Run it stack-natively:
 
 ```
-cargo run -p charlie-cli -- render <workbook-dir> [--tab <name>] [--range <A3:G8>] [--values|--functions|--annotation]
+cargo run -p charlie-cli -- render <workbook-dir> [--tab <name>] [--range <A3:G8>] [--values|--functions]
 cargo run -p charlie-cli -- check  <workbook-dir>
 cargo run -p charlie-cli -- --help      # the full surface (source-owned; never re-enumerated here)
 ```
 
 `render` draws a tab (or a sub-range) as an ASCII table with a column-letter header and a
-row-number gutter — `--values` (default, demand-driven: only the viewport's cone evaluates),
-`--functions` (formula text), or `--annotation` (each range's `# ` annotation). `check` lints the
+row-number gutter — `--values` (default, demand-driven: only the viewport's cone evaluates) or
+`--functions` (formula text). `check` lints the
 workbook (overlap, dimension-mismatch, cycle) as an ASCII table pointing at the offending file(s)
 and exits non-zero on any error-severity diagnostic. The authoritative flag/exit-code list lives in
 `charlie-cli --help`, not this README.

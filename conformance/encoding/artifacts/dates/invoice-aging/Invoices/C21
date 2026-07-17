@@ -1,2 +1,1 @@
-# Concern: total outstanding dollars across all buckets (the reported AR balance) | Non-concern: per-bucket split (C17:C20) | IO: output
 =SUM(C17:C20)

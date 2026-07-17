@@ -1,2 +1,1 @@
-# Concern: grand total revenue across all orders | Non-concern: per-region/product splits (see Summary) | IO: output
 =SUM(E2:E13)

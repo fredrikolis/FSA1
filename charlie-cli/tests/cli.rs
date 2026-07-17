@@ -6,8 +6,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const ANN: &str = "# Concern: c | Non-concern: n | IO: none\n";
-
 /// A unique temp directory for one test's workbook, removed by [`Fixture`]'s drop.
 struct Fixture {
     root: PathBuf,
@@ -25,11 +23,12 @@ impl Fixture {
         Fixture { root }
     }
 
-    /// Write one cell/range file `name` with `body` into tab `tab`.
+    /// Write one cell/range file `name` with `body` into tab `tab`. A file's content is exactly its
+    /// grid (GRID1) — no annotation line, so the body is written verbatim.
     fn file(&self, tab: &str, name: &str, body: &str) -> &Fixture {
         let dir = self.root.join(tab);
         std::fs::create_dir_all(&dir).expect("create tab dir");
-        std::fs::write(dir.join(name), format!("{ANN}{body}")).expect("write file");
+        std::fs::write(dir.join(name), body).expect("write file");
         self
     }
 

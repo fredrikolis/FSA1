@@ -114,7 +114,7 @@ fn extract_format(args: &[String]) -> Result<(Format, Vec<String>), u8> {
     Ok((fmt, rest))
 }
 
-/// `charlie-cli render <path> [--tab NAME] [--range A3:G8] [--values|--functions|--annotation]`.
+/// `charlie-cli render <path> [--tab NAME] [--range A3:G8] [--values|--functions]`.
 fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     let mut tab: Option<String> = None;
@@ -135,7 +135,6 @@ fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
             },
             "--values" => modes.push(RenderMode::Values),
             "--functions" => modes.push(RenderMode::Functions),
-            "--annotation" => modes.push(RenderMode::Annotation),
             f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
             _ => {
                 if path.replace(arg.clone()).is_some() {
@@ -145,10 +144,7 @@ fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
         }
     }
     if modes.len() > 1 {
-        return bad_arg(
-            fmt,
-            "choose at most one of --values / --functions / --annotation",
-        );
+        return bad_arg(fmt, "choose at most one of --values / --functions");
     }
     let mode = modes.first().copied().unwrap_or(RenderMode::Values);
     let Some(path) = path else {
@@ -504,7 +500,7 @@ fn print_help(cmd: Option<&str>) {
 const GLOBAL_HELP: &str = r#"charlie-cli — render and lint a filesystem spreadsheet (tabs = folders, cells/ranges = files)
 
 USAGE:
-  charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions|--annotation]
+  charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions]
   charlie-cli check  <path>
   charlie-cli eval   <path> --formula '=<formula>' [--tab <name>]
   charlie-cli sample <dir>
@@ -556,7 +552,7 @@ SEE ALSO:
 const RENDER_HELP: &str = r#"charlie-cli render — draw a tab (or a sub-range) of a filesystem spreadsheet
 
 USAGE:
-  charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions|--annotation] [--format <text|json>]
+  charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions] [--format <text|json>]
 
 DESCRIPTION:
   Render a workbook tab to a grid. Values mode is demand-driven — only the viewport's dependency cone
@@ -568,7 +564,6 @@ ARGUMENTS:
   --range <A3:G8>   (optional) Only this rectangle (canonical A1). Default: the tab's used region.
   --values          (optional) Computed values (the default mode).
   --functions       (optional) Source text: a formula shows its =… text, a literal shows its value.
-  --annotation      (optional) Each covering range's line-1 '# ' annotation.
   --format <fmt>    (optional) text (default, human ASCII table) or json (the machine envelope).
 
 EXAMPLES:
@@ -600,8 +595,8 @@ USAGE:
   charlie-cli check <path> [--format <text|json>]
 
 DESCRIPTION:
-  Lint the workbook: overlap, dimension-mismatch, cycle, and the load-time filename/annotation
-  refusals. Exits non-zero if any error-severity diagnostic fires.
+  Lint the workbook: overlap, dimension-mismatch, cycle, and the load-time filename refusals.
+  Exits non-zero if any error-severity diagnostic fires.
 
 ARGUMENTS:
   <path>            (required) The workbook directory.

@@ -5,8 +5,9 @@
 **Rule under test:** SPEC.md GRID2 (the TSV deserializer) — a grid's rows must have equal field counts.
 
 ## Inputs
-- Filename & annotation are canonical/valid — the sole defect is the body.
-- Body (TSV, GRID2):
+- Filename is canonical/valid, and the whole file content is the grid (GRID1, no annotation line) —
+  the sole defect is the body.
+- Body (TSV, GRID2) — the file's entire content, first line is the first row:
   ```
   1	2	3      (3 fields)
   4	5         (2 fields)
@@ -21,8 +22,11 @@ check.
 ## Expected diagnostic (verbatim)
 ```
 error[ragged-grid]: ragged TSV grid: row 2 has 2 field(s), expected 3 (#VALUE!-class)
-  A1:C2 (body row 2)
+  A1:C2 (grid row 2 = file line 2)
 ```
+The refusal is located at file line 2 — the offending grid row. (With the whole file now the grid,
+grid row `n` is file line `n`; there is no annotation line to offset by, so this is one line earlier
+than under the former annotated format.)
 
 ## Why (citation)
 SPEC.md GRID2 / CORE2 (totality): a malformed file yields a located refusal pointing at the offending

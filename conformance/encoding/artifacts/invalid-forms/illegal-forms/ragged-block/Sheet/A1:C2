@@ -1,3 +1,2 @@
-# Concern: a literal block with unequal field counts per line — structurally ragged | Non-concern: the declared 2x3 shape it fails to fill | IO: input
 1	2	3
 4	5

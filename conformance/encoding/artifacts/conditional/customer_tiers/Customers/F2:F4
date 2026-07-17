@@ -1,4 +1,3 @@
-# Concern: count of customers in each tier via COUNTIF over the fixed tier column, key relative so it offsets Gold/Silver/Bronze down the block | Non-concern: how each tier label was assigned (column C) | IO: output
 =COUNTIF($C$2:$C$13,E2)
 =COUNTIF($C$2:$C$13,E3)
 =COUNTIF($C$2:$C$13,E4)

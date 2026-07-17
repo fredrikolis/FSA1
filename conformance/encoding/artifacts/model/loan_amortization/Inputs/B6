@@ -1,2 +1,1 @@
-# Concern: level monthly payment via PMT, sign-flipped to a positive outflow | Non-concern: the per-period split into interest/principal (see Amortization) | IO: none
 =-PMT(B5,B4,B2)

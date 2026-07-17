@@ -1,4 +1,4 @@
-// Concern: the RENDER MODEL — turn a `Workbook` viewport (a sheet + a rectangular range) into a plain-data ASCII grid: the column-letter header row, the row-number gutter, and each cell's display string under one of three modes (computed VALUES — demand-driven, only the viewport's cone evaluates; FORMULA text; per-range ANNOTATION), plus the A1-range→`Rect` viewport parser and the single `Value`→display-string spelling (numbers, TRUE/FALSE, the `#REF!`-family error text, blank) | Non-concern: the ASCII table DRAWING itself (charlie-cli owns comfy-table layout/borders — this hands back strings, never glyphs), the demand-driven eval engine (workbook.rs owns the pull), and the lint/diagnostic surface (workbook.rs `lint`) | IO: (a `&Workbook`, a sheet, a viewport `Rect`, a `RenderMode`) -> a `RenderGrid` of strings; (an A1 range `&str`) -> a `Rect`
+// Concern: the RENDER MODEL — turn a `Workbook` viewport (a sheet + a rectangular range) into a plain-data ASCII grid: the column-letter header row, the row-number gutter, and each cell's display string under one of two modes (computed VALUES — demand-driven, only the viewport's cone evaluates; FORMULA text), plus the A1-range→`Rect` viewport parser and the single `Value`→display-string spelling (numbers, TRUE/FALSE, the `#REF!`-family error text, blank) | Non-concern: the ASCII table DRAWING itself (charlie-cli owns comfy-table layout/borders — this hands back strings, never glyphs), the demand-driven eval engine (workbook.rs owns the pull), and the lint/diagnostic surface (workbook.rs `lint`) | IO: (a `&Workbook`, a sheet, a viewport `Rect`, a `RenderMode`) -> a `RenderGrid` of strings; (an A1 range `&str`) -> a `Rect`
 //! The render model: [`render`] builds a [`RenderGrid`] of display strings for a viewport; the CLI
 //! draws it. [`parse_viewport`] turns an `A3:G8` (or `A3`) range string into a [`Rect`].
 //!
@@ -21,8 +21,6 @@ pub enum RenderMode {
     /// The source text: a formula cell shows its `=…` text; a literal cell shows its value
     /// (Excel's "show formulas" view).
     Functions,
-    /// The covering file's line-1 `# ` annotation (every cell of one range shows the same one).
-    Annotation,
 }
 
 /// One rendered row: the gutter label (the 1-based row number) and the viewport cells left→right.
@@ -102,7 +100,7 @@ pub fn render(wb: &Workbook, sheet: u32, viewport: Rect, mode: RenderMode) -> Re
 }
 
 /// The display string for one cell under `mode` (the non-`Values` modes; `Values` is batched in
-/// [`render`]). `Functions`/`Annotation` are per-cell source lookups with no cross-cell sharing.
+/// [`render`]). `Functions` is a per-cell source lookup with no cross-cell sharing.
 fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) -> String {
     match mode {
         RenderMode::Functions => match wb.source_at(sheet, col, row) {
@@ -114,9 +112,6 @@ fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) ->
             },
             None => String::new(),
         },
-        RenderMode::Annotation => wb
-            .source_at(sheet, col, row)
-            .map_or(String::new(), |src| src.annotation.to_string()),
         // `Values` is materialized once, batched, in [`render`] (the `value_strings` branch), so
         // `cell_text` is only ever reached when `mode != Values` and this arm is statically dead.
         // Rather than panic, spell the cell's value the same way the batched path would — total,
@@ -202,15 +197,10 @@ fn parse_endpoint(s: &str) -> Result<(u32, u32), String> {
 mod tests {
     use super::*;
 
-    const ANN: &str = "# Concern: c | Non-concern: n | IO: input\n";
-
-    fn file(body: &str) -> String {
-        format!("{ANN}{body}")
-    }
-
     fn wb() -> Workbook {
         // A1=1 (literal), B1==A1+1 (formula), C1==B1*10 (formula); A2:B2 a literal row.
-        let f = |b: &str| file(b);
+        // A file's content is exactly its grid (GRID1) — no annotation line.
+        let f = |b: &str| b.to_string();
         let a1 = f("1");
         let b1 = f("=A1+1");
         let c1 = f("=B1*10");
@@ -251,27 +241,11 @@ mod tests {
     }
 
     #[test]
-    fn annotation_mode_shows_the_covering_files_annotation() {
-        let wb = wb();
-        let g = render(
-            &wb,
-            0,
-            parse_viewport("A1").unwrap(),
-            RenderMode::Annotation,
-        );
-        assert!(g.rows[0].cells[0].starts_with("# Concern:"));
-    }
-
-    #[test]
     fn a_gap_cell_renders_empty_in_every_mode() {
         let wb = wb();
         // Z9 is claimed by no file.
         let vp = parse_viewport("Z9").unwrap();
-        for mode in [
-            RenderMode::Values,
-            RenderMode::Functions,
-            RenderMode::Annotation,
-        ] {
+        for mode in [RenderMode::Values, RenderMode::Functions] {
             let g = render(&wb, 0, vp, mode);
             assert_eq!(g.rows[0].cells[0], "");
         }

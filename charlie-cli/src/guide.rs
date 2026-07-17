@@ -16,14 +16,14 @@ FILENAMES — a closed A1 range, no ending
   Overlapping ranges in one tab reject; an unclaimed gap reads blank.
 
 FILE BODY — a TSV grid, one cell per coordinate
-  Line 1: `# Concern: … | Non-concern: … | IO: …` annotation (mandatory).
+  The whole file is the grid: no header/annotation line, line 1 is the first row.
   Rows = newlines, columns = tabs. An empty field = a blank cell.
   Each field is a literal (Product · 10 · TRUE · #REF!) or an =formula (=B2*C2).
   The grid must fill the declared range exactly (B2:D9 ⇒ 8×3 rows×cols, else dimension error).
   No drag-fill: write one explicit formula per cell (=B2*C2, =B3*C3, …).
 
 COMMANDS
-  charlie-cli render <dir> [--tab NAME] [--range A1:D9] [--values|--functions|--annotation]
+  charlie-cli render <dir> [--tab NAME] [--range A1:D9] [--values|--functions]
   charlie-cli check  <dir>                 lint (overlap · dimension · cycle); non-zero on error
   charlie-cli eval   <dir> --formula '=SUM(A1:A5)'   evaluate an ad-hoc formula against the workbook
   charlie-cli sample <dir>                 write a live tutorial workbook to play with

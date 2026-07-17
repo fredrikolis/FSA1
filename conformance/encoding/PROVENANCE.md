@@ -36,13 +36,22 @@ rendered value:
    unchanged** — proven by the render zero-divergence gate
    (`charlie-model/tests/render_conformance.rs`), which grades these workbooks against the frozen W1
    value oracle in `conformance/render/` and requires zero divergence.
-3. **Retired-concept fixtures were deleted.** The `conformance-forms/{broadcast-across,broadcast-down,
+3. **The per-file line-1 `# Concern…` annotation was removed.** Under SPEC.md GRID1 a file's content
+   is **exactly its grid** — there is no header, annotation, or metadata line, and the first line is
+   the first row. Every fixture's former line-1 `# Concern: … | Non-concern: … | IO: …` annotation was
+   stripped (byte-exact: line 1 and its trailing newline dropped, the remaining bytes verbatim), so
+   the content is now just the TSV grid. **Rendered values are unchanged** — the annotation was
+   presence-only (nothing parsed its fields), and the render zero-divergence gate still passes. One
+   consequence for the ledgers: a body-located refusal now points **one file line earlier** (grid row
+   `n` is file line `n`, with no annotation line to offset by), so the `ragged-block` `EXPECTED.md`
+   was updated accordingly.
+4. **Retired-concept fixtures were deleted.** The `conformance-forms/{broadcast-across,broadcast-down,
    square-disambiguator}` fixtures (which existed only to probe the retired broadcast-conformance
    rule) and `invalid-forms/illegal-forms/dual-body` (the retired "exactly one body form" rule) were
    removed. The surviving edge/invalid fixtures had their `EXPECTED.md` verdicts rewritten to cite
    SPEC.md's subsystem-scoped invariants and the current diagnostic codes (`dimension-mismatch`, `ragged-grid`,
    `non-canonical-range`, `dollar-in-filename`, `degenerate-range`, `overlap`).
-4. **`FORMAT.md`** was replaced by a superseded-pointer to `SPEC.md` + `charlie-cli --guide` (the former
+5. **`FORMAT.md`** was replaced by a superseded-pointer to `SPEC.md` + `charlie-cli --guide` (the former
    `docs/format.md` guide is retired; its rationale now lives in the governing code).
 
 ## What this corpus is graded by
@@ -69,7 +78,7 @@ sha256sum -c MANIFEST.sha256 --quiet   # exit 0 == corpus is byte-identical to t
 Digest of the manifest itself (a single value pinning the whole set):
 
 ```
-sha256(MANIFEST.sha256) = 75f106aefb3d882f9351c07aecea876b0b3c5bd40f19c444dd3c80173daf61d0
+sha256(MANIFEST.sha256) = b75bf7dd7ecc008917f2602ddda454cf8f5c14761f81de76f19f66cf8153696f
 ```
 
 `.github/workflows/build.yml` runs `sha256sum -c MANIFEST.sha256 --quiet` in this directory on every

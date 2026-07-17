@@ -1,4 +1,3 @@
-# Concern: tier label per customer via nested IFS on strict thresholds (>100000 Gold, >50000 Silver, else Bronze), IFERROR wrapping so an errored spend feed degrades to Bronze | Non-concern: the per-tier counts (F2:F4) | IO: none
 =IFERROR(IFS(B2>100000,"Gold",B2>50000,"Silver",TRUE,"Bronze"),"Bronze")
 =IFERROR(IFS(B3>100000,"Gold",B3>50000,"Silver",TRUE,"Bronze"),"Bronze")
 =IFERROR(IFS(B4>100000,"Gold",B4>50000,"Silver",TRUE,"Bronze"),"Bronze")
