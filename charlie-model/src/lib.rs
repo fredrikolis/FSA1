@@ -24,7 +24,7 @@ pub mod render;
 pub mod sample;
 pub mod workbook;
 
-pub use diagnostic::{Code, Diagnostic, Loc, Severity};
+pub use diagnostic::{Applicability, ByteSpan, Code, Diagnostic, Fix, Loc, Severity};
 pub use filename::{FileName, parse_filename};
 pub use grid::{Cell, Grid, deserialize_tsv, lex_literal};
 pub use overlap::{Rect, detect_overlaps};

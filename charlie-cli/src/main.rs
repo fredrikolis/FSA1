@@ -1,36 +1,25 @@
-// Concern: charlie-cli — the THIN binary shell (`charlie-cli render` / `check` / `eval` / `sample` / `--guide`): parse argv, drive `charlie-model` (load a workbook, ask for a render grid, a lint report, or an ad-hoc `=formula`'s value; or WRITE the model's tutorial workbook to disk for `sample`), print the result to stdout — an ASCII table for render/check, a single scalar value for eval, the terse guide for `--guide`, a sample tree + next-steps for `sample` — and set the exit code an agent branches on (0 clean · 1 I/O failure · 2 bad args · 3 error-severity diagnostics · 4 target-dir conflict · 24 path not found); it holds NO spreadsheet logic — the demand-driven eval, value spelling, diagnostics, and the sample CONTENT all live in the model, the guide text in `guide`, and comfy-table drawing in `ascii` | Non-concern: WHAT a cell computes to or WHY a diagnostic fires (charlie-model owns the render model + lint + ad-hoc formula eval + sample content), the formula language (charlie-ast), and xlsx serde | IO: (argv, a workbook directory on disk) -> an ASCII table (render/check), a scalar value (eval), the guide text (`--guide`), or a freshly-written sample workbook tree (`sample`) on stdout/disk + an exit code; usage/errors to stderr
+// Concern: charlie-cli — the THIN binary shell (`charlie-cli render` / `check` / `eval` / `sample` / `--guide`): parse argv (including the global `--format text|json` selector), drive `charlie-model` (load a workbook, ask for a render grid, a lint report, or an ad-hoc `=formula`'s value; or WRITE the model's tutorial workbook to disk for `sample`), and hand the structured outcome to the `output` envelope layer — which dual-renders it as EITHER a human ASCII table / scalar / prose (`--format text`, the default) OR a `{status,data|error}` JSON envelope on stdout (`--format json`, the machine surface) — then set the exit code an agent branches on (0 clean · 1 I/O failure · 2 bad args · 3 error-severity diagnostics or error-valued eval · 4 target-dir conflict · 24 path not found); it holds NO spreadsheet logic — the demand-driven eval, value spelling, diagnostics, and the sample CONTENT all live in the model, the guide text in `guide`, comfy-table drawing in `ascii`, and the envelope/JSON in `output` | Non-concern: WHAT a cell computes to or WHY a diagnostic fires (charlie-model owns the render model + lint + ad-hoc formula eval + sample content), the formula language (charlie-ast), xlsx serde, and the envelope serialization itself (`output` owns the JSON + the dual-render) | IO: (argv incl. `--format`, a workbook directory on disk) -> a render grid / lint report / scalar value / sample-write, dual-rendered by `output` to stdout (text or JSON envelope) + an exit code; a freshly-written sample workbook tree on disk; text-mode operational errors to stderr
 //! `charlie-cli` — render and lint a filesystem spreadsheet. The binary is a thin consumer of
-//! `charlie-model`: it parses arguments, calls the model's `render`/`lint` surface, and lays the
-//! returned plain-data grid into an ASCII table with `comfy-table` (see [`ascii`]). All spreadsheet
-//! logic stays in the model (`repo-standards.md`: logic in the engine, CLI a thin shell).
+//! `charlie-model`: it parses arguments, calls the model's `render`/`lint`/`eval` surface, and hands
+//! the returned plain-data outcome to the [`output`] envelope layer, which dual-renders it as a human
+//! ASCII table (`--format text`) or a machine JSON envelope (`--format json`). All spreadsheet logic
+//! stays in the model (`repo-standards.md`: logic in the engine, CLI a thin shell).
 //!
 //! Stack-native entrypoint: `cargo run -p charlie-cli -- render <path>` (binary name `charlie-cli`).
 
 mod ascii;
 mod guide;
+mod output;
 
 use std::path::Path;
 use std::process::ExitCode;
 
 use charlie_model::{FormulaOutcome, RenderMode, Workbook, parse_viewport, render};
 
-use crate::ascii::{diagnostics_table, grid_table};
-
-/// Exit codes, aligned with `cli-interface-standards.md`.
-mod exit {
-    /// Invalid CLI usage (unknown command/flag, missing/duplicate argument).
-    pub const BAD_ARGS: u8 = 2;
-    /// An error-severity diagnostic rejected the input (lint failed, or a workbook won't load).
-    pub const VALIDATION: u8 = 3;
-    /// A runtime-precondition refusal: the argv is valid, but the target state conflicts with the
-    /// operation (e.g. `sample <dir>` where `<dir>` already exists and is non-empty — the never-clobber
-    /// guarantee). Distinct from `BAD_ARGS` (the command is well-formed) per `cli-interface-standards.md`.
-    pub const CONFLICT: u8 = 4;
-    /// A path (workbook directory) does not exist.
-    pub const NOT_FOUND: u8 = 24;
-    /// An unexpected I/O failure.
-    pub const IO: u8 = 1;
-}
+use crate::output::{
+    ErrorCode, Format, emit_error, emit_eval_error_value, emit_eval_value, emit_grid, emit_sample,
+    emit_validation_diagnostics, emit_version,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -38,9 +27,9 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[String]) -> u8 {
-    // `--version`/`-V` overrides everything (cli-interface-standards.md).
+    // `--version`/`-V` overrides everything (cli-interface-standards.md) — always a JSON envelope.
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        print_version();
+        emit_version();
         return 0;
     }
     // `--guide` prints the terse on-disk-model tour (its single home is `guide::GUIDE`).
@@ -48,25 +37,85 @@ fn run(args: &[String]) -> u8 {
         print!("{}", guide::GUIDE);
         return 0;
     }
-    if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
-        print_help();
+    if args.is_empty() {
+        print_help(None);
         return 0;
     }
-    match args[0].as_str() {
-        "render" => cmd_render(&args[1..]),
-        "check" => cmd_check(&args[1..]),
-        "eval" => cmd_eval(&args[1..]),
-        "sample" => cmd_sample(&args[1..]),
+    // `--help` prints per-command help when a known subcommand token is present (regardless of flag
+    // order), else the global banner — so `render --help` documents render's own args, JSON OUTPUT
+    // shape, and exit codes (cli-interface-standards Part 4: help is per-command). No `-h` short form:
+    // the standard permits only `-V` and `--help` (Part 1 "Version Flag"), never other short flags.
+    if args.iter().any(|a| a == "--help") {
+        let cmd = args
+            .iter()
+            .map(String::as_str)
+            .find(|a| matches!(*a, "render" | "check" | "eval" | "sample"));
+        print_help(cmd);
+        return 0;
+    }
+
+    // The global `--format text|json` selector is stripped before command dispatch (it may appear
+    // anywhere). Default: text (the human form); `--format json` is the machine envelope surface.
+    let (fmt, rest) = match extract_format(args) {
+        Ok(pair) => pair,
+        Err(code) => return code,
+    };
+    if rest.is_empty() {
+        print_help(None);
+        return 0;
+    }
+
+    match rest[0].as_str() {
+        "render" => cmd_render(fmt, &rest[1..]),
+        "check" => cmd_check(fmt, &rest[1..]),
+        "eval" => cmd_eval(fmt, &rest[1..]),
+        "sample" => cmd_sample(fmt, &rest[1..]),
         other => {
-            eprintln!("charlie-cli: unknown command {other:?}\n");
-            print_help();
-            exit::BAD_ARGS
+            let msg = format!("unknown command {other:?}");
+            fail(fmt, ErrorCode::InvalidArguments, &msg)
         }
     }
 }
 
+/// Strip the global `--format text|json` selector (in either `--format json` or `--format=json`
+/// spelling) from `args`, returning the chosen [`Format`] and the remaining argv. Defaults to
+/// [`Format::Text`]. An unknown value is a bad-args refusal (emitted as text, since format is unknown).
+fn extract_format(args: &[String]) -> Result<(Format, Vec<String>), u8> {
+    let mut fmt = Format::Text;
+    let mut rest: Vec<String> = Vec::with_capacity(args.len());
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let value = if arg == "--format" {
+            match it.next() {
+                Some(v) => Some(v.as_str()),
+                None => {
+                    emit_error(
+                        Format::Text,
+                        ErrorCode::InvalidArguments,
+                        "--format needs a value (text or json)",
+                    );
+                    return Err(ErrorCode::InvalidArguments.exit());
+                }
+            }
+        } else {
+            arg.strip_prefix("--format=")
+        };
+        match value {
+            Some("text") => fmt = Format::Text,
+            Some("json") => fmt = Format::Json,
+            Some(other) => {
+                let msg = format!("--format must be text or json, not {other:?}");
+                emit_error(Format::Text, ErrorCode::InvalidArguments, &msg);
+                return Err(ErrorCode::InvalidArguments.exit());
+            }
+            None => rest.push(arg.clone()),
+        }
+    }
+    Ok((fmt, rest))
+}
+
 /// `charlie-cli render <path> [--tab NAME] [--range A3:G8] [--values|--functions|--annotation]`.
-fn cmd_render(rest: &[String]) -> u8 {
+fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     let mut tab: Option<String> = None;
     let mut range: Option<String> = None;
@@ -78,38 +127,41 @@ fn cmd_render(rest: &[String]) -> u8 {
         match flag {
             "--tab" => match take_value(inline, &mut it) {
                 Some(v) => tab = Some(v),
-                None => return bad_arg("--tab needs a tab name"),
+                None => return bad_arg(fmt, "--tab needs a tab name"),
             },
             "--range" => match take_value(inline, &mut it) {
                 Some(v) => range = Some(v),
-                None => return bad_arg("--range needs an A1 range like A3:G8"),
+                None => return bad_arg(fmt, "--range needs an A1 range like A3:G8"),
             },
             "--values" => modes.push(RenderMode::Values),
             "--functions" => modes.push(RenderMode::Functions),
             "--annotation" => modes.push(RenderMode::Annotation),
-            f if f.starts_with('-') => return bad_arg(&format!("unknown flag {f:?}")),
+            f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
             _ => {
                 if path.replace(arg.clone()).is_some() {
-                    return bad_arg("render takes exactly one <path>");
+                    return bad_arg(fmt, "render takes exactly one <path>");
                 }
             }
         }
     }
     if modes.len() > 1 {
-        return bad_arg("choose at most one of --values / --functions / --annotation");
+        return bad_arg(
+            fmt,
+            "choose at most one of --values / --functions / --annotation",
+        );
     }
     let mode = modes.first().copied().unwrap_or(RenderMode::Values);
     let Some(path) = path else {
-        return bad_arg("render needs a <path> to a workbook directory");
+        return bad_arg(fmt, "render needs a <path> to a workbook directory");
     };
 
-    let wb = match load(Path::new(&path)) {
+    let wb = match load(fmt, Path::new(&path)) {
         Ok(wb) => wb,
         Err(code) => return code,
     };
     if wb.sheet_names().is_empty() {
-        eprintln!("charlie-cli: {path:?} has no tabs (a tab is a sub-folder of cell/range files)");
-        return exit::VALIDATION;
+        let msg = format!("{path:?} has no tabs (a tab is a sub-folder of cell/range files)");
+        return fail(fmt, ErrorCode::Validation, &msg);
     }
 
     // Pick the tab: an explicit --tab by name, else tab 0 (the first sheet).
@@ -117,11 +169,11 @@ fn cmd_render(rest: &[String]) -> u8 {
         Some(name) => match wb.tab_index(name) {
             Some(i) => i,
             None => {
-                eprintln!(
-                    "charlie-cli: no tab named {name:?} in {path:?} (tabs: {:?})",
+                let msg = format!(
+                    "no tab named {name:?} in {path:?} (tabs: {:?})",
                     wb.sheet_names()
                 );
-                return exit::NOT_FOUND;
+                return fail(fmt, ErrorCode::NotFound, &msg);
             }
         },
         None => 0,
@@ -131,17 +183,11 @@ fn cmd_render(rest: &[String]) -> u8 {
     let viewport = match &range {
         Some(r) => match parse_viewport(r) {
             Ok(rect) => rect,
-            Err(msg) => return bad_arg(&msg),
+            Err(msg) => return bad_arg(fmt, &msg),
         },
         None => match wb.used_region(sheet) {
             Some(rect) => rect,
-            None => {
-                eprintln!(
-                    "charlie-cli: tab {:?} is empty (no cells to render)",
-                    sheet_name(&wb, sheet)
-                );
-                return 0;
-            }
+            None => return emit_empty_tab(fmt, &wb, sheet),
         },
     };
 
@@ -150,62 +196,80 @@ fn cmd_render(rest: &[String]) -> u8 {
     // allocation. Refuse with a located diagnostic instead (fail-fast, never a crash).
     let cells = charlie_model::viewport_cell_count(viewport);
     if cells > charlie_model::MAX_VIEWPORT_CELLS {
-        return bad_arg(&format!(
+        let msg = format!(
             "--range spans {cells} cells, over the render bound of {} -- narrow the range",
             charlie_model::MAX_VIEWPORT_CELLS
-        ));
+        );
+        return bad_arg(fmt, &msg);
     }
 
     let grid = render(&wb, sheet, viewport, mode);
-    println!("{}", grid_table(&grid));
+    emit_grid(fmt, &grid);
     0
 }
 
-/// `charlie-cli check <path>` — lint the workbook and render the diagnostics as ASCII. Exits non-zero if
-/// any error-severity diagnostic fires (a workbook that won't even load is itself the failure).
-fn cmd_check(rest: &[String]) -> u8 {
+/// An empty tab has no cells to render: emit an empty grid (JSON) or a stderr note (text). Exit 0 —
+/// an empty tab is not a failure.
+fn emit_empty_tab(fmt: Format, wb: &Workbook, sheet: u32) -> u8 {
+    match fmt {
+        Format::Json => {
+            let empty = charlie_model::RenderGrid {
+                col_labels: Vec::new(),
+                rows: Vec::new(),
+            };
+            emit_grid(fmt, &empty);
+        }
+        Format::Text => {
+            eprintln!(
+                "charlie-cli: tab {:?} is empty (no cells to render)",
+                sheet_name(wb, sheet)
+            );
+        }
+    }
+    0
+}
+
+/// `charlie-cli check <path>` — lint the workbook and render the diagnostics. Exits non-zero if any
+/// error-severity diagnostic fires (a workbook that won't even load is itself the failure).
+fn cmd_check(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     for arg in rest {
         let (flag, _) = split_flag(arg);
         if flag.starts_with('-') {
-            return bad_arg(&format!("unknown flag {flag:?}"));
+            return bad_arg(fmt, &format!("unknown flag {flag:?}"));
         }
         if path.replace(arg.clone()).is_some() {
-            return bad_arg("check takes exactly one <path>");
+            return bad_arg(fmt, "check takes exactly one <path>");
         }
     }
     let Some(path) = path else {
-        return bad_arg("check needs a <path> to a workbook directory");
+        return bad_arg(fmt, "check needs a <path> to a workbook directory");
     };
 
     // Load-time refusals (overlap, literal dimension mismatch, bad filename) surface from the loader;
     // eval-time ones (cycle, formula dimension mismatch, unparseable body) come from `lint`.
     let diags = match Workbook::load_dir(Path::new(&path)) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("charlie-cli: no such workbook directory {path:?}");
-            return exit::NOT_FOUND;
+            let msg = format!("no such workbook directory {path:?}");
+            return fail(fmt, ErrorCode::NotFound, &msg);
         }
         Err(e) => {
-            eprintln!("charlie-cli: cannot read {path:?}: {e}");
-            return exit::IO;
+            let msg = format!("cannot read {path:?}: {e}");
+            return fail(fmt, ErrorCode::Io, &msg);
         }
         Ok(Err(load_diags)) => load_diags,
         Ok(Ok(wb)) => wb.lint(),
     };
 
-    println!("{}", diagnostics_table(&diags));
-    let has_error = diags
-        .iter()
-        .any(|d| matches!(d.code.severity(), charlie_model::Severity::Error));
-    if has_error { exit::VALIDATION } else { 0 }
+    output::emit_diagnostics(fmt, &diags)
 }
 
-/// `charlie-cli eval <path> [--tab <name>] '=<formula>'` — evaluate an ad-hoc formula against a loaded
-/// workbook and print the resulting value with the same formatting `render` uses. Read-only: no file
-/// writes, no mutation. Unqualified refs resolve against `--tab` (default: the first tab). A parse
-/// error prints the located diagnostic; an error-valued result prints the error text; both exit
-/// non-zero.
-fn cmd_eval(rest: &[String]) -> u8 {
+/// `charlie-cli eval <path> --formula '=<formula>' [--tab <name>]` — evaluate an ad-hoc formula against
+/// a loaded workbook and emit the resulting value. Read-only: no file writes, no mutation. Unqualified
+/// refs resolve against `--tab` (default: the first tab). A parse error is a located diagnostic; an
+/// error-valued result carries the error text; both exit non-zero. Every eval outcome renders through
+/// the same channel (stdout / the JSON envelope) so the failure detail is uniformly locatable.
+fn cmd_eval(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     let mut tab: Option<String> = None;
     let mut formula: Option<String> = None;
@@ -216,36 +280,46 @@ fn cmd_eval(rest: &[String]) -> u8 {
         match flag {
             "--tab" => match take_value(inline, &mut it) {
                 Some(v) => tab = Some(v),
-                None => return bad_arg("--tab needs a tab name"),
+                None => return bad_arg(fmt, "--tab needs a tab name"),
             },
-            // A formula begins with `=` (not `-`), so only a genuine `-`/`--` token is an unknown flag.
-            f if f.starts_with('-') => return bad_arg(&format!("unknown flag {f:?}")),
+            "--formula" => match take_value(inline, &mut it) {
+                Some(v) => formula = Some(v),
+                None => {
+                    return bad_arg(
+                        fmt,
+                        "--formula needs a formula, e.g. --formula '=SUM(A1:A5)'",
+                    );
+                }
+            },
+            f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
             _ => {
-                if path.is_none() {
-                    path = Some(arg.clone());
-                } else if formula.is_none() {
-                    formula = Some(arg.clone());
-                } else {
-                    return bad_arg("eval takes exactly one <path> and one '=formula'");
+                if path.replace(arg.clone()).is_some() {
+                    return bad_arg(
+                        fmt,
+                        "eval takes exactly one <path> (the formula is --formula)",
+                    );
                 }
             }
         }
     }
 
     let Some(path) = path else {
-        return bad_arg("eval needs a <path> to a workbook directory");
+        return bad_arg(fmt, "eval needs a <path> to a workbook directory");
     };
     let Some(formula) = formula else {
-        return bad_arg("eval needs a formula, e.g. charlie-cli eval ./budget '=SUM(A1:A5)'");
+        return bad_arg(
+            fmt,
+            "eval needs --formula, e.g. charlie-cli eval ./budget --formula '=SUM(A1:A5)'",
+        );
     };
 
-    let wb = match load(Path::new(&path)) {
+    let wb = match load(fmt, Path::new(&path)) {
         Ok(wb) => wb,
         Err(code) => return code,
     };
     if wb.sheet_names().is_empty() {
-        eprintln!("charlie-cli: {path:?} has no tabs (a tab is a sub-folder of cell/range files)");
-        return exit::VALIDATION;
+        let msg = format!("{path:?} has no tabs (a tab is a sub-folder of cell/range files)");
+        return fail(fmt, ErrorCode::Validation, &msg);
     }
 
     // Resolve the tab unqualified refs bind to: an explicit --tab by name, else tab 0 (the first).
@@ -253,11 +327,11 @@ fn cmd_eval(rest: &[String]) -> u8 {
         Some(name) => match wb.tab_index(name) {
             Some(i) => i,
             None => {
-                eprintln!(
-                    "charlie-cli: no tab named {name:?} in {path:?} (tabs: {:?})",
+                let msg = format!(
+                    "no tab named {name:?} in {path:?} (tabs: {:?})",
                     wb.sheet_names()
                 );
-                return exit::NOT_FOUND;
+                return fail(fmt, ErrorCode::NotFound, &msg);
             }
         },
         None => 0,
@@ -265,40 +339,36 @@ fn cmd_eval(rest: &[String]) -> u8 {
 
     match wb.eval_formula(sheet, &formula) {
         Ok(FormulaOutcome::Value(s)) => {
-            println!("{s}");
+            emit_eval_value(fmt, &s);
             0
         }
-        // An error-valued result (#DIV/0!, #REF!, …) prints its text and is a non-zero outcome.
-        Ok(FormulaOutcome::Error(s)) => {
-            println!("{s}");
-            exit::VALIDATION
-        }
-        // A parse refusal is a located diagnostic on stderr; non-zero.
-        Err(diag) => {
-            eprintln!("charlie-cli: {diag}");
-            exit::VALIDATION
-        }
+        // An error-valued result (#DIV/0!, #REF!, …) is a validation refusal that carries its value.
+        Ok(FormulaOutcome::Error(s)) => emit_eval_error_value(fmt, &s),
+        // A parse refusal is a located diagnostic — the same validation channel as the error value.
+        Err(diag) => emit_validation_diagnostics(fmt, std::slice::from_ref(&diag)),
     }
 }
 
 /// `charlie-cli sample <dir>` — write the model's canonical tutorial workbook
-/// (`charlie_model::sample_workbook`) into `<dir>`, creating a sub-folder per tab, then print a terse
-/// next-steps hint. REFUSES (never clobbers) if `<dir>` already exists and is non-empty. This is the
-/// one command that WRITES to disk; the sample CONTENT is the model's — the CLI only lays it onto the
-/// filesystem (no spreadsheet logic here).
-fn cmd_sample(rest: &[String]) -> u8 {
+/// (`charlie_model::sample_workbook`) into `<dir>`, creating a sub-folder per tab, then emit a terse
+/// result. REFUSES (never clobbers) if `<dir>` already exists and is non-empty. This is the one command
+/// that WRITES to disk; the sample CONTENT is the model's — the CLI only lays it onto the filesystem.
+fn cmd_sample(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     for arg in rest {
         let (flag, _) = split_flag(arg);
         if flag.starts_with('-') {
-            return bad_arg(&format!("unknown flag {flag:?}"));
+            return bad_arg(fmt, &format!("unknown flag {flag:?}"));
         }
         if path.replace(arg.clone()).is_some() {
-            return bad_arg("sample takes exactly one <dir>");
+            return bad_arg(fmt, "sample takes exactly one <dir>");
         }
     }
     let Some(path) = path else {
-        return bad_arg("sample needs a <dir> to write the tutorial workbook into");
+        return bad_arg(
+            fmt,
+            "sample needs a <dir> to write the tutorial workbook into",
+        );
     };
     let dir = Path::new(&path);
 
@@ -308,73 +378,78 @@ fn cmd_sample(rest: &[String]) -> u8 {
         let non_empty = match std::fs::read_dir(dir) {
             Ok(mut entries) => entries.next().is_some(),
             Err(e) => {
-                eprintln!("charlie-cli: cannot read {path:?}: {e}");
-                return exit::IO;
+                let msg = format!("cannot read {path:?}: {e}");
+                return fail(fmt, ErrorCode::Io, &msg);
             }
         };
         if non_empty {
             // A runtime-precondition refusal, NOT a usage error: the argv is well-formed, but the
-            // target directory's state conflicts with the never-clobber guarantee. That is exit 4
-            // (CONFLICT) per `cli-interface-standards.md`, not exit 2 (BAD_ARGS) — and it prints no
-            // `--help` pointer, since the command was used correctly.
-            eprintln!(
-                "charlie-cli: {path:?} already exists and is not empty -- refusing to overwrite; pick an empty or new directory"
+            // target directory's state conflicts with the never-clobber guarantee. That is CONFLICT
+            // (exit 4) per `cli-interface-standards.md`, not bad-args (exit 2).
+            let msg = format!(
+                "{path:?} already exists and is not empty -- refusing to overwrite; pick an empty or new directory"
             );
-            return exit::CONFLICT;
+            return fail(fmt, ErrorCode::Conflict, &msg);
         }
     }
 
-    for (rel, content) in charlie_model::sample_workbook() {
-        let full = dir.join(&rel);
+    let content = charlie_model::sample_workbook();
+    for (rel, body) in &content {
+        let full = dir.join(rel);
         if let Some(parent) = full.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
-            eprintln!("charlie-cli: cannot create {:?}: {e}", parent.display());
-            return exit::IO;
+            let msg = format!("cannot create {:?}: {e}", parent.display());
+            return fail(fmt, ErrorCode::Io, &msg);
         }
-        if let Err(e) = std::fs::write(&full, content) {
-            eprintln!("charlie-cli: cannot write {:?}: {e}", full.display());
-            return exit::IO;
+        if let Err(e) = std::fs::write(&full, body) {
+            let msg = format!("cannot write {:?}: {e}", full.display());
+            return fail(fmt, ErrorCode::Io, &msg);
+        }
+    }
+
+    // The tab list is the unique first path-component of each written file, in first-seen order.
+    let mut tabs: Vec<String> = Vec::new();
+    for (rel, _) in &content {
+        if let Some(tab) = Path::new(rel).components().next() {
+            let name = tab.as_os_str().to_string_lossy().into_owned();
+            if !tabs.contains(&name) {
+                tabs.push(name);
+            }
         }
     }
 
     // These next-steps strings mirror the model's FIXED sample content (tab names, the `Orders!D5`
     // cell and its `110` value, from `charlie_model::sample_workbook`); if that sample is ever
     // changed, update these hints in lockstep — nothing else pins them together.
-    println!("wrote a sample workbook to {path} (tabs: Orders, Summary)");
-    println!();
-    println!("next:");
-    println!("  charlie-cli render {path}               # draw the Orders tab");
-    println!("  charlie-cli render {path} --functions   # show the formulas, not their values");
-    println!("  charlie-cli check  {path}               # lint it (clean)");
-    println!("  charlie-cli eval   {path} '=Orders!D5'  # evaluate a cell (110)");
-    println!("  then edit a cell file and re-render");
+    let text_lines = format!(
+        "wrote a sample workbook to {path} (tabs: Orders, Summary)\n\
+         \n\
+         next:\n  \
+         charlie-cli render {path}               # draw the Orders tab\n  \
+         charlie-cli render {path} --functions   # show the formulas, not their values\n  \
+         charlie-cli check  {path}               # lint it (clean)\n  \
+         charlie-cli eval   {path} --formula '=Orders!D5'  # evaluate a cell (110)\n  \
+         then edit a cell file and re-render\n"
+    );
+    emit_sample(fmt, &path, &tabs, &text_lines);
     0
 }
 
-/// Load a workbook directory for `render`, mapping loader failures to exit codes and printing the
-/// load-time refusal table (a workbook that won't load can't be rendered — run `check` for detail).
-fn load(path: &Path) -> Result<Workbook, u8> {
+/// Load a workbook directory, mapping loader failures to the envelope. A load-time refusal carries
+/// located diagnostics (a workbook that won't load can't be rendered/evaluated); a missing path or an
+/// I/O failure is an operational error. Returns the exit code in `Err`.
+fn load(fmt: Format, path: &Path) -> Result<Workbook, u8> {
     match Workbook::load_dir(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "charlie-cli: no such workbook directory {:?}",
-                path.display()
-            );
-            Err(exit::NOT_FOUND)
+            let msg = format!("no such workbook directory {:?}", path.display());
+            Err(fail(fmt, ErrorCode::NotFound, &msg))
         }
         Err(e) => {
-            eprintln!("charlie-cli: cannot read {:?}: {e}", path.display());
-            Err(exit::IO)
+            let msg = format!("cannot read {:?}: {e}", path.display());
+            Err(fail(fmt, ErrorCode::Io, &msg))
         }
-        Ok(Err(diags)) => {
-            eprintln!(
-                "charlie-cli: {:?} has load errors -- run `charlie-cli check` for detail:",
-                path.display()
-            );
-            eprintln!("{}", diagnostics_table(&diags));
-            Err(exit::VALIDATION)
-        }
+        Ok(Err(diags)) => Err(emit_validation_diagnostics(fmt, &diags)),
         Ok(Ok(wb)) => Ok(wb),
     }
 }
@@ -402,59 +477,68 @@ fn take_value(inline: Option<&str>, it: &mut std::slice::Iter<'_, String>) -> Op
     }
 }
 
-/// Print a usage error to stderr and return the bad-args exit code.
-fn bad_arg(msg: &str) -> u8 {
-    eprintln!("charlie-cli: {msg}\n\nrun `charlie-cli --help` for usage");
-    exit::BAD_ARGS
+/// Emit an operational error through the envelope layer and return its paired exit code.
+fn fail(fmt: Format, code: ErrorCode, message: &str) -> u8 {
+    emit_error(fmt, code, message);
+    code.exit()
 }
 
-/// `--version` — a machine-parseable JSON envelope (cli-interface-standards.md).
-fn print_version() {
-    println!(
-        "{{\"status\":\"success\",\"data\":{{\"name\":\"charlie-cli\",\"version\":\"{}\"}}}}",
-        env!("CARGO_PKG_VERSION")
-    );
+/// A bad-args (invalid-usage) refusal — the most common operational error.
+fn bad_arg(fmt: Format, msg: &str) -> u8 {
+    fail(fmt, ErrorCode::InvalidArguments, msg)
 }
 
-fn print_help() {
-    print!(
-        r#"charlie-cli — render and lint a filesystem spreadsheet (tabs = folders, cells/ranges = files)
+/// Print help: per-command when `cmd` names a subcommand (its own args, JSON OUTPUT shape, and exit
+/// codes — cli-interface-standards Part 4), else the global banner.
+fn print_help(cmd: Option<&str>) {
+    let text = match cmd {
+        Some("render") => RENDER_HELP,
+        Some("check") => CHECK_HELP,
+        Some("eval") => EVAL_HELP,
+        Some("sample") => SAMPLE_HELP,
+        _ => GLOBAL_HELP,
+    };
+    print!("{text}");
+}
+
+const GLOBAL_HELP: &str = r#"charlie-cli — render and lint a filesystem spreadsheet (tabs = folders, cells/ranges = files)
 
 USAGE:
   charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions|--annotation]
   charlie-cli check  <path>
-  charlie-cli eval   <path> [--tab <name>] '=<formula>'
+  charlie-cli eval   <path> --formula '=<formula>' [--tab <name>]
   charlie-cli sample <dir>
   charlie-cli --version | --help | --guide
 
+  Per-command help (its own args, JSON OUTPUT shape, and exit codes): charlie-cli <command> --help
+
+GLOBAL:
+  --format <text|json>   Output form. Default: text (human ASCII/prose). `json` emits a
+                         {status, data|error} envelope on stdout — the machine-parseable surface
+                         (errors and located diagnostics are data in the envelope, never scraped).
+
 COMMANDS:
-  render   Draw a tab (or a sub-range) as an ASCII table with a column-letter header and a
-           row-number gutter. Default mode is --values.
-             --tab <name>     Which tab (sub-folder) to render. Default: the first tab.
-             --range <A3:G8>  Only this rectangle (canonical A1). Default: the tab's used region.
-             --values         Computed values (demand-driven — only the viewport's cone evaluates).
-             --functions      Source text: a formula cell shows its =… text, a literal shows its value.
-             --annotation     Each range's line-1 '# ' annotation.
-  check    Lint the workbook — overlap, dimension-mismatch, and cycle diagnostics — as an ASCII
-           table pointing at the offending file(s). Exits non-zero if any error-severity diagnostic.
-  eval     Evaluate an ad-hoc =formula against the loaded workbook and print its value (same
-           formatting as render). Read-only — no file writes, no mutation. The formula may reference
-           cells, ranges, and other tabs; unqualified refs (A1, A1:A5) bind to --tab.
-             --tab <name>     Which tab unqualified references resolve against. Default: the first tab.
-           A parse error prints the located diagnostic; an error-valued result (#DIV/0!, …) prints
-           the error text. Both exit non-zero.
-  sample   Write a live tutorial workbook (two tabs, a header row, explicit per-row formulas, a SUM,
-           and a cross-sheet reference) into <dir>, then print next steps. Render/check/eval it, edit
-           a cell, re-render — it teaches the format by being a real workbook. Refuses to overwrite a
-           non-empty directory.
+  render   Draw a tab (or a sub-range). Text: an ASCII table with a column-letter header and a
+           row-number gutter. JSON: {columns, rows}. Default mode is --values.
+  check    Lint the workbook — overlap, dimension-mismatch, and cycle diagnostics. Text: an ASCII
+           table pointing at the offending file(s). JSON: a diagnostics[] array. Exits non-zero if
+           any error-severity diagnostic.
+  eval     Evaluate an ad-hoc --formula against the loaded workbook and emit its value. Read-only.
+  sample   Write a live tutorial workbook into <dir>, then report. Refuses to overwrite a non-empty
+           directory.
 
 EXAMPLES:
   charlie-cli sample ./demo && charlie-cli render ./demo
   charlie-cli render ./budget --tab Summary
-  charlie-cli render ./budget --tab Sales --range A1:E14 --functions
-  charlie-cli check  ./budget
-  charlie-cli eval   ./budget --tab Orders '=SUM(C2:C11)'
-  charlie-cli eval   ./budget --tab Orders '=SUMPRODUCT(--(C2:C11>5))'
+  charlie-cli check  ./budget --format json
+  charlie-cli eval   ./budget --tab Orders --formula '=SUMPRODUCT(--(C2:C11>5))'
+
+OUTPUT (--format json):
+  Every command emits a {status, data|error} envelope on stdout:
+    success:  {"status":"success","data": <command-specific object>}
+    error:    {"status":"error","error":{"code":"...","message":"..."},"data": <payload or null>}
+  Per-command data shapes and a worked example: charlie-cli <command> --help.
+  --version emits {"status":"success","data":{"name":"charlie-cli","version":"..."}}.
 
 EXIT CODES:
   0   Success (render drawn, or check found no error-severity diagnostics)
@@ -467,6 +551,154 @@ EXIT CODES:
 SEE ALSO:
   charlie-cli --guide      Terse guide to the on-disk model (structure, filenames, body grammar)
   charlie-cli --version    Show version as a JSON envelope
-"#
-    );
-}
+"#;
+
+const RENDER_HELP: &str = r#"charlie-cli render — draw a tab (or a sub-range) of a filesystem spreadsheet
+
+USAGE:
+  charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions|--annotation] [--format <text|json>]
+
+DESCRIPTION:
+  Render a workbook tab to a grid. Values mode is demand-driven — only the viewport's dependency cone
+  evaluates. Default mode is --values; default tab is the first; default viewport is the tab's used region.
+
+ARGUMENTS:
+  <path>            (required) The workbook directory (tabs = sub-folders).
+  --tab <name>      (optional) Which tab to render. Default: the first tab.
+  --range <A3:G8>   (optional) Only this rectangle (canonical A1). Default: the tab's used region.
+  --values          (optional) Computed values (the default mode).
+  --functions       (optional) Source text: a formula shows its =… text, a literal shows its value.
+  --annotation      (optional) Each covering range's line-1 '# ' annotation.
+  --format <fmt>    (optional) text (default, human ASCII table) or json (the machine envelope).
+
+EXAMPLES:
+  charlie-cli render ./budget
+  charlie-cli render ./budget --tab Summary --range A1:E14 --functions
+  charlie-cli render ./budget --format json
+
+OUTPUT (--format json):
+  {
+    "status": "success",
+    "data": { "columns": ["A","B"], "rows": [ { "label": "1", "cells": ["20000","40000"] } ] }
+  }
+
+EXIT CODES:
+  0   Success (grid drawn)
+  1   I/O failure
+  2   Invalid arguments (unknown flag, non-canonical or oversized --range)
+  3   Validation error (the workbook would not load)
+  24  Not found (no such workbook directory, or no such tab)
+
+SEE ALSO:
+  charlie-cli check      Lint a workbook
+  charlie-cli --guide    Terse guide to the on-disk model
+"#;
+
+const CHECK_HELP: &str = r#"charlie-cli check — lint a filesystem spreadsheet
+
+USAGE:
+  charlie-cli check <path> [--format <text|json>]
+
+DESCRIPTION:
+  Lint the workbook: overlap, dimension-mismatch, cycle, and the load-time filename/annotation
+  refusals. Exits non-zero if any error-severity diagnostic fires.
+
+ARGUMENTS:
+  <path>            (required) The workbook directory.
+  --format <fmt>    (optional) text (default, ASCII table) or json (the machine envelope).
+
+EXAMPLES:
+  charlie-cli check ./budget
+  charlie-cli check ./budget --format json
+
+OUTPUT (--format json):
+  A clean workbook: {"status":"success","data":{"diagnostics":[]}}
+  With findings (exit 3):
+  {
+    "status": "error",
+    "error": { "code": "validation_error", "message": "1 error-severity diagnostic" },
+    "data": { "diagnostics": [ {
+      "code": "cycle", "severity": "error", "message": "circular reference",
+      "help": "break the dependency cycle: ...", "location": { "tab": "Sheet1", "file": "A1" }
+    } ] }
+  }
+  Each diagnostic carries a stable `code`, `severity`, `message`, structured `help` remediation, and `location`.
+
+EXIT CODES:
+  0   Success (no error-severity diagnostics)
+  1   I/O failure
+  2   Invalid arguments
+  3   Validation error (an error-severity diagnostic, or the workbook would not load)
+  24  Not found (no such workbook directory)
+
+SEE ALSO:
+  charlie-cli render     Draw a workbook
+  charlie-cli --guide    Terse guide to the on-disk model
+"#;
+
+const EVAL_HELP: &str = r##"charlie-cli eval — evaluate an ad-hoc formula against a workbook
+
+USAGE:
+  charlie-cli eval <path> --formula '=<formula>' [--tab <name>] [--format <text|json>]
+
+DESCRIPTION:
+  Evaluate a formula against a loaded workbook and emit its value. Read-only — no writes, no mutation.
+  Unqualified references (A1, A1:A5) bind to --tab; cross-tab (Tab!A1) and ranges resolve.
+
+ARGUMENTS:
+  <path>            (required) The workbook directory.
+  --formula '=…'    (required) The formula to evaluate.
+  --tab <name>      (optional) Which tab unqualified references resolve against. Default: the first tab.
+  --format <fmt>    (optional) text (default) or json (the machine envelope).
+
+EXAMPLES:
+  charlie-cli eval ./budget --formula '=SUM(A1:A5)'
+  charlie-cli eval ./budget --tab Orders --formula '=SUMPRODUCT(--(C2:C11>5))'
+
+OUTPUT (--format json):
+  Success:            {"status":"success","data":{"value":"6"}}
+  Error-valued (3):   {"status":"error","error":{"code":"validation_error",...},"data":{"value":"#DIV/0!"}}
+  Parse refusal (3):  {"status":"error",...,"data":{"diagnostics":[ ... located ... ]}}
+
+EXIT CODES:
+  0   Success (a value)
+  1   I/O failure
+  2   Invalid arguments (missing --formula)
+  3   Validation error (a parse error, or an error-valued result like #DIV/0!)
+  24  Not found (no such workbook directory, or no such tab)
+
+SEE ALSO:
+  charlie-cli render     Draw a workbook
+  charlie-cli --guide    Terse guide to the on-disk model
+"##;
+
+const SAMPLE_HELP: &str = r#"charlie-cli sample — write a live tutorial workbook to disk
+
+USAGE:
+  charlie-cli sample <dir> [--format <text|json>]
+
+DESCRIPTION:
+  Write the canonical tutorial workbook (two tabs, a header row, per-row formulas, a SUM, and a
+  cross-sheet reference) into <dir>. The one command that writes to disk. Refuses to overwrite a
+  non-empty directory (never clobbers).
+
+ARGUMENTS:
+  <dir>             (required) The directory to write into (created if absent; must be empty if it exists).
+  --format <fmt>    (optional) text (default, next-steps prose) or json (the machine envelope).
+
+EXAMPLES:
+  charlie-cli sample ./demo && charlie-cli render ./demo
+
+OUTPUT (--format json):
+  {"status":"success","data":{"path":"./demo","tabs":["Orders","Summary"]}}
+
+EXIT CODES:
+  0   Success (workbook written)
+  1   I/O failure
+  2   Invalid arguments
+  4   Conflict (<dir> exists and is non-empty — refused, nothing written)
+
+SEE ALSO:
+  charlie-cli render     Draw the written workbook
+  charlie-cli --guide    Terse guide to the on-disk model
+"#;

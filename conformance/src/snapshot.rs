@@ -270,7 +270,7 @@ pub struct Backslide {
 /// `Match` in `anchor`, report it iff it is now PRESENT and `Diverge`. Deliberately exempt:
 /// - GROWTH — a key only in `current` never held a Match to lose;
 /// - IMPROVEMENT — a `Diverge → Match` transition;
-/// - REMOVAL — a former Match no longer in `current` (a conscious corpus edit, mirroring fanuc's
+/// - REMOVAL — a former Match no longer in `current` (a conscious corpus edit, under the
 ///   growth/removal exemption; a re-blessed anchor records it).
 pub fn backslides(
     anchor: &BTreeMap<String, Verdict>,

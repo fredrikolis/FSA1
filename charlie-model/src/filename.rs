@@ -1,7 +1,7 @@
 // Concern: the FILENAME grammar (FS2) — parse a bare filename that is a closed A1 range (`A1`, `F2:F11`, `B2:D9`; a single cell is the 0-D range `A1`) into a `FileName` (its `Rect` region + declared `Shape`), layering canonical-form POLICY on charlie-ast's A1 address grammar: reject `$`, lowercase, leading zeros, a reversed/degenerate(`A1:A1`)/whole-column range, each a named located diagnostic; never panics on a hostile name | Non-concern: the A1 address grammar itself (charlie-ast::a1 owns tokenizing an address), the file's grid (grid.rs), and whether the grid FILLS the range (GRID4, lib.rs) | IO: (a filename `&str`) -> `Result<FileName, Diagnostic>`
 //! Filename parser: [`parse_filename`], [`FileName`].
 
-use crate::diagnostic::{Code, Diagnostic, Loc};
+use crate::diagnostic::{Applicability, ByteSpan, Code, Diagnostic, Fix, Loc};
 use crate::overlap::Rect;
 use charlie_ast::Shape;
 use charlie_ast::a1::{A1Address, A1Error, parse_a1};
@@ -28,8 +28,8 @@ pub fn parse_filename(name: &str) -> Result<FileName, Diagnostic> {
 
 /// A single-address filename (`A1`) — the 0-D closed range, one cell.
 fn parse_single(name: &str) -> Result<FileName, Diagnostic> {
-    let a = parse_a1(name).map_err(|e| a1_diag(name, 0, e))?;
-    enforce_canonical(name, 0, &a)?;
+    let a = parse_a1(name).map_err(|e| a1_diag(name, 0, name.len(), e))?;
+    enforce_canonical(name, 0, name.len(), &a)?;
     Ok(FileName {
         region: Rect::cell(a.col, a.row),
         declared_shape: Shape { rows: 1, cols: 1 },
@@ -44,7 +44,7 @@ fn parse_range(name: &str, left: &str, right: &str) -> Result<FileName, Diagnost
     if right.contains(':') {
         return Err(Diagnostic::new(
             Code::MalformedFilename,
-            Loc::file_at(name, colon),
+            Loc::file_at(name, colon, name.len() - colon),
             format!("a closed range has exactly one `:`; found more: {name:?}"),
         ));
     }
@@ -59,35 +59,37 @@ fn parse_range(name: &str, left: &str, right: &str) -> Result<FileName, Diagnost
         ));
     }
 
-    let la = parse_a1(left).map_err(|e| a1_diag(name, 0, e))?;
-    let ra = parse_a1(right).map_err(|e| a1_diag(name, colon + 1, e))?;
-    enforce_canonical(name, 0, &la)?;
-    enforce_canonical(name, colon + 1, &ra)?;
+    let la = parse_a1(left).map_err(|e| a1_diag(name, 0, left.len(), e))?;
+    let ra = parse_a1(right).map_err(|e| a1_diag(name, colon + 1, right.len(), e))?;
+    enforce_canonical(name, 0, left.len(), &la)?;
+    enforce_canonical(name, colon + 1, right.len(), &ra)?;
 
     // Canonical ordering: top-left is min column AND min row; bottom-right is max of each. This one
-    // check rejects every reversed spelling (`G8:A3`, `A8:G3`, `G3:A8`) of the same rectangle.
+    // check rejects every reversed spelling (`G8:A3`, `A8:G3`, `G3:A8`) of the same rectangle. The
+    // canonical rewrite of the whole filename is a deterministic machine `fix`.
     if la.col > ra.col || la.row > ra.row {
+        let canonical = format!(
+            "{}:{}",
+            charlie_ast::a1::format_cell(la.col.min(ra.col), la.row.min(ra.row)),
+            charlie_ast::a1::format_cell(la.col.max(ra.col), la.row.max(ra.row)),
+        );
         return Err(Diagnostic::new(
             Code::NonCanonicalRange,
             Loc::file(name),
-            format!(
-                "a range must be top-left:bottom-right; {name:?} should be {}:{}",
-                charlie_ast::a1::format_cell(la.col.min(ra.col), la.row.min(ra.row)),
-                charlie_ast::a1::format_cell(la.col.max(ra.col), la.row.max(ra.row)),
-            ),
-        ));
+            format!("a range must be top-left:bottom-right; {name:?} should be {canonical}"),
+        )
+        .with_fix(rename_fix(name, canonical)));
     }
     if la.col == ra.col && la.row == ra.row {
         // A `1x1` range is a REJECT, not an accept-and-canonicalize to the bare address: one file,
         // one canonical name, and a single cell is always written as the address (`A1`), never `A1:A1`.
+        let canonical = charlie_ast::a1::format_cell(la.col, la.row);
         return Err(Diagnostic::new(
             Code::DegenerateRange,
             Loc::file(name),
-            format!(
-                "a 1x1 range is illegal; a single cell is written {}",
-                charlie_ast::a1::format_cell(la.col, la.row)
-            ),
-        ));
+            format!("a 1x1 range is illegal; a single cell is written {canonical}"),
+        )
+        .with_fix(rename_fix(name, canonical)));
     }
 
     Ok(FileName {
@@ -105,36 +107,63 @@ fn parse_range(name: &str, left: &str, right: &str) -> Result<FileName, Diagnost
 }
 
 /// Apply the filename canonical-form policy to one parsed address: no `$`, uppercase only, no leading
-/// zero (FS2). `offset` is the address's byte position within the whole filename, so the diagnostic
-/// points at the right place in the name.
-fn enforce_canonical(name: &str, offset: usize, a: &A1Address) -> Result<(), Diagnostic> {
+/// zero (FS2). `offset`/`addr_len` are the address's byte span within the whole filename, so the
+/// diagnostic points at (and its `fix` overwrites) exactly that token. Each refusal carries a
+/// machine-applicable `fix`: the deterministic canonical spelling of the address ([`format_cell`],
+/// which is uppercase, unpadded, and `$`-free by construction).
+fn enforce_canonical(
+    name: &str,
+    offset: usize,
+    addr_len: usize,
+    a: &A1Address,
+) -> Result<(), Diagnostic> {
+    let canonical = |code: Code, message: String| {
+        Diagnostic::new(code, Loc::file_at(name, offset, addr_len), message).with_fix(Fix {
+            applicability: Applicability::MachineApplicable,
+            span: ByteSpan {
+                offset,
+                len: addr_len,
+            },
+            replacement: charlie_ast::a1::format_cell(a.col, a.row),
+        })
+    };
     // A file's own address is intrinsically fixed, so a `$` absolute-marker is meaningless in a
     // filename — the `$` markers live only inside formula bodies. Reject rather than silently strip.
     if a.col_abs || a.row_abs {
-        return Err(Diagnostic::new(
+        return Err(canonical(
             Code::DollarInFilename,
-            Loc::file_at(name, offset),
             format!("$ is not allowed in a filename (it lives in formula bodies): {name:?}"),
         ));
     }
     if a.col_had_lowercase {
-        return Err(Diagnostic::new(
+        return Err(canonical(
             Code::LowercaseColumn,
-            Loc::file_at(name, offset),
             format!("column letters must be uppercase: {name:?}"),
         ));
     }
     if a.row_had_leading_zero {
-        return Err(Diagnostic::new(
+        return Err(canonical(
             Code::LeadingZeroRow,
-            Loc::file_at(name, offset),
             format!("a row number must not have a leading zero: {name:?}"),
         ));
     }
     Ok(())
 }
 
-fn a1_diag(name: &str, offset: usize, err: A1Error) -> Diagnostic {
+/// A machine-applicable rename of the WHOLE filename to `replacement` — the deterministic canonical
+/// spelling of a reversed or degenerate range (which replaces the entire name, not one address token).
+fn rename_fix(name: &str, replacement: String) -> Fix {
+    Fix {
+        applicability: Applicability::MachineApplicable,
+        span: ByteSpan {
+            offset: 0,
+            len: name.len(),
+        },
+        replacement,
+    }
+}
+
+fn a1_diag(name: &str, offset: usize, addr_len: usize, err: A1Error) -> Diagnostic {
     let (byte, detail) = match err {
         A1Error::Empty => (offset, "empty address".to_string()),
         A1Error::MissingColumn { at } => (offset + at, "missing column letters".to_string()),
@@ -145,9 +174,12 @@ fn a1_diag(name: &str, offset: usize, err: A1Error) -> Diagnostic {
         A1Error::ColumnOverflow => (offset, "column index too large".to_string()),
         A1Error::RowOverflow => (offset, "row index too large".to_string()),
     };
+    // A malformed address has no canonical spelling to suggest (no `fix`); the located span runs from
+    // the error byte to the end of the offending address token (at least one byte).
+    let len = (offset + addr_len).saturating_sub(byte).max(1);
     Diagnostic::new(
         Code::MalformedFilename,
-        Loc::file_at(name, byte),
+        Loc::file_at(name, byte, len),
         format!("malformed address ({detail}): {name:?}"),
     )
 }

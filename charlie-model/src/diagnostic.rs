@@ -1,4 +1,4 @@
-// Concern: the single-sourced DIAGNOSTIC registry — the stable `Code` enum (one code string + severity + summary + spreadsheet-error class per refusal), the `Loc` a refusal points at (filename byte / body line-col / tab / sheet-qualified file), and the located `Diagnostic` value with an ASCII `Display`; every model refusal is one of these, never a panic or a silent drop | Non-concern: DETECTING any violation (the filename/grid/overlap modules AND the demand-driven eval engine in `workbook.rs` — which raises the cycle/depth-limit/range-too-large eval-time codes — raise these) and the formula-eval error taxonomy (charlie-ast's `ErrKind` owns that; a `Code` only cites the class it belongs to) | IO: (`Code`, `Loc`, message) -> a rendered ASCII refusal
+// Concern: the single-sourced DIAGNOSTIC registry — the stable `Code` enum (one code string + severity + summary + remediation help + spreadsheet-error class per refusal), the `Loc` a refusal points at (filename byte / body line-col / tab / sheet-qualified file), and the located `Diagnostic` value with an ASCII `Display`; every model refusal is one of these, never a panic or a silent drop | Non-concern: DETECTING any violation (the filename/grid/overlap modules AND the demand-driven eval engine in `workbook.rs` — which raises the cycle/depth-limit/range-too-large eval-time codes — raise these) and the formula-eval error taxonomy (charlie-ast's `ErrKind` owns that; a `Code` only cites the class it belongs to) | IO: (`Code`, `Loc`, message) -> a rendered ASCII refusal
 //! Diagnostics: [`Code`] (the single-sourced registry), [`Loc`], [`Severity`], [`Diagnostic`].
 
 use charlie_ast::ErrKind;
@@ -123,6 +123,60 @@ impl Code {
         }
     }
 
+    /// Remediation prose — what to change to clear this refusal, as a structured field distinct from
+    /// the located `message` (cli-interface-standards Part 2 "Diagnostics": `help`, so an agent reads
+    /// the fix from a dedicated field instead of parsing it out of free-text). Code-level and general;
+    /// the per-instance specifics (which address, which canonical spelling) ride in the `message`.
+    pub fn help(self) -> &'static str {
+        match self {
+            Code::MalformedFilename => {
+                "rename the file to a well-formed A1 closed range: a single cell `A1`, or a rectangle written top-left:bottom-right like `B2:D9`"
+            }
+            Code::LowercaseColumn => {
+                "uppercase the column letter(s) in the filename (e.g. `a1` becomes `A1`)"
+            }
+            Code::LeadingZeroRow => {
+                "drop the leading zero from the row number in the filename (e.g. `A01` becomes `A1`)"
+            }
+            Code::DollarInFilename => {
+                "remove the `$` from the filename; `$` anchors live only inside formula bodies (e.g. `$A$1` becomes `A1`)"
+            }
+            Code::NonCanonicalRange => {
+                "rewrite the range filename top-left:bottom-right, with the min column and row first (e.g. `G8:A3` becomes `A3:G8`)"
+            }
+            Code::DegenerateRange => {
+                "a single cell is written as its bare address, never a 1x1 range: rename `A1:A1` to `A1`"
+            }
+            Code::WholeColumnRowReserved => {
+                "use a closed rectangle naming both corners (e.g. `A1:A100`); whole-column/row spans (`A:A`, `3:3`) are reserved"
+            }
+            Code::MissingAnnotation => {
+                "add a `# Concern: ... | Non-concern: ... | IO: ...` annotation as line 1 of the file body"
+            }
+            Code::RaggedGrid => {
+                "give every TSV row the same number of tab-separated fields (pad short rows with empty fields)"
+            }
+            Code::DimensionMismatch => {
+                "make the grid's rows x cols match the filename's declared range exactly (e.g. `B2:D9` needs 8 rows by 3 columns)"
+            }
+            Code::Overlap => {
+                "move or resize one of the two files so their declared ranges no longer intersect within the tab"
+            }
+            Code::Cycle => {
+                "break the dependency cycle: a formula cell must not, directly or through a chain, depend on itself"
+            }
+            Code::FormulaSyntax => {
+                "correct the `=formula` so it parses (balance parentheses, fix operators and function names)"
+            }
+            Code::DepthLimit => {
+                "shorten the formula dependency chain below the pull-depth bound (flatten intermediate cells)"
+            }
+            Code::RangeTooLarge => {
+                "reference a smaller rectangle; the range exceeds the model's materialization bound"
+            }
+        }
+    }
+
     /// The `ErrKind` class this refusal belongs to, where FORMAT.md names one — the ragged-block
     /// (`#VALUE!`) and non-conforming (`#SPILL!`) refusals. Purely structural refusals map to
     /// `None`. This is the one place the model *cites* (never redefines) the AST error taxonomy.
@@ -142,15 +196,54 @@ impl Code {
     }
 }
 
+/// A byte span within a located file or filename: `len` bytes starting at byte `offset`. The
+/// machine-exact half of a diagnostic location (cli-interface-standards Part 2 "Diagnostics": a
+/// located finding carries a byte `span` `{offset,length}`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ByteSpan {
+    pub offset: usize,
+    pub len: usize,
+}
+
+/// Whether a [`Fix`] may be applied unattended (cli-interface-standards Part 2 "Diagnostics"): a
+/// deterministic rewrite is [`Applicability::MachineApplicable`] (an agent may apply it); a heuristic
+/// suggestion is [`Applicability::MaybeIncorrect`] (an agent should review first).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Applicability {
+    MachineApplicable,
+    MaybeIncorrect,
+}
+
+/// A structured remediation edit: overwrite `span` bytes of the located name/file with `replacement`.
+/// Present only when the fix is a KNOWN deterministic edit (a non-canonical filename's canonical
+/// spelling); omitted for refusals with no single machine edit (cli-interface-standards Part 2:
+/// `fix` "when known").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fix {
+    pub applicability: Applicability,
+    pub span: ByteSpan,
+    pub replacement: String,
+}
+
 /// Where a diagnostic points. Heterogeneous by construction (ast-standards PART 3): a filename
-/// issue anchors on the name (and an optional byte offset), a body issue on a file line/col, an
-/// overlap on the tab.
+/// issue anchors on the name (and an optional byte span), a body issue on a file start..end line/col,
+/// an overlap on the tab.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Loc {
-    /// Anchored on a filename, optionally at a byte offset into it.
-    File { name: String, byte: Option<usize> },
-    /// Anchored on a file's body at a 1-based line/column (line 1 is the annotation).
-    Body { file: String, line: u32, col: u32 },
+    /// Anchored on a filename, optionally at a byte span (offset + length) into it.
+    File {
+        name: String,
+        span: Option<ByteSpan>,
+    },
+    /// Anchored on a file's body over a 1-based `line`:`col` start to an `end_line`:`end_col` end
+    /// (line 1 is the annotation). A point anchor spells `end == start`.
+    Body {
+        file: String,
+        line: u32,
+        col: u32,
+        end_line: u32,
+        end_col: u32,
+    },
     /// Anchored on a tab (folder) as a whole.
     Tab { tab: String },
     /// Anchored on a specific file *within a named tab* — a sheet-qualified cell/range file. Used by
@@ -164,22 +257,39 @@ impl Loc {
     pub fn file(name: &str) -> Loc {
         Loc::File {
             name: name.to_string(),
-            byte: None,
+            span: None,
         }
     }
 
-    pub fn file_at(name: &str, byte: usize) -> Loc {
+    /// A filename anchor spanning `len` bytes at byte `offset` — the offending token's extent in the
+    /// name (the machine-exact `span` a fix's edit overwrites).
+    pub fn file_at(name: &str, offset: usize, len: usize) -> Loc {
         Loc::File {
             name: name.to_string(),
-            byte: Some(byte),
+            span: Some(ByteSpan { offset, len }),
         }
     }
 
+    /// A point body anchor: the located extent is the single start position (`end == start`).
     pub fn body(file: &str, line: u32, col: u32) -> Loc {
         Loc::Body {
             file: file.to_string(),
             line,
             col,
+            end_line: line,
+            end_col: col,
+        }
+    }
+
+    /// A spanned body anchor over a 1-based `start`..`end` line/column — the located token's extent
+    /// (e.g. a formula sub-expression's `span.start`..`span.end`).
+    pub fn body_span(file: &str, line: u32, col: u32, end_line: u32, end_col: u32) -> Loc {
+        Loc::Body {
+            file: file.to_string(),
+            line,
+            col,
+            end_line,
+            end_col,
         }
     }
 
@@ -206,10 +316,12 @@ impl fmt::Display for Loc {
         match self {
             Loc::File {
                 name,
-                byte: Some(b),
-            } => write!(f, "{name} (byte {b})"),
-            Loc::File { name, byte: None } => write!(f, "{name}"),
-            Loc::Body { file, line, col } => write!(f, "{file}:{line}:{col}"),
+                span: Some(s),
+            } => write!(f, "{name} (byte {})", s.offset),
+            Loc::File { name, span: None } => write!(f, "{name}"),
+            Loc::Body {
+                file, line, col, ..
+            } => write!(f, "{file}:{line}:{col}"),
             Loc::Tab { tab } => write!(f, "tab {tab:?}"),
             Loc::TabFile { tab, name } => write!(f, "{tab}/{name}"),
         }
@@ -223,11 +335,27 @@ pub struct Diagnostic {
     pub code: Code,
     pub loc: Loc,
     pub message: String,
+    /// A structured remediation edit, present only when the fix is a KNOWN deterministic rewrite
+    /// (cli-interface-standards Part 2 "Diagnostics": `fix` "when known"); `None` otherwise. Boxed so
+    /// the rare-and-large fix does not bloat the common no-fix [`Diagnostic`] on the `Err` path.
+    pub fix: Option<Box<Fix>>,
 }
 
 impl Diagnostic {
     pub fn new(code: Code, loc: Loc, message: String) -> Diagnostic {
-        Diagnostic { code, loc, message }
+        Diagnostic {
+            code,
+            loc,
+            message,
+            fix: None,
+        }
+    }
+
+    /// Attach a structured remediation edit (a machine-applicable canonical rewrite). Builder form so
+    /// the common no-fix construction stays [`Diagnostic::new`].
+    pub fn with_fix(mut self, fix: Fix) -> Diagnostic {
+        self.fix = Some(Box::new(fix));
+        self
     }
 }
 
@@ -251,9 +379,15 @@ mod tests {
         let before = codes.len();
         codes.dedup();
         assert_eq!(before, codes.len(), "code strings must be unique");
-        // Every code has a non-empty summary and a code string with no spaces.
+        // Every code has a non-empty summary, non-empty remediation help, and a code string with no
+        // spaces.
         for c in Code::ALL {
             assert!(!c.summary().is_empty());
+            assert!(
+                !c.help().is_empty(),
+                "{} needs remediation help",
+                c.code_str()
+            );
             assert!(!c.code_str().contains(' '));
             assert_eq!(c.severity(), Severity::Error);
         }
@@ -288,7 +422,7 @@ mod tests {
     fn display_is_ascii_and_located() {
         let d = Diagnostic::new(
             Code::DollarInFilename,
-            Loc::file_at("$A$1", 0),
+            Loc::file_at("$A$1", 0, 4),
             "no $ in a filename".to_string(),
         );
         let s = d.to_string();

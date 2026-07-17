@@ -117,11 +117,11 @@ impl Resolver for StubResolver {
 /// Materialize a rectangular range into a row-major contiguous buffer from the cell store, reading
 /// the sheet the range's (resolved) [`SheetId`] names.
 fn materialize(rr: RangeRef, cells: &HashMap<(u32, u32, u32), Value>) -> (Shape, Vec<Value>) {
+    // Canonical corner order is single-homed in `RangeRef::normalized` (charlie-ast); read the
+    // normalized corners directly rather than re-deriving the min/max rule here.
+    let rr = rr.normalized();
     let idx = rr.start.sheet.map_or(DEFAULT_SHEET, |SheetId(i)| i);
-    let c0 = rr.start.col.min(rr.end.col);
-    let c1 = rr.start.col.max(rr.end.col);
-    let r0 = rr.start.row.min(rr.end.row);
-    let r1 = rr.start.row.max(rr.end.row);
+    let (c0, c1, r0, r1) = (rr.start.col, rr.end.col, rr.start.row, rr.end.row);
     let mut buf = Vec::with_capacity(((r1 - r0 + 1) * (c1 - c0 + 1)) as usize);
     for r in r0..=r1 {
         for c in c0..=c1 {

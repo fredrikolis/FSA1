@@ -75,7 +75,7 @@ mod tests {
     use super::*;
 
     /// The whole live corpus loads, grades without panic, and every fixture parses. This is the
-    /// corpus's own well-formedness gate (mirrors fanuc's integrity floor: no swallowed crash).
+    /// corpus's own well-formedness gate (an integrity floor: no swallowed crash).
     #[test]
     fn the_live_corpus_loads_and_grades_without_panic() {
         let facts = capture().expect("the corpus must load and grade cleanly");

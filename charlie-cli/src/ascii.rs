@@ -28,8 +28,9 @@ pub fn grid_table(grid: &RenderGrid) -> String {
 }
 
 /// Draw a lint report as an ASCII table: one row per diagnostic with its severity, stable code,
-/// located pointer (the offending file / body position / tab), and message. An empty slice yields a
-/// single "no diagnostics" row so the output is never ambiguous.
+/// located pointer (the offending file / body position / tab), message, and the remediation `help`
+/// (what to change). An empty slice yields a single "no diagnostics" row so the output is never
+/// ambiguous.
 pub fn diagnostics_table(diags: &[Diagnostic]) -> String {
     let mut table = Table::new();
     table.load_preset(ASCII_FULL);
@@ -38,6 +39,7 @@ pub fn diagnostics_table(diags: &[Diagnostic]) -> String {
         Cell::new("code"),
         Cell::new("location"),
         Cell::new("message"),
+        Cell::new("help"),
     ]);
 
     if diags.is_empty() {
@@ -46,6 +48,7 @@ pub fn diagnostics_table(diags: &[Diagnostic]) -> String {
             Cell::new("none"),
             Cell::new("-"),
             Cell::new("no diagnostics: the workbook is clean"),
+            Cell::new("-"),
         ]);
         return table.to_string();
     }
@@ -56,6 +59,7 @@ pub fn diagnostics_table(diags: &[Diagnostic]) -> String {
             Cell::new(d.code.code_str()),
             Cell::new(d.loc.to_string()),
             Cell::new(&d.message),
+            Cell::new(d.code.help()),
         ]);
     }
     table.to_string()

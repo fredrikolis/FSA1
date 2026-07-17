@@ -1,4 +1,4 @@
-// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, the ASCII table on stdout (render/check), the scalar VALUE on stdout (eval — e.g. `6`, `4`, `#DIV/0!`), the on-disk `sample` workbook + its never-clobber refusal, the `--guide` text, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval · 4 sample target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT) and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, asserts on stdout + exit status
+// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, BOTH output forms selected by `--format` (the human ASCII table / scalar on stdout in text mode, and the `{status,data|error}` JSON envelope on stdout in json mode — success data, the diagnostics[] array, the eval value, and error/not-found/validation envelopes), the on-disk `sample` workbook + its never-clobber refusal, the `--guide` text, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval · 4 sample target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT), the envelope serialization (main.rs `output` owns it), and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, asserts on stdout + exit status
 //! End-to-end tests of the `charlie-cli` binary: exit codes and stdout for `render`, `check`, `eval`,
 //! `sample`, `--guide`, `--version`, and misuse. The spreadsheet logic is tested in `charlie-model`;
 //! this locks the thin shell's own contract.
@@ -129,51 +129,28 @@ fn eval_computes_a_sum_against_the_workbook() {
     // A range SUM over literal cells: the ad-hoc formula pulls A1:A3 through the model.
     let fx = Fixture::new("eval-sum");
     fx.file("Sheet1", "A1:A3", "1\n2\n3");
-    let (code, out) = run(&["eval", fx.path().to_str().unwrap(), "=SUM(A1:A3)"]);
+    let (code, out) = run(&[
+        "eval",
+        fx.path().to_str().unwrap(),
+        "--formula",
+        "=SUM(A1:A3)",
+    ]);
     assert_eq!(code, 0, "clean eval exits 0; got:\n{out}");
     assert_eq!(out.trim(), "6", "SUM(A1:A3) = 6:\n{out}");
 }
 
 #[test]
-fn eval_number_uses_excel_general_format() {
-    // The bare-value display path spells a number in Excel's General format (the SAME formatter the
-    // `&`/TEXT text form uses): an extreme magnitude goes scientific instead of leaking Rust's
-    // full-precision Display, a 16-integer-digit value rounds to 15 sig digits, and a computed -0.0
-    // canonicalizes to an unsigned 0 (Excel never shows -0). Oracle: Excel's General (%.15g) rule.
+fn eval_number_routes_through_the_general_formatter() {
+    // ONE discriminating case that the eval value stream spells numbers through Excel's General
+    // formatter and not Rust's raw `Display`: `1e20` prints scientific `1E+20` (raw `Display` would
+    // leak a 21-digit integer). The exhaustive General spelling table (scientific thresholds, 15-sig
+    // rounding, `-0.0`→`0`) is frozen once at its leaf home, charlie-ast::eval
+    // `num_to_text_matches_excel_general_format`; this e2e case only proves the shell routes through it.
     let fx = Fixture::new("eval-general");
     fx.file("Sheet1", "A1", "0");
-    let big = fx.path().to_str().unwrap();
-    for (formula, want) in [
-        ("=1e20", "1E+20"),
-        ("=1e-9", "1E-09"),
-        ("=1234567890123456", "1.23456789012346E+15"),
-        ("=-A1", "0"),
-        ("=0*-1", "0"),
-    ] {
-        let (code, out) = run(&["eval", big, formula]);
-        assert_eq!(code, 0, "{formula} evaluates cleanly:\n{out}");
-        assert_eq!(
-            out.trim(),
-            want,
-            "{formula} General-formats to {want}:\n{out}"
-        );
-    }
-}
-
-#[test]
-fn eval_sumproduct_boolean_coercion_is_not_a_value_error() {
-    // The `--(cond)` idiom: a boolean array coerces to 1/0 under the double-unary, so SUMPRODUCT
-    // counts the cells > 7 (15, 25, 10, 30 => 4 of 5) rather than refusing #VALUE!.
-    let fx = Fixture::new("eval-sumproduct");
-    fx.file("Sheet1", "A1:A5", "5\n15\n25\n10\n30");
-    let (code, out) = run(&[
-        "eval",
-        fx.path().to_str().unwrap(),
-        "=SUMPRODUCT(--(A1:A5>7))",
-    ]);
-    assert_eq!(code, 0, "the SUMPRODUCT idiom evaluates cleanly:\n{out}");
-    assert_ne!(out.trim(), "#VALUE!", "must NOT be #VALUE!:\n{out}");
-    assert_eq!(out.trim(), "4", "cells > 7 are 15,25,10,30 => 4:\n{out}");
+    let (code, out) = run(&["eval", fx.path().to_str().unwrap(), "--formula", "=1e20"]);
+    assert_eq!(code, 0, "=1e20 evaluates cleanly:\n{out}");
+    assert_eq!(out.trim(), "1E+20", "General-formats to 1E+20:\n{out}");
 }
 
 #[test]
@@ -187,6 +164,7 @@ fn eval_resolves_a_cross_tab_reference_against_the_named_tab() {
         fx.path().to_str().unwrap(),
         "--tab",
         "Summary",
+        "--formula",
         "=Inputs!A1*A1",
     ]);
     assert_eq!(code, 0, "cross-tab eval exits 0:\n{out}");
@@ -198,7 +176,7 @@ fn eval_a_bad_formula_exits_non_zero() {
     // An unparseable formula is a located diagnostic (on stderr) and a non-zero exit.
     let fx = Fixture::new("eval-bad");
     fx.file("Sheet1", "A1", "1");
-    let (code, _) = run(&["eval", fx.path().to_str().unwrap(), "=SUM("]);
+    let (code, _) = run(&["eval", fx.path().to_str().unwrap(), "--formula", "=SUM("]);
     assert_eq!(code, 3, "a parse error is a validation exit (3)");
 }
 
@@ -207,7 +185,7 @@ fn eval_an_error_value_exits_non_zero() {
     // A well-formed formula that evaluates to a spreadsheet error prints the error and exits non-zero.
     let fx = Fixture::new("eval-err");
     fx.file("Sheet1", "A1", "1");
-    let (code, out) = run(&["eval", fx.path().to_str().unwrap(), "=1/0"]);
+    let (code, out) = run(&["eval", fx.path().to_str().unwrap(), "--formula", "=1/0"]);
     assert_eq!(code, 3, "an error-valued result exits 3:\n{out}");
     assert_eq!(out.trim(), "#DIV/0!", "the error value is printed:\n{out}");
 }
@@ -376,4 +354,198 @@ fn guide_prints_and_exits_zero() {
         out.contains("STRUCTURE"),
         "the guide has its structure section:\n{out}"
     );
+}
+
+// ---- `--format json`: the machine envelope surface (cli-interface-standards Part 2). ----
+
+#[test]
+fn render_json_emits_a_success_envelope_with_columns_and_rows() {
+    let fx = Fixture::new("render-json");
+    fx.file("Sheet1", "A1", "20000")
+        .file("Sheet1", "B1", "=A1*2");
+    let (code, out) = run(&["render", fx.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(code, 0, "clean render exits 0; got:\n{out}");
+    assert!(
+        out.contains("\"status\":\"success\""),
+        "success envelope on stdout:\n{out}"
+    );
+    assert!(out.contains("\"columns\""), "grid columns:\n{out}");
+    assert!(out.contains("\"rows\""), "grid rows:\n{out}");
+    // The computed value rides in the structured data, not a scraped ASCII cell.
+    assert!(out.contains("40000"), "B1 computes to 40000:\n{out}");
+}
+
+#[test]
+fn check_clean_json_is_a_success_envelope_with_empty_diagnostics() {
+    let fx = Fixture::new("check-clean-json");
+    fx.file("Sheet1", "A1", "1").file("Sheet1", "B1", "=A1+1");
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(code, 0, "clean check exits 0:\n{out}");
+    assert!(out.contains("\"status\":\"success\""), "success:\n{out}");
+    assert!(
+        out.contains("\"diagnostics\":[]"),
+        "empty diagnostics array:\n{out}"
+    );
+}
+
+#[test]
+fn check_cycle_json_is_an_error_envelope_with_a_located_diagnostic() {
+    let fx = Fixture::new("check-cycle-json");
+    fx.file("Sheet1", "A1", "=B1").file("Sheet1", "B1", "=A1");
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(code, 3, "a cycle is a validation error -> exit 3:\n{out}");
+    assert!(
+        out.contains("\"status\":\"error\""),
+        "error envelope:\n{out}"
+    );
+    assert!(
+        out.contains("\"code\":\"validation_error\""),
+        "validation_error code:\n{out}"
+    );
+    // The diagnostic carries the stable dispatch code and a machine location (never a scraped table).
+    assert!(out.contains("\"code\":\"cycle\""), "the cycle code:\n{out}");
+    assert!(out.contains("\"location\""), "a located diagnostic:\n{out}");
+}
+
+#[test]
+fn check_json_completes_the_location_and_carries_a_fix_for_a_non_canonical_filename() {
+    // A lowercase filename is a load-time refusal with a DETERMINISTIC canonical rename: the JSON
+    // diagnostic completes its byte `span` {offset,length} AND carries a machine-applicable `fix`
+    // (cli-interface-standards Part 2 "Diagnostics"), so an agent can apply the rename unattended.
+    let fx = Fixture::new("check-noncanon-json");
+    fx.file("Sheet1", "a1", "42");
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(
+        code, 3,
+        "a non-canonical filename rejects -> exit 3:\n{out}"
+    );
+    assert!(
+        out.contains("\"code\":\"lowercase-column\""),
+        "the lowercase code:\n{out}"
+    );
+    // The location is a byte span {offset,length}, never a bare `byte`.
+    assert!(
+        out.contains("\"span\":{\"offset\":0,\"length\":2}"),
+        "completed byte span:\n{out}"
+    );
+    // A machine-applicable fix with the deterministic canonical replacement.
+    assert!(
+        out.contains("\"fix\":{\"applicability\":\"machine_applicable\""),
+        "a machine-applicable fix:\n{out}"
+    );
+    assert!(
+        out.contains("\"replacement\":\"A1\""),
+        "the canonical rename:\n{out}"
+    );
+    // The envelope carries the standard `meta` block.
+    assert!(
+        out.contains("\"meta\":{\"timestamp\":"),
+        "envelope meta block:\n{out}"
+    );
+}
+
+#[test]
+fn eval_parse_error_json_locates_a_body_span_with_start_and_end() {
+    // An unparseable ad-hoc formula is a located Body diagnostic: the JSON carries BOTH `start` and
+    // `end` {line,column} for the offending token (cli-interface-standards Part 2 "Diagnostics").
+    let fx = Fixture::new("eval-parse-json");
+    fx.file("Sheet1", "A1", "1");
+    let (code, out) = run(&[
+        "eval",
+        fx.path().to_str().unwrap(),
+        "--formula",
+        "=1+*2",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 3, "a parse error rejects -> exit 3:\n{out}");
+    assert!(
+        out.contains("\"code\":\"formula-syntax\""),
+        "the syntax code:\n{out}"
+    );
+    assert!(
+        out.contains("\"start\":{\"line\":1,\"column\":4}") && out.contains("\"end\":{"),
+        "a body span with start AND end:\n{out}"
+    );
+}
+
+#[test]
+fn eval_json_wraps_the_value_in_a_success_envelope() {
+    let fx = Fixture::new("eval-json");
+    fx.file("Sheet1", "A1:A3", "1\n2\n3");
+    let (code, out) = run(&[
+        "eval",
+        fx.path().to_str().unwrap(),
+        "--formula",
+        "=SUM(A1:A3)",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 0, "clean eval exits 0:\n{out}");
+    assert!(
+        out.contains("\"status\":\"success\""),
+        "success envelope:\n{out}"
+    );
+    assert!(out.contains("\"value\":\"6\""), "value in data:\n{out}");
+}
+
+#[test]
+fn eval_error_value_json_is_an_error_envelope_carrying_the_value() {
+    let fx = Fixture::new("eval-errval-json");
+    fx.file("Sheet1", "A1", "1");
+    let (code, out) = run(&[
+        "eval",
+        fx.path().to_str().unwrap(),
+        "--formula",
+        "=1/0",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 3, "an error-valued result exits 3:\n{out}");
+    assert!(
+        out.contains("\"status\":\"error\""),
+        "error envelope:\n{out}"
+    );
+    assert!(
+        out.contains("\"value\":\"#DIV/0!\""),
+        "the error value in data:\n{out}"
+    );
+}
+
+#[test]
+fn a_bad_arg_json_error_envelope_is_on_stdout() {
+    // An operational error is DATA in json mode: the envelope prints to STDOUT (not prose to stderr),
+    // so an agent can parse the failure. Exit code stays 2 (bad args).
+    let (code, out) = run(&["frobnicate", "--format", "json"]);
+    assert_eq!(code, 2, "an unknown command is exit 2:\n{out}");
+    assert!(
+        out.contains("\"status\":\"error\""),
+        "error on stdout:\n{out}"
+    );
+    assert!(
+        out.contains("\"code\":\"invalid_arguments\""),
+        "the invalid_arguments code:\n{out}"
+    );
+}
+
+#[test]
+fn a_not_found_json_error_envelope_is_on_stdout() {
+    let (code, out) = run(&["check", "/no/such/charlie/workbook/xyz", "--format", "json"]);
+    assert_eq!(code, 24, "not found is exit 24:\n{out}");
+    assert!(
+        out.contains("\"status\":\"error\""),
+        "error on stdout:\n{out}"
+    );
+    assert!(
+        out.contains("\"code\":\"not_found\""),
+        "the not_found code:\n{out}"
+    );
+}
+
+#[test]
+fn an_invalid_format_value_is_bad_args() {
+    let fx = Fixture::new("badformat");
+    fx.file("Sheet1", "A1", "1");
+    let (code, _) = run(&["render", fx.path().to_str().unwrap(), "--format", "yaml"]);
+    assert_eq!(code, 2, "an unknown --format value is exit 2 (bad args)");
 }

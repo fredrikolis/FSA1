@@ -57,14 +57,36 @@ pub struct CellRef {
 /// A fully-resolved rectangular range `start..=end` (inclusive on both corners) — what the
 /// [`crate::Resolver`] is asked to read.
 ///
-/// [`RangeNode::resolve`] threads the parsed corners through unchanged; the parser normalizes a
-/// reversed spelling (`B2:A1`) to top-left..bottom-right at fold time. Callers that iterate the
-/// rectangle still normalize per axis defensively (`Workbook::range` takes min/max on each corner
-/// before materializing/keying) so a reversed key never materializes the same rectangle twice.
+/// [`RangeNode::resolve`] threads the parsed corners through unchanged. The single home for putting a
+/// range into canonical corner order (`start` = top-left, `end` = bottom-right) is
+/// [`RangeRef::normalized`]: any interior consumer that iterates or keys the rectangle calls it, so a
+/// reversed spelling (`B2:A1`) collapses to the same rectangle as `A1:B2` without the min/max
+/// knowledge being re-derived at each site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RangeRef {
     pub start: CellRef,
     pub end: CellRef,
+}
+
+impl RangeRef {
+    /// This range in canonical corner order: `start` at the top-left (min col, min row) and `end` at
+    /// the bottom-right (max col, max row), each corner's `sheet` preserved. Idempotent — a range
+    /// already canonical is returned unchanged. This is the ONE place the corner-order rule lives, so
+    /// an inverted spelling (`B2:A1`) and its canonical form (`A1:B2`) collapse to a single rectangle.
+    pub fn normalized(self) -> RangeRef {
+        RangeRef {
+            start: CellRef {
+                col: self.start.col.min(self.end.col),
+                row: self.start.row.min(self.end.row),
+                sheet: self.start.sheet,
+            },
+            end: CellRef {
+                col: self.start.col.max(self.end.col),
+                row: self.start.row.max(self.end.row),
+                sheet: self.end.sheet,
+            },
+        }
+    }
 }
 
 /// The AST node for a cell reference — the *syntactic* form, before it is resolved to a [`CellRef`].
@@ -248,6 +270,38 @@ mod tests {
             sheet: Some(SheetId(1)),
         };
         assert_ne!(here, there);
+    }
+
+    #[test]
+    fn normalized_puts_corners_in_canonical_order_and_preserves_sheet() {
+        let inverted = RangeRef {
+            start: CellRef {
+                col: 1,
+                row: 1,
+                sheet: Some(SheetId(2)),
+            },
+            end: CellRef {
+                col: 0,
+                row: 0,
+                sheet: Some(SheetId(2)),
+            },
+        };
+        let canonical = RangeRef {
+            start: CellRef {
+                col: 0,
+                row: 0,
+                sheet: Some(SheetId(2)),
+            },
+            end: CellRef {
+                col: 1,
+                row: 1,
+                sheet: Some(SheetId(2)),
+            },
+        };
+        // An inverted spelling normalizes to top-left..bottom-right, sheet preserved.
+        assert_eq!(inverted.normalized(), canonical);
+        // Idempotent: an already-canonical range is unchanged.
+        assert_eq!(canonical.normalized(), canonical);
     }
 
     #[test]

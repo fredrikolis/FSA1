@@ -25,7 +25,7 @@ FILE BODY — a TSV grid, one cell per coordinate
 COMMANDS
   charlie-cli render <dir> [--tab NAME] [--range A1:D9] [--values|--functions|--annotation]
   charlie-cli check  <dir>                 lint (overlap · dimension · cycle); non-zero on error
-  charlie-cli eval   <dir> '=SUM(A1:A5)'   evaluate an ad-hoc formula against the workbook
+  charlie-cli eval   <dir> --formula '=SUM(A1:A5)'   evaluate an ad-hoc formula against the workbook
   charlie-cli sample <dir>                 write a live tutorial workbook to play with
 
 START HERE

@@ -60,10 +60,9 @@ impl<'r> EvalCtx<'r> {
             // intersection of an already-scalar value (including a 1×1 range) is the identity; on a
             // genuinely multi-cell array the real semantics are deferred -> `#CALC!`. The spill
             // operator has no v1 anchor -> `#CALC!`.
-            Expr::ImplicitIntersect(inner) => match self.eval(inner) {
-                Value::Array(shape, mut cells) if shape.rows == 1 && shape.cols == 1 => {
-                    cells.pop().unwrap_or(Value::Blank)
-                }
+            Expr::ImplicitIntersect(inner) => match collapse_1x1(self.eval(inner)) {
+                // A 1×1 collapses to its cell (the scalar identity) inside `collapse_1x1`, so a value
+                // still `Array` here is genuinely multi-cell -> deferred `#CALC!`.
                 Value::Array(..) => Value::Error(ErrKind::Calc),
                 scalar => scalar,
             },
@@ -267,11 +266,14 @@ pub(crate) fn collapse_1x1(v: Value) -> Value {
 /// Non-array values pass through unchanged. Operators do NOT route through here — they use
 /// [`collapse_1x1`] and broadcast a genuinely multi-cell array element-wise (`binary_broadcast` /
 /// `unop_scalar`) instead of demoting it to `#VALUE!`.
-pub(crate) fn scalarize(v: Value) -> Value {
-    match v {
-        Value::Array(shape, mut cells) if shape.rows == 1 && shape.cols == 1 => {
-            cells.pop().unwrap_or(Value::Blank)
-        }
+///
+/// Public because the scalar-position collapse rule is formula-language semantics the AST owns: the
+/// filesystem model reuses it (a bare-range formula written into one grid cell collapses by the same
+/// rule) rather than re-deriving it across the crate boundary.
+pub fn scalarize(v: Value) -> Value {
+    // Route the degenerate-collapse through its one home [`collapse_1x1`]; a value still `Array`
+    // afterwards is genuinely multi-cell, which cannot occupy a scalar-only slot -> `#VALUE!`.
+    match collapse_1x1(v) {
         Value::Array(..) => Value::Error(ErrKind::Value),
         other => other,
     }
@@ -290,10 +292,13 @@ pub(crate) fn coerce_num(v: &Value) -> Result<f64, ErrKind> {
             _ => Err(ErrKind::Value),
         },
         Value::Error(k) => Err(*k),
-        Value::Array(shape, cells) if shape.rows == 1 && shape.cols == 1 => {
-            coerce_num(cells.first().unwrap_or(&Value::Blank))
-        }
-        Value::Array(..) => Err(ErrKind::Value),
+        // The scalar-position collapse is single-homed in [`scalarize`] (a 1×1 → its cell, a
+        // genuinely multi-cell array → `#VALUE!`); coerce the collapsed scalar rather than
+        // re-deriving the 1×1 rule here.
+        Value::Array(..) => match scalarize(v.clone()) {
+            Value::Error(k) => Err(k),
+            scalar => coerce_num(&scalar),
+        },
     }
 }
 

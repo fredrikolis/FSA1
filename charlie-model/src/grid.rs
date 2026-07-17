@@ -111,7 +111,13 @@ fn deserialize_field(
         let expr = parse(token).map_err(|diag| {
             Diagnostic::new(
                 Code::FormulaSyntax,
-                Loc::body(file, file_line, (byte + diag.span.start + 1) as u32),
+                Loc::body_span(
+                    file,
+                    file_line,
+                    (byte + diag.span.start + 1) as u32,
+                    file_line,
+                    (byte + diag.span.end + 1) as u32,
+                ),
                 format!("cannot parse formula {token:?}: {}", diag.message),
             )
         })?;

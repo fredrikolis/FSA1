@@ -281,14 +281,12 @@ mod tests {
     fn value_spelling_covers_every_arm() {
         assert_eq!(display_value(&Value::Number(20.0)), "20");
         assert_eq!(display_value(&Value::Number(2.5)), "2.5");
-        // General format (shared with `&`/`TEXT`): extreme magnitudes go scientific, `-0.0` is `0`.
+        // ONE discriminating case that the Number arm routes through the General formatter
+        // (`num_to_text`) and not Rust's raw `Display`: `1e20` renders scientific `1E+20`, where raw
+        // `Display` would spell a 21-digit integer. The exhaustive General spelling table (scientific
+        // thresholds, `-0.0`→`0`, 15-sig rounding) is frozen once at its home,
+        // charlie-ast::eval `num_to_text_matches_excel_general_format`; this only proves the wiring.
         assert_eq!(display_value(&Value::Number(1e20)), "1E+20");
-        assert_eq!(display_value(&Value::Number(1e-9)), "1E-09");
-        assert_eq!(
-            display_value(&Value::Number(1234567890123456.0)),
-            "1.23456789012346E+15"
-        );
-        assert_eq!(display_value(&Value::Number(-0.0)), "0");
         assert_eq!(display_value(&Value::Text("hi".into())), "hi");
         assert_eq!(display_value(&Value::Bool(true)), "TRUE");
         assert_eq!(display_value(&Value::Bool(false)), "FALSE");

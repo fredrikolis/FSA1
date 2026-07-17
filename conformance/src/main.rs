@@ -79,8 +79,8 @@ fn run_report() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `backslide` — the pre-commit guard. Exit contract mirrors fanuc: `2` when the anchor cannot be
-/// read (fail SAFE), `1` when ≥1 fixture lost its Match, `0` otherwise.
+/// `backslide` — the pre-commit guard. Exit contract: `2` when the anchor cannot be read (fail
+/// SAFE), `1` when ≥1 fixture lost its Match, `0` otherwise.
 fn run_backslide() -> ExitCode {
     let anchor = match read_anchor() {
         Ok(a) => a,

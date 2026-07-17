@@ -15,7 +15,7 @@ use std::path::Path;
 
 use charlie_ast::{
     ArrayView, CellRef, ErrKind, Expr, RangeRef, Resolver, Shape, SheetId, Value, eval, parse,
-    system_now_secs, unix_secs_to_serial,
+    scalarize, system_now_secs, unix_secs_to_serial,
 };
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -381,9 +381,15 @@ impl Workbook {
         let expr = parse(formula).map_err(|diag| {
             Diagnostic::new(
                 Code::FormulaSyntax,
-                // Locate on the formula text at the refusal's 1-based byte column (a formula is a
-                // single line; line 1 mirrors the body-line convention).
-                Loc::body(formula, 1, (diag.span.start as u32) + 1),
+                // Locate on the formula text over the refusal's 1-based byte-column span (a formula is
+                // a single line; line 1 mirrors the body-line convention).
+                Loc::body_span(
+                    formula,
+                    1,
+                    (diag.span.start as u32) + 1,
+                    1,
+                    (diag.span.end as u32) + 1,
+                ),
                 format!("cannot parse formula {formula:?}: {}", diag.message),
             )
         })?;
@@ -609,12 +615,13 @@ impl Workbook {
                 }
             }
             Expr::Range(rn) => {
-                if let Some(rr) = rn.resolve(|name| self.sheet_id(name)) {
+                if let Some(rr) = rn
+                    .resolve(|name| self.sheet_id(name))
+                    .map(RangeRef::normalized)
+                {
                     let s = rr.start.sheet.map_or(home, |SheetId(i)| i);
-                    let c0 = rr.start.col.min(rr.end.col);
-                    let c1 = rr.start.col.max(rr.end.col);
-                    let r0 = rr.start.row.min(rr.end.row);
-                    let r1 = rr.start.row.max(rr.end.row);
+                    let (c0, c1) = (rr.start.col, rr.end.col);
+                    let (r0, r1) = (rr.start.row, rr.end.row);
                     let area = (u64::from(r1 - r0) + 1) * (u64::from(c1 - c0) + 1);
                     if area <= MAX_RANGE_CELLS {
                         for row in r0..=r1 {
@@ -743,13 +750,13 @@ impl Workbook {
 
     /// The value of the covering file's grid cell at offset `(dr, dc)`. The cell holds a parsed `Expr`
     /// (VAL1: evaluated exactly as written — no offset/drag-fill), collapsed to a scalar for its scalar
-    /// cell position by [`scalar_cell`]. Called from the EVALUATE pass with `current_sheet`/
-    /// `current_file` already set to this cell's context; the [`Resolver`] it evaluates against only
-    /// READS already-computed dependency values (never recurses).
+    /// cell position by [`charlie_ast::scalarize`] (the AST owns the scalar-position rule). Called from
+    /// the EVALUATE pass with `current_sheet`/`current_file` already set to this cell's context; the
+    /// [`Resolver`] it evaluates against only READS already-computed dependency values (never recurses).
     fn compute_formula(&self, id: FileId, dr: u32, dc: u32) -> Value {
         let file = &self.tabs[id.0 as usize].files[id.1];
         match file.grid.cell_at(dr, dc) {
-            GridCell::Formula { expr, .. } => scalar_cell(eval(expr, self)),
+            GridCell::Formula { expr, .. } => scalarize(eval(expr, self)),
             // `compute_formula` is only reached for a formula node; a literal is total-passed-through
             // defensively rather than panicking.
             GridCell::Value(v) => v.clone(),
@@ -852,14 +859,13 @@ impl Resolver for Workbook {
 
     fn range(&self, range: RangeRef) -> ArrayView<'_> {
         // Resolve `sheet: None` to the current context and key the arena by the qualified range, so a
-        // memoized `A1:A3` on one sheet is never mistaken for `A1:A3` on another. Normalize the key's
-        // corners to canonical min/max so a reversed spelling (`B2:A1`) maps to the SAME arena entry
-        // as `A1:B2` rather than materializing the identical rectangle twice under two keys.
+        // memoized `A1:A3` on one sheet is never mistaken for `A1:A3` on another. Canonicalize the
+        // key's corners via [`RangeRef::normalized`] so a reversed spelling (`B2:A1`) maps to the SAME
+        // arena entry as `A1:B2` rather than materializing the identical rectangle twice under two keys.
         let eff = SheetId(self.resolve_sheet(range.start.sheet));
-        let c0 = range.start.col.min(range.end.col);
-        let c1 = range.start.col.max(range.end.col);
-        let r0 = range.start.row.min(range.end.row);
-        let r1 = range.start.row.max(range.end.row);
+        let norm = range.normalized();
+        let (c0, c1) = (norm.start.col, norm.end.col);
+        let (r0, r1) = (norm.start.row, norm.end.row);
         let key = RangeRef {
             start: CellRef {
                 col: c0,
@@ -935,20 +941,6 @@ impl Resolver for Workbook {
 
     fn now_serial(&self) -> f64 {
         self.now
-    }
-}
-
-/// Collapse a formula's evaluated result to the single scalar a grid cell holds: a 1×1 array is its
-/// lone cell, a genuinely multi-cell array (a bare range like `=A1:A3` written into one cell) is
-/// `#VALUE!` (an array in a scalar cell position), and a scalar passes through. This mirrors the
-/// engine's scalar-position rule; a scalar-valued formula always passes through unchanged.
-fn scalar_cell(v: Value) -> Value {
-    match v {
-        Value::Array(shape, mut cells) if shape.rows == 1 && shape.cols == 1 => {
-            cells.pop().unwrap_or(Value::Blank)
-        }
-        Value::Array(..) => Value::Error(ErrKind::Value),
-        scalar => scalar,
     }
 }
 
@@ -1137,7 +1129,7 @@ mod tests {
     #[test]
     fn a_bare_range_formula_in_a_scalar_cell_is_a_value_error() {
         // A formula that evaluates to a genuinely multi-cell array (`=A1:A3`) written into a single
-        // scalar cell has no scalar meaning — `scalar_cell` collapses it to `#VALUE!`.
+        // scalar cell has no scalar meaning — `scalarize` collapses it to `#VALUE!`.
         let wb = load_one_tab("Sheet1", &[("A1:A3", "1\n2\n3"), ("C1", "=A1:A3")]);
         assert_eq!(wb.value_at(0, 2, 0), Value::Error(ErrKind::Value)); // C1
     }
@@ -1392,10 +1384,10 @@ mod tests {
     }
 
     #[test]
-    fn an_inverted_range_reuses_its_normalized_arena_entry() {
-        // The arena key is normalized to canonical min/max corners (matching the materialization
-        // loop), so a reversed spelling (`B2:A1`) maps to the SAME cache entry as `A1:B2` rather than
-        // materializing the identical rectangle twice under two keys.
+    fn an_inverted_range_yields_the_same_rectangle() {
+        // Corner order is not observable: a reversed spelling (`B2:A1`) resolves to the SAME rectangle
+        // as its canonical form (`A1:B2`). This is the public contract (`RangeRef::normalized` owns the
+        // corner-order rule); how the arena dedups the two keys is an internal the test does not pin.
         let wb = load_one_tab("Sheet1", &[("A1", "1")]);
         let normalized = RangeRef {
             start: CellRef {
@@ -1422,13 +1414,8 @@ mod tests {
             },
         };
         let normalized_cells = wb.range(normalized).cells.to_vec();
-        // Same rectangle regardless of corner order -- and, crucially, the same arena slot.
+        // Same rectangle regardless of corner order.
         assert_eq!(wb.range(inverted).cells, normalized_cells.as_slice());
-        assert_eq!(
-            wb.arena.index.borrow().len(),
-            1,
-            "an inverted range must reuse the normalized key's entry, not add a second"
-        );
     }
 
     #[test]
@@ -1529,7 +1516,7 @@ mod tests {
     /// native recursion through `charlie_ast::eval`, with a `visiting` set for basic cycle protection
     /// and a tiny memo so a shared/diamond ancestor does not re-evaluate exponentially. It shares NONE
     /// of the two-pass algorithm (no `DepGraph`, no plan, no `topo_order`) — only the workbook's
-    /// structural cell-location plumbing (`covering`) and the `Arena`/`scalar_cell` resolver helpers,
+    /// structural cell-location plumbing (`covering`) and the `Arena`/`scalarize` resolver helpers,
     /// which are not evaluation logic. Its verdict is VALUES; the differential test asserts nothing
     /// about how either side reaches them.
     ///
@@ -1589,7 +1576,7 @@ mod tests {
                 GridCell::Formula { expr, .. } => {
                     self.visiting.borrow_mut().insert(key);
                     let prev = self.cur.replace(id.0);
-                    let r = scalar_cell(eval(expr, self));
+                    let r = scalarize(eval(expr, self));
                     self.cur.set(prev);
                     self.visiting.borrow_mut().remove(&key);
                     r
@@ -1601,10 +1588,9 @@ mod tests {
 
         fn range(&self, range: RangeRef) -> ArrayView<'_> {
             let eff = SheetId(cell_sheet(range.start.sheet, self.cur.get()));
-            let c0 = range.start.col.min(range.end.col);
-            let c1 = range.start.col.max(range.end.col);
-            let r0 = range.start.row.min(range.end.row);
-            let r1 = range.start.row.max(range.end.row);
+            let norm = range.normalized();
+            let (c0, c1) = (norm.start.col, norm.end.col);
+            let (r0, r1) = (norm.start.row, norm.end.row);
             let (rows, cols) = (r1 - r0 + 1, c1 - c0 + 1);
             let key = RangeRef {
                 start: CellRef {
