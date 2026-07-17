@@ -26,16 +26,17 @@ that constrain them.
 
 ## GRID — deserialization (content → grid)
 
-- **GRID1 · grid.** A file resolves to a grid: for every coordinate in its closed range, one cell — an explicit value or an explicit `=formula`. — *the grid of `F2:F11` is exactly ten cells, each a value or a formula.*
+- **GRID1 · grid.** A file's content is exactly its grid: for every coordinate in its closed range, one cell — an explicit value or an explicit `=formula`. — *the grid of `F2:F11` is exactly ten cells, each a value or a formula; the file holds those cells and carries no header, annotation, or metadata.*
 - **GRID2 · deserializer / generator.** A deserializer turns a file's content into its grid. A generator is a deserializer that computes the grid from a compact form rather than reading it cell-for-cell. — *a deserializer takes file content in some format and produces a grid; a generator's grid is the same artifact a file would otherwise list by hand.*
 - **GRID3 · content → grid via a deserializer.** The engine operates only on the grid; a file's format lives entirely in its deserializer, so switching format switches only the deserializer. — *`render --functions` shows the same grid whether a file was written as TSV or produced by a generator; the engine is unchanged when the deserializer changes.*
 - **GRID4 · the grid fills its range.** A grid fills its file's closed range exactly. — *a `B2:D9` file whose grid is not 3×8 is a located dimension error.*
 
 ### The current deserializer
 
-A grid is deserialized from **TSV**: tab-separated columns, newline-separated rows; each cell is a
-literal or an `=formula`. An empty field is a blank cell — a double tab (`a⇥⇥b`) makes the middle cell
-blank, as do leading and trailing empty fields. Because the engine operates only on the grid (GRID3),
+A grid is deserialized from **TSV**: the **entire file content is the grid** — there is no header,
+annotation, or metadata line, and the first line is the first row. Columns are tab-separated, rows are
+newline-separated; each cell is a literal or an `=formula`. An empty field is a blank cell — a double
+tab (`a⇥⇥b`) makes the middle cell blank, as do leading and trailing empty fields. Because the engine operates only on the grid (GRID3),
 TSV is the *current* deserializer; another format, or a generator, is a new deserializer and leaves
 the engine untouched.
 
