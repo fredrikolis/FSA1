@@ -6,6 +6,7 @@ use charlie_ast::{Expr, RangeRef, Resolver, SheetId};
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::grid::Cell as GridCell;
 
+use super::cache::CacheScan;
 use super::{CellKey, FileId, MAX_PULL_DEPTH, MAX_RANGE_CELLS, Workbook};
 
 /// One node of the PLAN pass's dependency graph — how a demanded cell is computed by the EVALUATE
@@ -61,9 +62,11 @@ impl Workbook {
     /// becomes one node); an already-memoized cell is a resolved leaf and is not re-planned (ENG4).
     pub(super) fn demand(&self, roots: &[CellKey]) {
         let mut graph = DepGraph::default();
+        // One cache scan shared across the pass so each cell's content cone hashes at most once (ENG7).
+        let mut scan = CacheScan::new();
         for &r in roots {
             let mut on_stack = HashSet::new();
-            self.plan_visit(r, 0, &mut graph, &mut on_stack);
+            self.plan_visit(r, 0, &mut graph, &mut on_stack, &mut scan);
         }
         self.evaluate(&graph);
     }
@@ -82,6 +85,7 @@ impl Workbook {
         depth: u32,
         graph: &mut DepGraph,
         on_stack: &mut HashSet<CellKey>,
+        scan: &mut CacheScan,
     ) {
         // GRID5: a coordinate inside an array-formula region is planned/computed at the region's single
         // ANCHOR (top-left) cell — one node for the whole region (VAL1/ENG3, compute once). Redirect
@@ -93,6 +97,15 @@ impl Workbook {
         }
         if self.memo.borrow().contains_key(&key) {
             return; // a clean, memoized value — a resolved leaf (ENG4 reuse)
+        }
+        // ENG7: a persistent cache HIT serves this cell's value into the memo, so it becomes a resolved
+        // leaf here and its whole dependency cone is never planned or evaluated (a cached subtree is
+        // not recomputed). A miss / uncacheable cell / caching-off falls through to plan normally. The
+        // plan `depth` gates the serve against the pull-depth bound: a cell whose cone a cold descent
+        // would carry past `MAX_PULL_DEPTH` from here is not served (it would suppress the depth refusal
+        // a cache-deleted run raises), so it plans on and reaches the SAME refusal warm as cold (ENG7).
+        if self.cache_serve(key, depth, scan) {
+            return;
         }
         if on_stack.contains(&key) {
             // A reference cycle: the re-entered cell is a located `#REF!`. Its dependents propagate it.
@@ -120,7 +133,7 @@ impl Workbook {
         on_stack.insert(key);
         let deps = self.expr_deps(expr, sheet);
         for &d in &deps {
-            self.plan_visit(d, depth + 1, graph, on_stack);
+            self.plan_visit(d, depth + 1, graph, on_stack, scan);
         }
         on_stack.remove(&key);
         // A dependency descent may have re-entered THIS cell (a cycle back-edge) and already marked it

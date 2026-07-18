@@ -124,6 +124,7 @@ fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
     let mut tab: Option<String> = None;
     let mut range: Option<String> = None;
     let mut modes: Vec<RenderMode> = Vec::new();
+    let mut no_cache = false;
 
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
@@ -139,6 +140,7 @@ fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
             },
             "--values" => modes.push(RenderMode::Values),
             "--functions" => modes.push(RenderMode::Functions),
+            "--no-cache" => no_cache = true,
             f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
             _ => {
                 if path.replace(arg.clone()).is_some() {
@@ -155,7 +157,7 @@ fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
         return bad_arg(fmt, "render needs a <path> to a workbook directory");
     };
 
-    let wb = match load(fmt, Path::new(&path)) {
+    let wb = match load(fmt, Path::new(&path), no_cache) {
         Ok(wb) => wb,
         Err(code) => return code,
     };
@@ -233,8 +235,13 @@ fn emit_empty_tab(fmt: Format, wb: &Workbook, sheet: u32) -> u8 {
 /// error-severity diagnostic fires (a workbook that won't even load is itself the failure).
 fn cmd_check(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
+    let mut no_cache = false;
     for arg in rest {
         let (flag, _) = split_flag(arg);
+        if flag == "--no-cache" {
+            no_cache = true;
+            continue;
+        }
         if flag.starts_with('-') {
             return bad_arg(fmt, &format!("unknown flag {flag:?}"));
         }
@@ -258,7 +265,10 @@ fn cmd_check(fmt: Format, rest: &[String]) -> u8 {
             return fail(fmt, ErrorCode::Io, &msg);
         }
         Ok(Err(load_diags)) => load_diags,
-        Ok(Ok(wb)) => wb.lint(),
+        Ok(Ok(mut wb)) => {
+            apply_no_cache(&mut wb, no_cache);
+            wb.lint()
+        }
     };
 
     output::emit_diagnostics(fmt, &diags)
@@ -273,6 +283,7 @@ fn cmd_eval(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     let mut tab: Option<String> = None;
     let mut formula: Option<String> = None;
+    let mut no_cache = false;
 
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
@@ -291,6 +302,7 @@ fn cmd_eval(fmt: Format, rest: &[String]) -> u8 {
                     );
                 }
             },
+            "--no-cache" => no_cache = true,
             f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
             _ => {
                 if path.replace(arg.clone()).is_some() {
@@ -313,7 +325,7 @@ fn cmd_eval(fmt: Format, rest: &[String]) -> u8 {
         );
     };
 
-    let wb = match load(fmt, Path::new(&path)) {
+    let wb = match load(fmt, Path::new(&path), no_cache) {
         Ok(wb) => wb,
         Err(code) => return code,
     };
@@ -405,7 +417,7 @@ fn cmd_trace(fmt: Format, rest: &[String]) -> u8 {
         None => (tab, cell),
     };
 
-    let wb = match load(fmt, Path::new(&path)) {
+    let wb = match load(fmt, Path::new(&path), false) {
         Ok(wb) => wb,
         Err(code) => return code,
     };
@@ -607,7 +619,7 @@ fn import_error_code(kind: charlie_ingest::ErrorKind) -> ErrorCode {
 /// Load a workbook directory, mapping loader failures to the envelope. A load-time refusal carries
 /// located diagnostics (a workbook that won't load can't be rendered/evaluated); a missing path or an
 /// I/O failure is an operational error. Returns the exit code in `Err`.
-fn load(fmt: Format, path: &Path) -> Result<Workbook, u8> {
+fn load(fmt: Format, path: &Path, no_cache: bool) -> Result<Workbook, u8> {
     match Workbook::load_dir(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let msg = format!("no such workbook directory {:?}", path.display());
@@ -618,7 +630,21 @@ fn load(fmt: Format, path: &Path) -> Result<Workbook, u8> {
             Err(fail(fmt, ErrorCode::Io, &msg))
         }
         Ok(Err(diags)) => Err(emit_validation_diagnostics(fmt, &diags)),
-        Ok(Ok(wb)) => Ok(wb),
+        Ok(Ok(mut wb)) => {
+            apply_no_cache(&mut wb, no_cache);
+            Ok(wb)
+        }
+    }
+}
+
+/// Apply the `--no-cache` bypass: turn the persistent result cache off when the flag is set (the
+/// ENG4/ENG7 testing bypass — no `.cache/` reads or writes; values are identical either way, VAL2).
+/// Single-homes the flag -> [`Workbook::disable_cache`] step that both [`load`] (render/eval/trace) and
+/// [`cmd_check`] (which bypasses `load` because it needs the loader's OWN diagnostics as lint output)
+/// must perform identically, so the two sites cannot drift.
+fn apply_no_cache(wb: &mut Workbook, no_cache: bool) {
+    if no_cache {
+        wb.disable_cache();
     }
 }
 
@@ -733,7 +759,7 @@ SEE ALSO:
 const RENDER_HELP: &str = r#"charlie-cli render — draw a tab (or a sub-range) of a filesystem spreadsheet
 
 USAGE:
-  charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions] [--format <text|json>]
+  charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions] [--no-cache] [--format <text|json>]
 
 DESCRIPTION:
   Render a workbook tab to a grid. Values mode is demand-driven — only the viewport's dependency cone
@@ -745,6 +771,8 @@ ARGUMENTS:
   --range <A3:G8>   (optional) Only this rectangle (canonical A1). Default: the tab's used region.
   --values          (optional) Computed values (the default mode).
   --functions       (optional) Source text: a formula shows its =… text, a literal shows its value.
+  --no-cache        (optional) Bypass the persistent result cache (.cache/) for this run — no reads
+                    or writes. Values are identical; only the work to compute them changes.
   --format <fmt>    (optional) text (default, human ASCII table) or json (the machine envelope).
 
 EXAMPLES:
@@ -773,7 +801,7 @@ SEE ALSO:
 const CHECK_HELP: &str = r#"charlie-cli check — lint a filesystem spreadsheet
 
 USAGE:
-  charlie-cli check <path> [--format <text|json>]
+  charlie-cli check <path> [--no-cache] [--format <text|json>]
 
 DESCRIPTION:
   Lint the workbook: overlap, dimension-mismatch, cycle, and the load-time filename refusals.
@@ -781,6 +809,7 @@ DESCRIPTION:
 
 ARGUMENTS:
   <path>            (required) The workbook directory.
+  --no-cache        (optional) Bypass the persistent result cache (.cache/) — no reads or writes.
   --format <fmt>    (optional) text (default, ASCII table) or json (the machine envelope).
 
 EXAMPLES:
@@ -815,7 +844,7 @@ SEE ALSO:
 const EVAL_HELP: &str = r##"charlie-cli eval — evaluate an ad-hoc formula against a workbook
 
 USAGE:
-  charlie-cli eval <path> --formula '=<formula>' [--tab <name>] [--format <text|json>]
+  charlie-cli eval <path> --formula '=<formula>' [--tab <name>] [--no-cache] [--format <text|json>]
 
 DESCRIPTION:
   Evaluate a formula against a loaded workbook and emit its value. Read-only — no writes, no mutation.
@@ -825,6 +854,7 @@ ARGUMENTS:
   <path>            (required) The workbook directory.
   --formula '=…'    (required) The formula to evaluate.
   --tab <name>      (optional) Which tab unqualified references resolve against. Default: the first tab.
+  --no-cache        (optional) Bypass the persistent result cache (.cache/) — no reads or writes.
   --format <fmt>    (optional) text (default) or json (the machine envelope).
 
 EXAMPLES:

@@ -44,6 +44,8 @@ impl Workbook {
                     };
                     self.current_sheet.set(file.0);
                     self.current_file.set(Some(*file));
+                    #[cfg(test)]
+                    self.eval_count.set(self.eval_count.get() + 1);
                     let v = self.compute_formula(*file, *dr, *dc);
                     self.results.borrow_mut().insert(key, v);
                     if tainted {
@@ -60,6 +62,8 @@ impl Workbook {
                     };
                     self.current_sheet.set(file.0);
                     self.current_file.set(Some(*file));
+                    #[cfg(test)]
+                    self.eval_count.set(self.eval_count.get() + 1);
                     self.fill_array_region(*file, tainted);
                 }
                 None => {}
@@ -113,22 +117,38 @@ impl Workbook {
         order
     }
 
-    /// Promote the pass's clean (non-tainted) results into the memo (ENG4 reuse) and clear the pass
-    /// scratch. A depth-tainted value is dropped, not memoized — its `#NUM!` is root-relative, so a
-    /// later shallower demand must recompute it.
+    /// Promote the pass's clean (non-tainted) results into the memo (ENG4 reuse), PERSIST them to the
+    /// ENG7 cache, and clear the pass scratch. A depth-tainted value is dropped, not memoized — its
+    /// `#NUM!` is root-relative, so a later shallower demand must recompute it (and, being uncacheable,
+    /// never reaches the cache). Only NEWLY-computed clean results are written; a cache-served value
+    /// went straight to the memo (never into `results`), so it is not re-written.
     pub(super) fn finish_pass(&self) {
-        {
+        let clean: Vec<(CellKey, Value)> = {
             let results = self.results.borrow();
             let tainted = self.pass_tainted.borrow();
             let mut memo = self.memo.borrow_mut();
+            let mut clean = Vec::new();
             for (k, v) in results.iter() {
                 if !tainted.contains(k) {
                     memo.insert(*k, v.clone());
+                    clean.push((*k, v.clone()));
                 }
             }
-        }
+            clean
+        };
         self.results.borrow_mut().clear();
         self.pass_tainted.borrow_mut().clear();
+        // Persist the clean results (no memo/results borrow held: the cache write hashes content cones,
+        // which read only the grids). A no-op when caching is off (`from_tabs` / `--no-cache`).
+        self.cache_store_clean(&clean);
+    }
+
+    /// The number of formula evaluations this workbook has performed (test-visible ENG7 instrument): a
+    /// warm-cache re-run reads served subtrees from the cache and so increments this materially less
+    /// than the cold first run (values matching alone does not prove reuse — this does).
+    #[cfg(test)]
+    pub(crate) fn eval_count(&self) -> u64 {
+        self.eval_count.get()
     }
 
     /// The value of the covering file's grid cell at offset `(dr, dc)`. The cell holds a parsed `Expr`

@@ -251,9 +251,11 @@ impl<'w> Tracer<'w> {
         }
     }
 
-    /// The opaque computation hash of a cell, using the shared memo.
+    /// The opaque computation hash of a cell, using the shared memo. Rooted at depth 0 — the trace
+    /// reports each node's own content identity (the depth-relative taint gating is the ENG7 cache
+    /// serve's concern, not the trace's).
     fn hashes_of(&mut self, key: CellKey) -> Option<String> {
-        self.wb.computation_hash_with(key, &mut self.hashes)
+        self.wb.computation_hash_with(key, 0, &mut self.hashes)
     }
 
     /// The sheet-qualified A1 address of a cell (`Sheet1!C3`).

@@ -9,6 +9,7 @@
 //! engine stays memoized (ENG4), cycle-safe (a reference cycle is a located `#REF!`), and lazy (an
 //! off-request cell never computes).
 
+mod cache;
 mod evaluate;
 mod hash;
 mod plan;
@@ -30,6 +31,7 @@ use crate::grid::{Cell as GridCell, Grid};
 use crate::overlap::{Rect, detect_overlaps};
 use crate::{ParsedFile, parse_file};
 
+use cache::{CacheScan, ResultCache};
 use plan::DepGraph;
 use resolver::Arena;
 
@@ -150,6 +152,20 @@ pub struct Workbook {
     /// Located refusals surfaced during evaluation (cycles, depth limits, over-large ranges, spills).
     /// Load-time refusals are returned by the loader; these accumulate as cells are planned/pulled.
     diagnostics: RefCell<Vec<Diagnostic>>,
+    /// The ENG7 PERSISTENT result cache under `<workbook>/.cache/`, or `None` when caching is off — an
+    /// in-memory [`Workbook::from_tabs`] has no filesystem (ENG5), and `--no-cache` clears it
+    /// ([`Workbook::disable_cache`]). Attached only by [`Workbook::load_dir`], which knows the root
+    /// path. A contained optimization (ENG3/VAL2): deleting `.cache/` changes performance, never
+    /// values (the `cache` sibling owns the read short-circuit + the atomic write).
+    cache: Option<ResultCache>,
+    /// A per-Workbook (i.e. per-invocation) count of formula EVALUATIONS actually performed — the
+    /// test-visible instrument proving ENG7 reuse (a warm-cache re-run performs materially fewer evals
+    /// because a cached subtree is served without evaluating). Incremented once per computed formula
+    /// cell / array region; a cache hit adds nothing (the cell is never evaluated). `#[cfg(test)]`: the
+    /// field, its increments, and its `eval_count()` reader compile ONLY under test, so a production
+    /// build carries and mutates no test-only instrument in the hot per-formula path.
+    #[cfg(test)]
+    eval_count: Cell<u64>,
 }
 
 /// The outcome of [`Workbook::eval_formula`]: a successfully evaluated value or a spreadsheet error
@@ -218,6 +234,12 @@ impl Workbook {
                 continue;
             }
             let tab_name = entry.file_name().to_string_lossy().into_owned();
+            // FS3: the reserved `.cache/` sub-folder is NOT a tab — it holds the regenerable,
+            // non-authoritative ENG7 result cache. A workbook with `.cache/` present loads with the
+            // same tab set as without it (skip it here); every OTHER sub-folder is a tab (FS1).
+            if tab_name == ".cache" {
+                continue;
+            }
             let mut files: Vec<(String, String)> = Vec::new();
             let mut file_entries: Vec<_> =
                 std::fs::read_dir(entry.path())?.collect::<Result<_, _>>()?;
@@ -232,7 +254,24 @@ impl Workbook {
             }
             tabs.push((tab_name, files));
         }
-        Ok(Workbook::from_owned(tabs))
+        // Attach the persistent ENG7 cache at `<root>/.cache/` (FS3). A load-time refusal keeps its
+        // `Err`; only a workbook that loads gets a cache.
+        Ok(Workbook::from_owned(tabs).map(|wb| wb.with_cache_dir(root.join(".cache"))))
+    }
+
+    /// Attach the persistent result cache rooted at `dir` (`<workbook>/.cache/`). Consuming builder so
+    /// [`Workbook::load_dir`] can wire the cache the in-memory loader knows nothing about (ENG5).
+    fn with_cache_dir(mut self, dir: std::path::PathBuf) -> Workbook {
+        self.cache = Some(ResultCache::new(dir));
+        self
+    }
+
+    /// Turn the persistent cache OFF for this workbook — the ENG4/ENG7 testing bypass behind the
+    /// `--no-cache` CLI flag. Bypasses BOTH the read short-circuit and the write (the cache field is
+    /// the single gate both consult), so a `--no-cache` run neither reads nor writes `.cache/` and
+    /// yields identical values (VAL2: no value ever derived from the cache).
+    pub fn disable_cache(&mut self) {
+        self.cache = None;
     }
 
     /// The shared loader over owned strings (so the fs and in-memory paths converge here).
@@ -282,6 +321,11 @@ impl Workbook {
                 current_file: Cell::new(None),
                 arena: Arena::default(),
                 diagnostics: RefCell::new(Vec::new()),
+                // In-memory (`from_tabs`) workbooks have no filesystem, so no cache (ENG5);
+                // `load_dir` attaches one afterward via `with_cache_dir`.
+                cache: None,
+                #[cfg(test)]
+                eval_count: Cell::new(0),
             })
         } else {
             Err(diags)
@@ -382,9 +426,10 @@ impl Workbook {
         // then EVALUATE it — exactly the two passes a stored formula rides.
         let deps = self.expr_deps(&expr, sheet);
         let mut graph = DepGraph::default();
+        let mut scan = CacheScan::new();
         for &d in &deps {
             let mut on_stack = HashSet::new();
-            self.plan_visit(d, 0, &mut graph, &mut on_stack);
+            self.plan_visit(d, 0, &mut graph, &mut on_stack, &mut scan);
         }
         self.evaluate(&graph);
         // The EVALUATE pass left `current_sheet`/`current_file` at the last node's context; set the

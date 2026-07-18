@@ -3,6 +3,12 @@
 **/*.rs.bk
 Cargo.lock.orig
 
+# The ENG7 persistent result cache (FS3): regenerable, non-authoritative derived data that lives in a
+# `.cache/` sub-folder of any workbook — deleting it never changes a value (VAL2). It is written
+# whenever an evaluating command runs (including tests over the committed conformance fixtures), so it
+# is never tracked; a workbook's `.cache/` is always rebuilt on demand.
+**/.cache/
+
 # The python venv used to AUTHOR the ingest fixtures is disposable — the generated fixtures
 # (charlie-ingest/tests/fixtures/*.{ods,xlsx}) ARE committed, so the Rust tests need no
 # python/odfpy/openpyxl.

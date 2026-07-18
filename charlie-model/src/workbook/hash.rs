@@ -146,18 +146,26 @@ impl Workbook {
     /// function of the cell's content cone (VAL1) and is stable run-to-run.
     pub fn computation_hash(&self, sheet: u32, col: u32, row: u32) -> Option<String> {
         let mut memo = HashMemo::new();
-        self.computation_hash_with((sheet, col, row), &mut memo)
+        self.computation_hash_with((sheet, col, row), 0, &mut memo)
     }
 
-    /// The same digest, reusing a caller-owned [`HashMemo`] across many cells (the `trace` surface).
-    /// The raw [`CompHash`] stays inside; only the opaque hex spelling is returned.
+    /// The same digest, reusing a caller-owned [`HashMemo`] across many cells (the `trace` surface) and
+    /// STARTING the depth count at `at_depth` — the plan depth the cell sits at (the trace/public
+    /// callers pass `0`, the cell's own rooted identity). The digest VALUE is content-only and so is
+    /// independent of `at_depth`; `at_depth` only shifts WHEN the walk hits the pull-depth bound, i.e.
+    /// whether the digest is a clean `Some` or a depth-tainted `None`. The ENG7 cache serve threads the
+    /// plan depth here so a cached value is served for a cell EXACTLY when a cold descent from that same
+    /// depth would compute it clean (see [`Workbook::cacheable_hash`]); a cone that would refuse from
+    /// this depth returns `None` and is not served. The raw [`CompHash`] stays inside; only the opaque
+    /// hex spelling is returned.
     pub(super) fn computation_hash_with(
         &self,
         key: CellKey,
+        at_depth: u32,
         memo: &mut HashMemo,
     ) -> Option<String> {
         let mut on_stack = HashSet::new();
-        self.comp_hash(key, 0, &mut memo.map, &mut on_stack)
+        self.comp_hash(key, at_depth, &mut memo.map, &mut on_stack)
             .0
             .map(CompHash::to_hex)
     }

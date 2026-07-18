@@ -3,6 +3,11 @@ use super::*;
 
 use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape};
 
+// The ENG7 persistent-cache + FS3 fitness pins live in their own concern-scoped submodule (they need
+// a real temp-dir workbook and the eval-counter instrument), keeping this behavioral file well under
+// the per-file line budget.
+mod cache;
+
 /// A file's content is exactly its grid (GRID1) — no annotation line. This helper owns the body
 /// string so the `&file("…")` call sites hand an owned contents to the loader.
 fn file(body: &str) -> String {
