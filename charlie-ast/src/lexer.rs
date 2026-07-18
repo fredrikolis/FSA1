@@ -1,4 +1,4 @@
-// Concern: the formula LEXER — turn a formula string into a flat `Vec<Token>` (each a `TokenKind` + byte `Span`), recognizing numbers (§4.3 finite grammar), `"`-strings (Excel `""` escaping), UPPERCASE-only `TRUE`/`FALSE` and the `#…!` error literals (deliberate, no case-folding), A1 cell references via `charlie_ast::a1`, the operator/paren/comma vocabulary, function-name-before-`(`, the `!` sheet-separator of a cross-sheet reference as a `TokenKind::SheetBang(name)` (bare `Sheet1!` and quoted `'My Sheet'!` names via `lex_quoted_sheet_name`, with `''` escapes and a `MalformedSheetName` refusal on an unterminated/`!`-less name), and the reserved `@`/`#` markers; a hostile byte is a located refusal, never a panic | Non-concern: how tokens NEST into an `Expr` (parser.rs owns precedence/arity/reserved-construct verdicts) and evaluating anything | IO: (a formula `&str`) -> `Result<Vec<Token>, Diag>`
+// Concern: the formula LEXER — turn a formula string into a flat `Vec<Token>` (each a `TokenKind` + byte `Span`), recognizing numbers (§4.3 finite grammar), `"`-strings (Excel `""` escaping), UPPERCASE-only `TRUE`/`FALSE` and the `#…!` error literals (deliberate, no case-folding), A1 cell references via `charlie_ast::a1`, the operator/paren/comma vocabulary (incl. the `{`/`}`/`;` array-literal delimiters), function-name-before-`(`, the `!` sheet-separator of a cross-sheet reference as a `TokenKind::SheetBang(name)` (bare `Sheet1!` and quoted `'My Sheet'!` names via `lex_quoted_sheet_name`, with `''` escapes and a `MalformedSheetName` refusal on an unterminated/`!`-less name), and the reserved `@`/`#` markers; a hostile byte is a located refusal, never a panic | Non-concern: how tokens NEST into an `Expr` (parser.rs owns precedence/arity/reserved-construct verdicts) and evaluating anything | IO: (a formula `&str`) -> `Result<Vec<Token>, Diag>`
 //! The formula lexer: [`tokenize`] a formula string into [`Token`]s.
 //!
 //! ASCII-oriented and single-pass. It never panics on hostile input — every byte either extends a
@@ -71,6 +71,12 @@ pub enum TokenKind {
     Comma,
     LParen,
     RParen,
+    /// `{` array-literal open.
+    LBrace,
+    /// `}` array-literal close.
+    RBrace,
+    /// `;` array-literal ROW separator (`,` is the column separator).
+    Semicolon,
     /// `@` prefix implicit-intersection (reserved node).
     At,
     /// `#` postfix spill operator (reserved node) — only when it is *not* the start of an error
@@ -175,6 +181,9 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Diag> {
             b',' => (TokenKind::Comma, 1),
             b'(' => (TokenKind::LParen, 1),
             b')' => (TokenKind::RParen, 1),
+            b'{' => (TokenKind::LBrace, 1),
+            b'}' => (TokenKind::RBrace, 1),
+            b';' => (TokenKind::Semicolon, 1),
             b'@' => (TokenKind::At, 1),
             b'=' => (TokenKind::Eq, 1),
             b'<' => {
@@ -544,6 +553,21 @@ mod tests {
         assert_eq!(
             tokenize("'Sheet'+1").unwrap_err().code,
             DiagCode::MalformedSheetName
+        );
+    }
+
+    #[test]
+    fn array_literal_delimiters_lex() {
+        // `{` `}` open/close and `;` the row separator (`,` stays the column separator).
+        assert_eq!(
+            kinds("{1;2}"),
+            vec![
+                TokenKind::LBrace,
+                TokenKind::Num(1.0),
+                TokenKind::Semicolon,
+                TokenKind::Num(2.0),
+                TokenKind::RBrace,
+            ]
         );
     }
 

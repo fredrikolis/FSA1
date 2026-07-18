@@ -80,6 +80,13 @@ pub enum DiagCode {
     /// A known function called with a wrong argument count (checked at parse so eval can trust the
     /// arity — DbC: the parser is the one defended boundary).
     BadArity,
+    /// A `{…}` array literal that is not well-formed: a RAGGED literal whose rows differ in width
+    /// (`{1,2;3}`), a non-constant element (`{A1}`, `{SUM(1)}` — Excel array constants hold only
+    /// numeric/text/logical/error constants), or an empty/dangling separator (`{}`, `{1,}`). An
+    /// unterminated literal (`{1,2`) is instead an [`DiagCode::UnexpectedEof`] (input ended
+    /// mid-construct). Distinct from the reserved codes: an array literal is a v1 construct that
+    /// *parses* — this names a malformed one, not a deferred feature.
+    MalformedArray,
 
     // --- reserved constructs (recognized, but no v1 node can carry them) ---
     /// The union operator `,` outside a function-argument list — reserved (scope.md).
@@ -138,6 +145,7 @@ impl DiagCode {
         DiagCode::UnbalancedParen,
         DiagCode::UnknownFunction,
         DiagCode::BadArity,
+        DiagCode::MalformedArray,
         DiagCode::ReservedUnion,
         DiagCode::ReservedIntersection,
         DiagCode::ReservedDynamicRange,
@@ -163,6 +171,7 @@ impl DiagCode {
             DiagCode::UnbalancedParen => "unbalanced-paren",
             DiagCode::UnknownFunction => "unknown-function",
             DiagCode::BadArity => "bad-arity",
+            DiagCode::MalformedArray => "malformed-array",
             DiagCode::ReservedUnion => "reserved-union",
             DiagCode::ReservedIntersection => "reserved-intersection",
             DiagCode::ReservedDynamicRange => "reserved-dynamic-range",
@@ -188,6 +197,9 @@ impl DiagCode {
             DiagCode::UnbalancedParen => "a ) has no matching (",
             DiagCode::UnknownFunction => "the function name is not recognized",
             DiagCode::BadArity => "wrong number of arguments for this function",
+            DiagCode::MalformedArray => {
+                "an array literal is ragged or holds a non-constant element"
+            }
             DiagCode::ReservedUnion => "the , union operator is reserved (not v1)",
             DiagCode::ReservedIntersection => {
                 "the space intersection operator is reserved (not v1)"
@@ -286,6 +298,7 @@ mod tests {
                 | DiagCode::UnbalancedParen
                 | DiagCode::UnknownFunction
                 | DiagCode::BadArity
+                | DiagCode::MalformedArray
                 | DiagCode::ReservedUnion
                 | DiagCode::ReservedIntersection
                 | DiagCode::ReservedDynamicRange
@@ -297,7 +310,7 @@ mod tests {
                 | DiagCode::RecursionLimit => c.code_str(),
             };
         }
-        assert_eq!(DiagCode::ALL.len(), 19);
+        assert_eq!(DiagCode::ALL.len(), 20);
     }
 
     #[test]

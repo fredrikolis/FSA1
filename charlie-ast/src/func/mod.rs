@@ -1,4 +1,4 @@
-// Concern: the FUNCTION REGISTRY as data — the `FuncDef` record (`name`, arity bounds, an `eval` fn-pointer, an OPTIONAL parse-time `validate` argument-check, and a `volatile` flag), the flat `FUNCS` table indexed by `FuncId`, name->`FuncId` lookup (case-insensitive, for the parser) and `FuncId`->`FuncDef` dispatch (for the evaluator); the built-ins THEMSELVES live in per-family sibling submodules (`aggregation` `logical` `criteria_agg` `math` `stats` `text` `date` `lookup` `info` `finance`), with the cross-family eval helpers in `func::helpers` — each row's `eval` points at its family's fn, and each built-in owns its own argument evaluation so lazy forms (IF/IFERROR), the direct-vs-in-range coercion asymmetry, and range-conformance checks stay expressible | Non-concern: each family's function bodies (the `func::*` submodules own them), the CRITERIA mini-language the `*IF(S)` built-ins depend on (criteria.rs owns `Criterion`/`parse_criterion`), and the operator/coercion machinery (eval.rs owns `coerce_num`/`coerce_bool`/`scalarize`/`pow`, which the built-ins reuse) | IO: none — a static dispatch table over the `EvalCtx`/`Value` contract
+// Concern: the FUNCTION REGISTRY as data — the `FuncDef` record (`name`, arity bounds, an `eval` fn-pointer, an OPTIONAL parse-time `validate` argument-check, a `volatile` flag, and the `broadcast` scalar-argument positions that drive implicit array evaluation), the flat `FUNCS` table indexed by `FuncId`, name->`FuncId` lookup (case-insensitive, for the parser) and `FuncId`->`FuncDef` dispatch (for the evaluator); the built-ins THEMSELVES live in per-family sibling submodules (`aggregation` `logical` `criteria_agg` `math` `stats` `text` `date` `lookup` `info` `finance`), with the cross-family eval helpers in `func::helpers` and the IMPLICIT-ARRAY-EVALUATION broadcaster (mapping a call element-wise over an array in a scalar argument) in `func::array` — each row's `eval` points at its family's fn, and each built-in owns its own argument evaluation so lazy forms (IF/IFERROR), the direct-vs-in-range coercion asymmetry, and range-conformance checks stay expressible | Non-concern: each family's function bodies (the `func::*` submodules own them), the CRITERIA mini-language the `*IF(S)` built-ins depend on (criteria.rs owns `Criterion`/`parse_criterion`), and the operator/coercion machinery (eval.rs owns `coerce_num`/`coerce_bool`/`scalarize`/`pow`, which the built-ins reuse) | IO: none — a static dispatch table over the `EvalCtx`/`Value` contract
 //! The function registry: [`FuncDef`], the [`FUNCS`] table, [`lookup`], [`def`], [`dispatch`].
 //!
 //! Registry-as-data (ast-standards PART 7, "one engine, N behaviors as data"): a function is a row,
@@ -20,6 +20,7 @@ pub(crate) use crate::expr::{Expr, FuncId};
 pub(crate) use crate::value::{ErrKind, Shape, Value};
 
 mod aggregation;
+mod array;
 mod criteria_agg;
 mod date;
 mod finance;
@@ -76,6 +77,19 @@ pub struct FuncDef {
     /// recalc engine can find the volatile cells without a hand-forked name list; `false` for every
     /// pure function (whose value is a function of its arguments alone).
     pub volatile: bool,
+    /// The SCALAR-expecting argument positions that participate in IMPLICIT ARRAY EVALUATION: an
+    /// `array` handed to one of these maps the call element-wise (`func::array` owns the mapping
+    /// LOGIC), while every other argument (a range/value-range a reducer or lookup consumes whole)
+    /// is broadcast whole. An empty slice means "no broadcasting" — the function is dispatched
+    /// unchanged. The single-criterion criteria-aggregation forms are the v1 broadcasters: their
+    /// CRITERION is arg 1 (`COUNTIF(range, criteria)`, `SUMIF(range, criteria, [sum_range])`,
+    /// `AVERAGEIF(range, criteria, [avg_range])`), so an array criterion (the distinct-count idiom
+    /// `SUMPRODUCT(1/COUNTIF(A1:A6,A1:A6))`) maps to an array of per-criterion results; the multi-
+    /// criteria `*IFS` forms (several criteria positions) are a separate, later batch. Recorded as
+    /// registry DATA — like `validate`/`volatile` — so which functions broadcast which positions is
+    /// single-sourced with the rest of the row and keyed by [`FuncId`], not a hand-forked name-match
+    /// in `func::array`, keeping the "function is a row" invariant.
+    pub broadcast: &'static [usize],
 }
 
 impl FuncDef {
@@ -104,6 +118,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: sum,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "AVERAGE",
@@ -112,6 +127,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: average,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "COUNT",
@@ -120,6 +136,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: count,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "IF",
@@ -128,6 +145,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: if_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "IFERROR",
@@ -136,6 +154,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: iferror,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "AND",
@@ -144,6 +163,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: and_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "OR",
@@ -152,6 +172,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: or_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "ABS",
@@ -160,6 +181,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: abs_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "ROUND",
@@ -168,6 +190,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: round_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     // --- Criteria-aggregation family (the `*IF(S)` reporting workhorse) ---
     FuncDef {
@@ -177,6 +200,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: sumif,
         validate: None,
         volatile: false,
+        broadcast: &[1],
     },
     FuncDef {
         name: "SUMIFS",
@@ -185,6 +209,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: sumifs,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "COUNTIF",
@@ -193,6 +218,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: countif,
         validate: None,
         volatile: false,
+        broadcast: &[1],
     },
     FuncDef {
         name: "COUNTIFS",
@@ -201,6 +227,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: countifs,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "AVERAGEIF",
@@ -209,6 +236,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: averageif,
         validate: None,
         volatile: false,
+        broadcast: &[1],
     },
     FuncDef {
         name: "AVERAGEIFS",
@@ -217,6 +245,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: averageifs,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "MINIFS",
@@ -225,6 +254,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: minifs,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "MAXIFS",
@@ -233,6 +263,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: maxifs,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     // --- Pure scalar / vector math (the v1 math batch) ---
     FuncDef {
@@ -242,6 +273,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: product,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "SUMPRODUCT",
@@ -250,6 +282,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: sumproduct,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "ROUNDUP",
@@ -258,6 +291,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: roundup,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "ROUNDDOWN",
@@ -266,6 +300,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: rounddown,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "INT",
@@ -274,6 +309,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: int_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "MOD",
@@ -282,6 +318,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: mod_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "POWER",
@@ -290,6 +327,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: power_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "SQRT",
@@ -298,6 +336,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: sqrt_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "CEILING",
@@ -306,6 +345,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: ceiling_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "FLOOR",
@@ -314,6 +354,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: floor_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     // --- Statistical extremes / order / counting (the v1 stats batch) ---
     FuncDef {
@@ -323,6 +364,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: min_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "MAX",
@@ -331,6 +373,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: max_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "MEDIAN",
@@ -339,6 +382,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: median_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "RANK",
@@ -347,6 +391,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: rank_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "COUNTA",
@@ -355,6 +400,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: counta,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "COUNTBLANK",
@@ -363,6 +409,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: countblank,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     // --- Logical batch v1: IFS NOT IFNA SWITCH (IF/IFERROR/AND/OR are the earlier logical batch) ---
     FuncDef {
@@ -372,6 +419,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: ifs_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "NOT",
@@ -380,6 +428,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: not_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "IFNA",
@@ -388,6 +437,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: ifna,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "SWITCH",
@@ -396,6 +446,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: switch_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     // --- Text batch v1: CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE TRIM
     //     UPPER LOWER TEXT. (The `&` concat OPERATOR is eval.rs's BinOp::Concat — CONCAT/TEXTJOIN are
@@ -407,6 +458,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: concat_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "TEXTJOIN",
@@ -415,6 +467,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: textjoin_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "LEFT",
@@ -423,6 +476,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: left_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "RIGHT",
@@ -431,6 +485,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: right_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "MID",
@@ -439,6 +494,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: mid_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "LEN",
@@ -447,6 +503,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: len_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "FIND",
@@ -455,6 +512,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: find_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "SEARCH",
@@ -463,6 +521,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: search_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "SUBSTITUTE",
@@ -471,6 +530,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: substitute_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "REPLACE",
@@ -479,6 +539,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: replace_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "TRIM",
@@ -487,6 +548,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: trim_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "UPPER",
@@ -495,6 +557,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: upper_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "LOWER",
@@ -503,6 +566,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: lower_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "TEXT",
@@ -511,6 +575,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: text_fn,
         validate: Some(validate_text_format),
         volatile: false,
+        broadcast: &[],
     },
     // --- Date/time batch v1: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW. The Excel 1900 date-serial
     //     system (with the leap-year bug replicated — see `serial_to_ymd`/`serial_from_ymd`); TODAY/NOW
@@ -524,6 +589,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: date_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "YEAR",
@@ -532,6 +598,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: year_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "MONTH",
@@ -540,6 +607,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: month_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "DAY",
@@ -548,6 +616,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: day_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "EDATE",
@@ -556,6 +625,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: edate_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "DATEDIF",
@@ -564,6 +634,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: datedif_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "TODAY",
@@ -572,6 +643,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: today_fn,
         validate: None,
         volatile: true,
+        broadcast: &[],
     },
     FuncDef {
         name: "NOW",
@@ -580,6 +652,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: now_fn,
         validate: None,
         volatile: true,
+        broadcast: &[],
     },
     // --- Lookup & reference (v1): XLOOKUP INDEX MATCH VLOOKUP CHOOSE ROW COLUMN, plus the reserved,
     // always-refused reference-returning INDIRECT / OFFSET (see the block comment below the defs). ---
@@ -590,6 +663,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: xlookup,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "INDEX",
@@ -598,6 +672,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: index_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "MATCH",
@@ -606,6 +681,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: match_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "VLOOKUP",
@@ -614,6 +690,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: vlookup,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "CHOOSE",
@@ -622,6 +699,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: choose,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "ROW",
@@ -630,6 +708,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: row_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "COLUMN",
@@ -638,6 +717,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: column_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     // The two RESERVED reference-returning functions. Arity is left wide open (`0..`) on purpose so the
     // arity gate never fires FIRST — every call, whatever its argument count, reaches the always-refuse
@@ -650,6 +730,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: reserved_ref_eval,
         validate: Some(refuse_reserved_ref_function),
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "OFFSET",
@@ -658,6 +739,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: reserved_ref_eval,
         validate: Some(refuse_reserved_ref_function),
         volatile: false,
+        broadcast: &[],
     },
     // --- Information (v1): the ONE error-TRANSPARENT family — ISBLANK ISNUMBER ISTEXT ISERROR NA TYPE.
     // These INSPECT their operand's kind (a blank, a number, an error, an array) and REPORT on it; they
@@ -670,6 +752,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: isblank,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "ISNUMBER",
@@ -678,6 +761,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: isnumber,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "ISTEXT",
@@ -686,6 +770,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: istext,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "ISERROR",
@@ -694,6 +779,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: iserror,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "NA",
@@ -702,6 +788,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: na_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "TYPE",
@@ -710,6 +797,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: type_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     // --- Financial (v1): PMT NPV IRR. Closed-form annuity (PMT) + discounting (NPV) + an ITERATIVE
     // root-find (IRR) that is GUARANTEED to halt — Newton under a hard iteration cap, then a bounded
@@ -722,6 +810,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: pmt_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "NPV",
@@ -730,6 +819,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: npv_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
     FuncDef {
         name: "IRR",
@@ -738,6 +828,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: irr_fn,
         validate: None,
         volatile: false,
+        broadcast: &[],
     },
 ];
 
@@ -765,7 +856,10 @@ pub fn def(id: FuncId) -> Option<&'static FuncDef> {
 /// stays panic-free, as [`crate::eval`]'s contract promises.
 pub fn dispatch(id: FuncId, ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     match def(id) {
-        Some(f) if f.arity_ok(args.len()) => (f.eval)(ctx, args),
+        // Route through the implicit-array-evaluation home: it maps a function element-wise over an
+        // array supplied to a scalar position and yields an array (`array::eval_call`), or — for a
+        // function with no broadcasting positions — dispatches the row's `eval` unchanged.
+        Some(f) if f.arity_ok(args.len()) => array::eval_call(f, ctx, args),
         Some(_) => Value::Error(ErrKind::Value),
         None => Value::Error(ErrKind::Name),
     }

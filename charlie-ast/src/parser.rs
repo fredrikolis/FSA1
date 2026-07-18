@@ -1,4 +1,4 @@
-// Concern: the PRATT PARSER — a `&[Token]` stream -> an `Expr`, applying the exact Excel precedence ladder (`:` range > space-intersection > `,` union > unary `-`/`+` > `%` > `^` > `*`/`/` > `+`/`-` > `&` concat > the six comparisons), folding a STATIC `ref:ref` into `Expr::Range` (carrying a sheet qualifier onto the range), building a first-class SHEET-QUALIFIED reference from a `SheetBang` token (`Sheet1!A1` / `'Quoted'!A1` via `parse_sheet_qualified` → a sheet-tagged `RefNode`/`RangeNode`, while 3D/multi-sheet stays a reserved refusal), parsing-and-PRESERVING the reserved `@`(`ImplicitIntersect`)/`#`(`SpillRef`) nodes, resolving a function name + checking arity against the registry (so eval trusts arity — DbC) then running the row's OPTIONAL per-function static-argument `validate` (TEXT's unsupported-LITERAL-format `UnsupportedFormat` refusal — a non-literal format is accepted and deferred to eval), and turning every recognized-but-reserved or malformed construct into a LOCATED refusal; nesting past a depth bound (and a total-size bound) is a diagnostic, never a stack overflow | Non-concern: tokenizing (lexer.rs) and evaluating (eval.rs); this module builds the tree and never touches a `Resolver` | IO: (a formula `&str`, via `parse`) -> `Result<Expr, Diag>`
+// Concern: the PRATT PARSER — a `&[Token]` stream -> an `Expr`, applying the exact Excel precedence ladder (`:` range > space-intersection > `,` union > unary `-`/`+` > `%` > `^` > `*`/`/` > `+`/`-` > `&` concat > the six comparisons), folding a STATIC `ref:ref` into `Expr::Range` (carrying a sheet qualifier onto the range), folding a `{…}` ARRAY LITERAL of constants (rows via `;`, columns via `,`) into an `Expr::Lit` of an `array` Value — a ragged or non-constant literal is a located `MalformedArray` refusal, building a first-class SHEET-QUALIFIED reference from a `SheetBang` token (`Sheet1!A1` / `'Quoted'!A1` via `parse_sheet_qualified` → a sheet-tagged `RefNode`/`RangeNode`, while 3D/multi-sheet stays a reserved refusal), parsing-and-PRESERVING the reserved `@`(`ImplicitIntersect`)/`#`(`SpillRef`) nodes, resolving a function name + checking arity against the registry (so eval trusts arity — DbC) then running the row's OPTIONAL per-function static-argument `validate` (TEXT's unsupported-LITERAL-format `UnsupportedFormat` refusal — a non-literal format is accepted and deferred to eval), and turning every recognized-but-reserved or malformed construct into a LOCATED refusal; nesting past a depth bound (and a total-size bound) is a diagnostic, never a stack overflow | Non-concern: tokenizing (lexer.rs) and evaluating (eval.rs); this module builds the tree and never touches a `Resolver` | IO: (a formula `&str`, via `parse`) -> `Result<Expr, Diag>`
 //! The Pratt (precedence-climbing) parser: [`parse`] a formula string into an [`Expr`].
 //!
 //! DbC: this is the one defended boundary (ast-standards PART 5). It never panics; a hole is a
@@ -12,7 +12,7 @@ use crate::expr::{BinOp, Expr, UnOp};
 use crate::func;
 use crate::lexer::{Token, TokenKind, tokenize};
 use crate::refs::{RangeNode, RefNode, SheetName};
-use crate::value::Value;
+use crate::value::{Shape, Value};
 
 /// Maximum nesting depth (parens / prefix operators / call arguments). Beyond this the parser
 /// returns a `recursion-limit` refusal rather than recursing further.
@@ -233,6 +233,7 @@ impl<'t> Parser<'t> {
                     )),
                 }
             }
+            TokenKind::LBrace => self.parse_array_literal(span),
             TokenKind::Func(name) => self.parse_call(name.clone(), span),
             // A bare defined-name is recognized but reserved.
             TokenKind::Name(n) => Err(Diag::new(
@@ -290,6 +291,113 @@ impl<'t> Parser<'t> {
                 ))
             }
         }
+    }
+
+    /// Parse a `{…}` array literal whose opening `{` was just consumed. Excel array constants hold
+    /// only CONSTANTS (numeric/text/logical/error, a number optionally signed) — `,` separates
+    /// columns, `;` separates rows — and fold to an `Expr::Lit` of an `array` [`Value`] (a constant
+    /// leaf, lowered once; ast-standards PART 2). A RAGGED literal (rows of unequal width), a
+    /// non-constant element, or a dangling separator is a located [`DiagCode::MalformedArray`]; an
+    /// unterminated literal is a [`DiagCode::UnexpectedEof`]. Never panics.
+    fn parse_array_literal(&mut self, open: Span) -> Result<Expr, Diag> {
+        let mut rows: Vec<Vec<Value>> = vec![Vec::new()];
+        // One representative span per row (its first element), so a ragged refusal locates the
+        // OFFENDING row rather than the opening `{`.
+        let mut row_spans: Vec<Span> = Vec::new();
+        loop {
+            let elem_span = self.peek().map(|t| t.span);
+            let v = self.parse_array_element()?;
+            let row = rows.last_mut().expect("row vec is never empty");
+            row.push(v);
+            if row.len() == 1 {
+                row_spans.push(elem_span.unwrap_or(open));
+            }
+            match self.peek().map(|t| &t.kind) {
+                Some(TokenKind::Comma) => {
+                    self.advance();
+                }
+                Some(TokenKind::Semicolon) => {
+                    self.advance();
+                    rows.push(Vec::new());
+                }
+                Some(TokenKind::RBrace) => {
+                    self.advance();
+                    break;
+                }
+                Some(_) => {
+                    let span = self.peek().expect("peek matched Some").span;
+                    return Err(Diag::new(
+                        DiagCode::MalformedArray,
+                        span,
+                        "expected `,`, `;`, or `}` in an array literal",
+                    ));
+                }
+                None => {
+                    return Err(Diag::new(
+                        DiagCode::UnexpectedEof,
+                        self.eof_span(),
+                        "a { array literal was never closed",
+                    ));
+                }
+            }
+        }
+        let cols = rows[0].len();
+        let nrows = rows.len();
+        if let Some(bad) = rows.iter().position(|r| r.len() != cols) {
+            return Err(Diag::new(
+                DiagCode::MalformedArray,
+                row_spans.get(bad).copied().unwrap_or(open),
+                "an array literal must be rectangular (every row the same width)",
+            ));
+        }
+        let flat: Vec<Value> = rows.into_iter().flatten().collect();
+        Ok(Expr::Lit(Value::Array(
+            Shape {
+                rows: nrows as u32,
+                cols: cols as u32,
+            },
+            flat,
+        )))
+    }
+
+    /// Parse one array-literal element: a numeric/text/logical/error CONSTANT, a number optionally
+    /// carrying a leading `-`/`+` sign. Any other token (a reference, a call, a nested `{`, a
+    /// closing/separator token where a value was expected) is a located [`DiagCode::MalformedArray`].
+    fn parse_array_element(&mut self) -> Result<Value, Diag> {
+        let neg = match self.peek().map(|t| &t.kind) {
+            Some(TokenKind::Minus) => {
+                self.advance();
+                true
+            }
+            Some(TokenKind::Plus) => {
+                self.advance();
+                false
+            }
+            _ => false,
+        };
+        let Some(tok) = self.advance() else {
+            return Err(Diag::new(
+                DiagCode::UnexpectedEof,
+                self.eof_span(),
+                "a { array literal was never closed",
+            ));
+        };
+        let span = tok.span;
+        // A sign is legal only before a number; `-"x"` / `-TRUE` are not Excel array constants.
+        let v = match &tok.kind {
+            TokenKind::Num(n) => Value::Number(if neg { -n } else { *n }),
+            TokenKind::Str(s) if !neg => Value::Text(s.clone()),
+            TokenKind::Bool(b) if !neg => Value::Bool(*b),
+            TokenKind::Err(k) if !neg => Value::Error(*k),
+            _ => {
+                return Err(Diag::new(
+                    DiagCode::MalformedArray,
+                    span,
+                    "an array literal element must be a numeric, text, logical, or error constant",
+                ));
+            }
+        };
+        Ok(v)
     }
 
     /// Parse the argument list of a call whose name token was just consumed (the next token is `(`),
@@ -507,6 +615,7 @@ fn starts_primary(kind: &TokenKind) -> bool {
             | TokenKind::Func(_)
             | TokenKind::SheetBang(_)
             | TokenKind::LParen
+            | TokenKind::LBrace
             | TokenKind::At
     )
 }

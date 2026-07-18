@@ -5,6 +5,7 @@ use crate::refs::RangeNode;
 use crate::test_support::Grid;
 
 mod aggregation;
+mod array;
 mod date;
 mod finance;
 mod info;
