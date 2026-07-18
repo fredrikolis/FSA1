@@ -114,5 +114,12 @@ functions =
   NA : 0
   TYPE : 1
   PMT : 3-5
+  FV : 3-5
+  NPER : 3-5
+  RATE : 3-6
+  IPMT : 4-6
+  PPMT : 4-6
   NPV : 2+
   IRR : 1-2
+  XNPV : 3
+  XIRR : 2-3

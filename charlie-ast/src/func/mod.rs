@@ -799,15 +799,64 @@ pub static FUNCS: &[FuncDef] = &[
         volatile: false,
         broadcast: &[],
     },
-    // --- Financial (v1): PMT NPV IRR. Closed-form annuity (PMT) + discounting (NPV) + an ITERATIVE
-    // root-find (IRR) that is GUARANTEED to halt — Newton under a hard iteration cap, then a bounded
-    // bisection fallback, then `#NUM!`, never a hang or a panic (see the block comment below the defs
-    // + `pow_int`, whose deterministic multiply order the conformance oracle mirrors bit-for-bit). ---
+    // --- Financial (v1): PMT FV NPER RATE IPMT PPMT NPV IRR XNPV XIRR. One shared annuity-balance /
+    // present-value model (Excel money-out-negative sign convention): closed-form annuity (PMT/FV),
+    // log-inverted NPER, the payment split IPMT/PPMT, period-1 discounting (NPV), and the Actual/365
+    // irregular-date discounters (XNPV/XIRR). The ITERATIVE root-finds (IRR/RATE/XIRR) are GUARANTEED
+    // to halt — Newton under a hard iteration cap, then (IRR/XIRR) a bounded bisection fallback, then
+    // `#NUM!`, never a hang or a panic (see the block comment above the defs in func/finance.rs +
+    // `pow_int`, whose deterministic multiply order the conformance oracle mirrors bit-for-bit for the
+    // integer-period functions; XNPV/XIRR use `f64::powf` and are closeness-graded). ---
     FuncDef {
         name: "PMT",
         min_args: 3,
         max_args: Some(5),
         eval: pmt_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "FV",
+        min_args: 3,
+        max_args: Some(5),
+        eval: fv_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "NPER",
+        min_args: 3,
+        max_args: Some(5),
+        eval: nper_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "RATE",
+        min_args: 3,
+        max_args: Some(6),
+        eval: rate_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "IPMT",
+        min_args: 4,
+        max_args: Some(6),
+        eval: ipmt_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "PPMT",
+        min_args: 4,
+        max_args: Some(6),
+        eval: ppmt_fn,
         validate: None,
         volatile: false,
         broadcast: &[],
@@ -826,6 +875,24 @@ pub static FUNCS: &[FuncDef] = &[
         min_args: 1,
         max_args: Some(2),
         eval: irr_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "XNPV",
+        min_args: 3,
+        max_args: Some(3),
+        eval: xnpv_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "XIRR",
+        min_args: 2,
+        max_args: Some(3),
+        eval: xirr_fn,
         validate: None,
         volatile: false,
         broadcast: &[],
