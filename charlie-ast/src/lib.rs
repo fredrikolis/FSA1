@@ -58,7 +58,7 @@ pub use a1::{A1Address, A1Error, format_cell, format_column, parse_a1};
 pub use diag::{Diag, DiagCode, Severity, Span};
 pub use eval::{EvalCtx, eval, num_to_text, scalarize};
 pub use expr::{BinOp, Expr, FuncId, UnOp};
-pub use func::FuncDef;
+pub use func::{FuncDef, serial_from_ymd};
 pub use lexer::{Token, TokenKind, tokenize};
 pub use node::NodeId;
 pub use parser::parse;

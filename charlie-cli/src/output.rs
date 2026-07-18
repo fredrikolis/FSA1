@@ -1,4 +1,4 @@
-// Concern: the OUTPUT ENVELOPE layer — the single home for the CLI's machine surface: the `--format` selector, the stable `ErrorCode` (a machine dispatch key + its exit code), and the dual renderer that lays ONE structured outcome (a render grid, a diagnostics report, an eval value, a sample result, or an operational error) into EITHER a `{status,data|error}` JSON envelope on stdout (`--format json`) OR the human ASCII/prose form (`--format text`, the default); errors and diagnostics are DATA — in JSON they are enveloped on stdout, never scraped from a bordered table (cli-interface-standards Part 2) | Non-concern: WHAT to show (charlie-model's `render`/`lint`/`eval_formula` own the grid, the diagnostics, and the value; this only serializes their output), argv parsing and exit-code dispatch (main.rs), and comfy-table drawing (ascii.rs, which this delegates to for the text form) | IO: (a `Format` + a structured outcome) -> a printed JSON envelope on stdout OR a human table/prose on stdout/stderr
+// Concern: the OUTPUT ENVELOPE layer — the single home for the CLI's machine surface: the `--format` selector, the stable `ErrorCode` (a machine dispatch key + its exit code), and the dual renderer that lays ONE structured outcome (a render grid, a diagnostics report, an eval value, a sample result, an import result, or an operational error) into EITHER a `{status,data|error}` JSON envelope on stdout (`--format json`) OR the human ASCII/prose form (`--format text`, the default); errors and diagnostics are DATA — in JSON they are enveloped on stdout, never scraped from a bordered table (cli-interface-standards Part 2) | Non-concern: WHAT to show (charlie-model's `render`/`lint`/`eval_formula` own the grid, the diagnostics, and the value, charlie-ingest owns the import; this only serializes their output), argv parsing and exit-code dispatch (main.rs), and comfy-table drawing (ascii.rs, which this delegates to for the text form) | IO: (a `Format` + a structured outcome) -> a printed JSON envelope on stdout OR a human table/prose on stdout/stderr
 //! The output envelope: [`Format`] selects the rendering, [`ErrorCode`] is the stable machine error
 //! key, and the `emit_*` functions dual-render one outcome as either a JSON envelope (stdout) or the
 //! human ASCII/prose form. The JSON form is the machine-parseable surface an agent branches on; the
@@ -351,6 +351,23 @@ pub fn emit_version() {
         jstr(env!("CARGO_PKG_VERSION"))
     );
     print_success(&data);
+}
+
+/// Emit the result of importing a spreadsheet into a charlie workbook. JSON: `data` =
+/// `{path,tabs:[...],files:n}`. Text: the terse next-steps hint (`text_lines`, composed by the caller
+/// from the [`charlie_ingest::ImportReport`]).
+pub fn emit_import(fmt: Format, path: &str, tabs: &[String], files: usize, text_lines: &str) {
+    match fmt {
+        Format::Text => print!("{text_lines}"),
+        Format::Json => {
+            let tabs_json = jarray(&tabs.iter().map(|t| jstr(t)).collect::<Vec<_>>());
+            print_success(&format!(
+                "{{\"path\":{},\"tabs\":{},\"files\":{files}}}",
+                jstr(path),
+                tabs_json
+            ));
+        }
+    }
 }
 
 /// Emit the result of writing a sample workbook. JSON: `data` = `{path,tabs:[...]}`. Text: the terse

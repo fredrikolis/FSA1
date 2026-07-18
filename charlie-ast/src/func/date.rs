@@ -69,8 +69,10 @@ const fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 /// serial 60 has no civil pre-image — it is produced only by the forward map / by day-offset
 /// arithmetic). The returned serial may fall outside the valid band for a pre-epoch input; callers
 /// gate the range. Shared with `func::text` (VALUE's date-text parser turns a `yyyy-mm-dd` string into
-/// a serial through this map).
-pub(crate) fn serial_from_ymd(y: i64, m: u32, d: u32) -> i64 {
+/// a serial through this map) and re-exported crate-publicly (`charlie_ast::serial_from_ymd`) so an
+/// out-of-crate deserializer (charlie-ingest, mapping an ODS/xlsx date-typed cell to charlie's serial
+/// value model) shares this ONE Excel-serial home rather than re-deriving the 1900 leap-bug policy.
+pub fn serial_from_ymd(y: i64, m: u32, d: u32) -> i64 {
     // On/after 1900-03-01 the phantom leap day sits in the count → shift +1. The threshold is a
     // compile-time constant (const-folded, not recomputed per call).
     const LEAP_BUG_SHIFT_THRESHOLD: i64 = days_from_civil(1900, 3, 1);

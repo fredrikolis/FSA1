@@ -1,0 +1,15 @@
+# The INGEST crate (spreadsheet deserializer, ODS first). It is the FORMAT FIREWALL: `calamine`
+# (and its transitive `zip`/`quick-xml`) live HERE and nowhere else — charlie-model and charlie-ast
+# stay calamine-free so the engine keeps reading TSV grids (HARD RULE 4, docs/architecture.md). The
+# allowed edges are `charlie-ingest -> {charlie-model, charlie-ast}` (it reuses the shared value/A1
+# types and writes the on-disk model); nothing depends back on it except the CLI (`cli -> ingest`),
+# enforced by the deny edges in ../.annotated-tree.toml.
+[package]
+name = "charlie-ingest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+charlie-ast = { path = "../charlie-ast" }
+charlie-model = { path = "../charlie-model" }
+calamine = "0.36"

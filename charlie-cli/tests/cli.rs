@@ -1,4 +1,4 @@
-// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, BOTH output forms selected by `--format` (the human ASCII table / scalar on stdout in text mode, and the `{status,data|error}` JSON envelope on stdout in json mode — success data, the diagnostics[] array, the eval value, and error/not-found/validation envelopes), the on-disk `sample` workbook + its never-clobber refusal, the `--guide` text, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval · 4 sample target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT), the envelope serialization (main.rs `output` owns it), and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, asserts on stdout + exit status
+// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, BOTH output forms selected by `--format` (the human ASCII table / scalar on stdout in text mode, and the `{status,data|error}` JSON envelope on stdout in json mode — success data, the diagnostics[] array, the eval value, and error/not-found/validation envelopes), the on-disk `sample` workbook + its never-clobber refusal, the `import` of a real `.ods` into a renderable workbook (+ its conflict/not-found refusals), the `--guide` text, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/import/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval · 4 sample/import target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT), the ODS conversion LOGIC (charlie-ingest's own tests own it), the envelope serialization (main.rs `output` owns it), and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, reads a committed `.ods` fixture, asserts on stdout + exit status
 //! End-to-end tests of the `charlie-cli` binary: exit codes and stdout for `render`, `check`, `eval`,
 //! `sample`, `--guide`, `--version`, and misuse. The spreadsheet logic is tested in `charlie-model`;
 //! this locks the thin shell's own contract.
@@ -547,4 +547,91 @@ fn an_invalid_format_value_is_bad_args() {
     fx.file("Sheet1", "A1", "1");
     let (code, _) = run(&["render", fx.path().to_str().unwrap(), "--format", "yaml"]);
     assert_eq!(code, 2, "an unknown --format value is exit 2 (bad args)");
+}
+
+/// A committed `.ods` fixture from the sibling `charlie-ingest` crate (the CLI test tree has none of
+/// its own; import's job is to CONVERT that real file into a workbook this binary can then render).
+fn ingest_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../charlie-ingest/tests/fixtures")
+        .join(name)
+}
+
+#[test]
+fn import_ods_then_render_and_eval_the_converted_workbook() {
+    let fx = Fixture::new("import");
+    let dest = fx.path().join("wb"); // absent -> import creates it
+    let src = ingest_fixture("smoke.ods");
+    let (code, out) = run(&[
+        "import",
+        src.to_str().unwrap(),
+        dest.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 0, "import should succeed:\n{out}");
+    assert!(
+        out.contains("\"status\":\"success\""),
+        "success envelope:\n{out}"
+    );
+    assert!(
+        out.contains("\"files\":2"),
+        "two range files written:\n{out}"
+    );
+
+    // The converted workbook computes the Excel values through the format-blind engine.
+    let a3 = run(&[
+        "eval",
+        dest.to_str().unwrap(),
+        "--tab",
+        "Sheet1",
+        "--formula",
+        "=A3",
+    ]);
+    assert_eq!((a3.0, a3.1.trim()), (0, "30"));
+    let b1 = run(&[
+        "eval",
+        dest.to_str().unwrap(),
+        "--tab",
+        "Sheet1",
+        "--formula",
+        "=B1",
+    ]);
+    assert_eq!((b1.0, b1.1.trim()), (0, "60"));
+    let cross = run(&[
+        "eval",
+        dest.to_str().unwrap(),
+        "--tab",
+        "Sheet2",
+        "--formula",
+        "=A1",
+    ]);
+    assert_eq!((cross.0, cross.1.trim()), (0, "30"));
+}
+
+#[test]
+fn import_into_a_non_empty_dir_is_a_conflict() {
+    let fx = Fixture::new("import-conflict");
+    fx.file("Existing", "A1", "1"); // makes the dest non-empty
+    let src = ingest_fixture("smoke.ods");
+    let (code, _) = run(&["import", src.to_str().unwrap(), fx.path().to_str().unwrap()]);
+    assert_eq!(code, 4, "a non-empty destination is a conflict (exit 4)");
+}
+
+#[test]
+fn import_a_missing_source_is_not_found() {
+    let fx = Fixture::new("import-missing");
+    let dest = fx.path().join("wb");
+    let (code, out) = run(&[
+        "import",
+        "/no/such/file.ods",
+        dest.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 24, "a missing source is not found (exit 24):\n{out}");
+    assert!(
+        out.contains("\"code\":\"not_found\""),
+        "not_found code:\n{out}"
+    );
 }

@@ -39,15 +39,21 @@ forbid_orphans = true
 # NOTE: a deny pair naming a crate that does not yet exist is a FATAL `unknown_deny_package`
 # violation, so each edge is added only once BOTH its crates exist. With charlie-ast + charlie-model +
 # charlie-cli present (W4), the three now-valid edges are wired below; the xlsx pair lands with it.
-#   ["charlie-ast",   "charlie-model"]  # WIRED: the formula engine must never know the filesystem model
-#   ["charlie-ast",   "charlie-cli"]    # WIRED: the engine never depends on the binary
-#   ["charlie-model", "charlie-cli"]    # WIRED: the model never depends on the binary
-#   ["charlie-ast",   "charlie-xlsx"]   # pending charlie-xlsx: the core never knows xlsx
-#   ["charlie-model", "charlie-xlsx"]   # pending charlie-xlsx: the core never knows xlsx
-# The direction that IS allowed: cli -> model -> ast, and xlsx -> {ast, model}. This encodes the
-# owner's hard rule that the AST impl is swappable behind a narrow boundary.
+#   ["charlie-ast",    "charlie-model"]  # WIRED: the formula engine must never know the filesystem model
+#   ["charlie-ast",    "charlie-cli"]    # WIRED: the engine never depends on the binary
+#   ["charlie-model",  "charlie-cli"]    # WIRED: the model never depends on the binary
+#   ["charlie-ast",    "charlie-ingest"] # WIRED: the engine never knows the ODS/xlsx deserializer (calamine)
+#   ["charlie-model",  "charlie-ingest"] # WIRED: the filesystem model never knows the format reader (calamine)
+#   ["charlie-ingest", "charlie-cli"]    # WIRED: the ingest crate never depends on the binary
+# The direction that IS allowed: cli -> {model, ingest} -> ast (and ingest -> model). This encodes the
+# owner's hard rule that the AST impl is swappable behind a narrow boundary AND the FORMAT FIREWALL:
+# calamine (+ zip/xml) is confined to charlie-ingest, so charlie-model/ast stay calamine-free and the
+# engine keeps reading TSV grids (HARD RULE 4). The xlsx reader is a later ingest module, not a new crate.
 deny = [
     ["charlie-ast", "charlie-model"],
     ["charlie-ast", "charlie-cli"],
     ["charlie-model", "charlie-cli"],
+    ["charlie-ast", "charlie-ingest"],
+    ["charlie-model", "charlie-ingest"],
+    ["charlie-ingest", "charlie-cli"],
 ]

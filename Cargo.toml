@@ -6,4 +6,4 @@
 # edges land only once that crate exists — docs/architecture.md §1, §5.
 [workspace]
 resolver = "2"
-members = ["charlie-ast", "charlie-cli", "charlie-model", "conformance"]
+members = ["charlie-ast", "charlie-cli", "charlie-ingest", "charlie-model", "conformance"]

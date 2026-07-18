@@ -44,6 +44,11 @@ use math::*;
 use stats::*;
 use text::*;
 
+// The Excel-serial date map is single-homed in `date`; re-export it crate-publicly so an out-of-crate
+// deserializer (charlie-ingest) maps a date-typed cell to the SAME serial the engine's DATE/serial
+// arithmetic uses, rather than re-deriving the 1900 leap-bug policy (DRY across the format firewall).
+pub use date::serial_from_ymd;
+
 #[cfg(test)]
 mod tests;
 
