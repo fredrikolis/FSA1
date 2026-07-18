@@ -48,6 +48,12 @@ pub struct RenderGrid {
 /// ASCII table (a million cells is already unreadable), so only a pathological `--range` reaches it.
 pub const MAX_VIEWPORT_CELLS: u64 = 1_000_000;
 
+/// The `--functions` marker for a GRID5 array-formula region's CONTINUATION cell (any cell but the
+/// anchor): the region's single `=formula` renders at the top-left anchor, and each other coordinate
+/// shows this caret to signal "filled by the array formula anchored at the region's top-left" without
+/// re-printing the formula (VAL1: one array-formula cell spanning its range, not many cells).
+const ARRAY_CONTINUATION_MARK: &str = "^";
+
 /// The cell-count of a viewport rectangle, as `u64` so the product of two `u32` spans cannot
 /// overflow. The CLI compares this to [`MAX_VIEWPORT_CELLS`] before calling [`render`].
 pub fn viewport_cell_count(vp: Rect) -> u64 {
@@ -104,6 +110,10 @@ pub fn render(wb: &Workbook, sheet: u32, viewport: Rect, mode: RenderMode) -> Re
 fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) -> String {
     match mode {
         RenderMode::Functions => match wb.source_at(sheet, col, row) {
+            // A GRID5 array-formula region shows its single `=formula` at the ANCHOR (top-left) cell;
+            // each CONTINUATION cell shows a caret `^` marker (the formula lives once, at the anchor —
+            // VAL1), so the view never implies each coordinate holds its own formula.
+            Some(src) if src.array_continuation => ARRAY_CONTINUATION_MARK.to_string(),
             // A formula cell shows its source text; a literal cell shows its value (Excel's Ctrl+`
             // "show formulas" view: formulas as text, literals as their value).
             Some(src) => match src.cell {

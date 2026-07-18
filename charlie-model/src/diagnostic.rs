@@ -175,6 +175,12 @@ impl Code {
     pub fn err_class(self) -> Option<ErrKind> {
         match self {
             Code::RaggedGrid => Some(ErrKind::Value),
+            // A load-time GRID4 grid/range mismatch is structural (no cell value), but an EVAL-time
+            // GRID5 array-formula-region mismatch surfaces as a `#SPILL!` cell value — the same
+            // dimension-mismatch code cites the non-conforming `#SPILL!` class (FORMAT.md). This is the
+            // SINGLE source of that class: `fill_array_region` reads it here to spell the surfaced cell,
+            // so the located refusal and the cell value can never cite two different classes.
+            Code::DimensionMismatch => Some(ErrKind::Spill),
             Code::Cycle => Some(ErrKind::Ref),
             Code::DepthLimit => Some(ErrKind::Num),
             Code::RangeTooLarge => Some(ErrKind::Num),
@@ -391,8 +397,9 @@ mod tests {
         assert_eq!(Code::Cycle.err_class(), Some(ErrKind::Ref));
         assert_eq!(Code::DepthLimit.err_class(), Some(ErrKind::Num));
         assert_eq!(Code::RangeTooLarge.err_class(), Some(ErrKind::Num));
+        // The eval-time GRID5 region mismatch surfaces as a `#SPILL!` cell value.
+        assert_eq!(Code::DimensionMismatch.err_class(), Some(ErrKind::Spill));
         assert_eq!(Code::MalformedFilename.err_class(), None);
-        assert_eq!(Code::DimensionMismatch.err_class(), None);
         assert_eq!(Code::FormulaSyntax.err_class(), None);
     }
 

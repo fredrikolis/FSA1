@@ -24,6 +24,13 @@ pub(super) enum PlanNode {
         dc: u32,
         deps: Vec<CellKey>,
     },
+    /// A GRID5 ARRAY-FORMULA REGION, keyed at its TOP-LEFT (anchor) cell: the single `=formula` (the
+    /// covering file's lone grid cell) whose array value fills the WHOLE region. Computed exactly once
+    /// (ENG2/ENG3); the EVALUATE pass writes each array element into its coordinate's result, so every
+    /// coordinate reference into the region resolves to that element. `deps` is the formula's
+    /// dependency cells (a reference into ANOTHER region is already redirected to that region's anchor
+    /// by `collect_deps`, so the graph orders one region's compute before a dependent region's).
+    ArrayRegion { file: FileId, deps: Vec<CellKey> },
     /// A cell on a reference cycle — a located `#REF!`. Terminal (no deps); its dependents propagate
     /// the `#REF!`.
     Cycle,
@@ -76,6 +83,11 @@ impl Workbook {
         graph: &mut DepGraph,
         on_stack: &mut HashSet<CellKey>,
     ) {
+        // GRID5: a coordinate inside an array-formula region is planned/computed at the region's single
+        // ANCHOR (top-left) cell — one node for the whole region (VAL1/ENG3, compute once). Redirect
+        // here so a demand of any region coordinate plans the shared anchor node; the EVALUATE pass
+        // then fills every coordinate's result from the one computed array.
+        let key = self.array_region_anchor(key.0, key.1, key.2).unwrap_or(key);
         if graph.nodes.contains_key(&key) {
             return; // already planned this pass — the shared/merged node
         }
@@ -117,15 +129,19 @@ impl Workbook {
             graph.nodes.get(&key),
             Some(PlanNode::Cycle | PlanNode::DepthRefused)
         ) {
-            graph.nodes.insert(
-                key,
+            // A GRID5 region anchor becomes an `ArrayRegion` node (computed once, filling the whole
+            // region at eval); every other formula cell is a per-cell `Formula` node.
+            let node = if file.array_formula {
+                PlanNode::ArrayRegion { file: id, deps }
+            } else {
                 PlanNode::Formula {
                     file: id,
                     dr,
                     dc,
                     deps,
-                },
-            );
+                }
+            };
+            graph.nodes.insert(key, node);
         }
     }
 
@@ -142,13 +158,23 @@ impl Workbook {
         out
     }
 
+    /// The graph-ordering dependency key for a referenced coordinate: its GRID5 region ANCHOR when it
+    /// lands inside an array-formula region, else the coordinate itself. Redirecting a dependency onto
+    /// the region's single node makes the plan order that region's ONE compute before this dependent
+    /// (the region's EVALUATE pass fills the referenced coordinate's result, which the dependent then
+    /// reads via the resolver). Free when the workbook has no array regions.
+    fn dep_key(&self, sheet: u32, col: u32, row: u32) -> CellKey {
+        self.array_region_anchor(sheet, col, row)
+            .unwrap_or((sheet, col, row))
+    }
+
     fn collect_deps(&self, expr: &Expr, home: u32, out: &mut Vec<CellKey>) {
         match expr {
             Expr::Lit(_) => {}
             Expr::Ref(r) => {
                 if let Some(cr) = r.resolve(|name| self.sheet_id(name)) {
                     let s = cr.sheet.map_or(home, |SheetId(i)| i);
-                    out.push((s, cr.col, cr.row));
+                    out.push(self.dep_key(s, cr.col, cr.row));
                 }
             }
             Expr::Range(rn) => {
@@ -163,7 +189,7 @@ impl Workbook {
                     if area <= MAX_RANGE_CELLS {
                         for row in r0..=r1 {
                             for col in c0..=c1 {
-                                out.push((s, col, row));
+                                out.push(self.dep_key(s, col, row));
                             }
                         }
                     }

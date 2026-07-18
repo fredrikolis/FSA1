@@ -102,6 +102,20 @@ fn read_sheet(wb: &mut Sheets<BufReader<File>>, name: &str) -> Result<SheetSourc
         ));
     }
 
+    // GRID5 SPILL-REGION INGEST IS DEFERRED (to the real-file-corpus milestone), by design.
+    // A dynamic-array formula (`=SORT(A1:A3)`) in a real workbook lives in ONE anchor cell (xlsx
+    // `<f t="array" ref="C1:C3">`) and SPILLS cached values into the rest of its `ref` range. Mapping
+    // that onto a charlie GRID5 range file needs the spill's `ref` extent — but calamine 0.36's
+    // high-level `Reader::worksheet_formula` seam this crate uses returns only the anchor's formula
+    // TEXT and does NOT surface the array `ref` (its formula metadata distinguishes only Normal /
+    // Shared / SharedDerived formulas — legacy drag-fill — with no dynamic-array/spill variant and no
+    // spill-range accessor). So the spill's dimensions cannot be cleanly recovered here: the anchor
+    // reads as a normal single-cell formula and each spilled coordinate reads as a bare cached VALUE
+    // (a per-cell literal), which round-trips as a faithful (if de-spilled) snapshot — never wrong,
+    // just not reconstituted as one array-formula region. Forcing a guess (e.g. inferring a `ref` from
+    // adjacent cached values) would be unsound, so it is deliberately NOT attempted; real-workbook
+    // spill fidelity waits for the real-file-corpus milestone (and a calamine API that exposes the
+    // array `ref`, or a direct xlsx-XML read behind this same firewall).
     let mut cells = Vec::with_capacity((rows as usize) * (cols as usize));
     for row in 0..rows {
         for col in 0..cols {

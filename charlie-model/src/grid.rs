@@ -169,8 +169,8 @@ fn parse_number(token: &str) -> Option<f64> {
     }
 }
 
-/// The seven v1 error literals. `#SPILL!`/`#CALC!` are reserved and NOT literal tokens, so they fall
-/// through to text.
+/// The seven author-writable error literals. `#SPILL!`/`#CALC!` are ENGINE-PRODUCED ONLY (a formula's
+/// value, never a cell's literal content), so as a literal token they fall through to text.
 fn error_literal(token: &str) -> Option<ErrKind> {
     match token {
         "#REF!" => Some(ErrKind::Ref),
@@ -304,7 +304,7 @@ mod tests {
         // inf/nan are text, never a non-finite Number.
         assert_eq!(lex_literal("inf"), Value::Text("inf".to_string()));
         assert_eq!(lex_literal("NaN"), Value::Text("NaN".to_string()));
-        // A reserved error spelling is not a literal error token -> text.
+        // An engine-produced-only error spelling is not an author-writable literal token -> text.
         assert_eq!(lex_literal("#SPILL!"), Value::Text("#SPILL!".to_string()));
     }
 }

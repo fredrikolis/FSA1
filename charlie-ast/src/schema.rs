@@ -81,15 +81,7 @@ const VALUE_VARIANTS: &[&str] = &[
 ];
 
 const ERRKIND_VARIANTS: &[&str] = &[
-    "Ref",
-    "Div0",
-    "Value",
-    "Name",
-    "Na",
-    "Null",
-    "Num",
-    "Spill(reserved)",
-    "Calc(reserved)",
+    "Ref", "Div0", "Value", "Name", "Na", "Null", "Num", "Spill", "Calc",
 ];
 
 const EXPR_VARIANTS: &[&str] = &[

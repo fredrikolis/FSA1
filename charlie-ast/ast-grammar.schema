@@ -9,7 +9,7 @@ value =
   Array(shape, value*)
   Blank
 
-errkind = Ref | Div0 | Value | Name | Na | Null | Num | Spill(reserved) | Calc(reserved)
+errkind = Ref | Div0 | Value | Name | Na | Null | Num | Spill | Calc
 
 expr =
   Lit(value)
@@ -161,3 +161,8 @@ functions =
   MINUTE : 1
   SECOND : 1
   TIME : 3
+  UNIQUE : 1-3
+  SORT : 1-4
+  FILTER : 2-3
+  SEQUENCE : 1-4
+  TRANSPOSE : 1

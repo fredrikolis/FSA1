@@ -31,8 +31,9 @@ pub enum TokenKind {
     Str(String),
     /// `TRUE` / `FALSE` (UPPERCASE-only, deliberate — no case-folding).
     Bool(bool),
-    /// One of the seven live error literals, or the two reserved (`#SPILL!`/`#CALC!`) — round-tripped
-    /// as first-class [`crate::Value::Error`] values (uppercase-only).
+    /// One of the nine error literals — the seven author-writable ones and the engine-produced
+    /// `#SPILL!`/`#CALC!` — round-tripped as first-class [`crate::Value::Error`] values
+    /// (uppercase-only).
     Err(ErrKind),
     /// A resolved single-cell A1 reference lexeme (`A1`, `$A$1`) — column/row zero-based.
     CellRef {
@@ -380,8 +381,8 @@ fn lex_word(src: &str, b: &[u8], i: usize) -> (TokenKind, usize) {
 }
 
 /// If `s` begins with one of the nine error literals, return its [`ErrKind`] and byte length. The
-/// seven live errors and the two reserved (`#SPILL!`/`#CALC!`) are all recognized so a formula can
-/// round-trip them; uppercase-only. Longest spellings are unambiguous — no
+/// seven author-writable errors and the engine-produced `#SPILL!`/`#CALC!` are all recognized so a
+/// formula can round-trip them; uppercase-only. Longest spellings are unambiguous — no
 /// literal is a prefix of another (each ends in `!`, `?`, or the `A` of `#N/A`).
 fn match_error_literal(s: &str) -> Option<(ErrKind, usize)> {
     const LITS: &[(&str, ErrKind)] = &[

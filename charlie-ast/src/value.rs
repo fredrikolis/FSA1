@@ -3,9 +3,10 @@
 
 /// A spreadsheet error value.
 ///
-/// Errors are first-class values that (once eval lands) propagate through operators. The first
-/// seven are live in v1; [`ErrKind::Spill`] and [`ErrKind::Calc`] are **reserved** — the shape
-/// exists so the parser can name them and round-trip them, with full semantics deferred.
+/// Errors are first-class values that propagate through operators. All nine are live in v1:
+/// [`ErrKind::Spill`] is the GRID5 array-formula-region shape/orientation mismatch (charlie-model's
+/// `fill_array_region`), and [`ErrKind::Calc`] is an empty dynamic-array result (an empty
+/// `UNIQUE`/`FILTER`, a zero-dimension `SEQUENCE`) and other calculation-engine errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ErrKind {
     /// `#REF!` — a reference to a cell that does not exist (e.g. deleted).
@@ -22,9 +23,11 @@ pub enum ErrKind {
     Null,
     /// `#NUM!` — a numeric value is invalid (out of range / no result).
     Num,
-    /// `#SPILL!` — RESERVED: a dynamic-array spill was blocked. Eval deferred in v1.
+    /// `#SPILL!` — a dynamic-array result did not fit its region: a GRID5 array formula whose value's
+    /// shape/orientation does not match its declared range (charlie-model's `fill_array_region`).
     Spill,
-    /// `#CALC!` — RESERVED: a calculation-engine error (e.g. an empty array). Eval deferred in v1.
+    /// `#CALC!` — a calculation-engine error: an empty dynamic-array result (empty `UNIQUE`/`FILTER`,
+    /// a zero-dimension `SEQUENCE`).
     Calc,
 }
 

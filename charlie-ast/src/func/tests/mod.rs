@@ -12,6 +12,7 @@ mod info;
 mod logical;
 mod lookup;
 mod math;
+mod spill;
 mod stats;
 mod text;
 

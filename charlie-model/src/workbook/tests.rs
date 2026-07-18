@@ -1,7 +1,7 @@
-// Concern: the two-pass engine's BEHAVIORAL pins — demand-driven chains, cycle/self-reference/cross-sheet #REF! refusals, the explicit-grid VAL1 rule, diamond/deep-DAG compute-once, memoization stability, the pull-depth and range-materialization #NUM! bounds and their order-independence (depth-tainted values/ranges never poison a shallower demand), ad-hoc `eval_formula`, batch `values_at` sharing, and the NAIVE-oracle differential test proving the graph EQUALS a per-cell evaluation | Non-concern: the engine's internal graph shape/node-count/traversal order (asserted nowhere — only VALUES are graded, so a future parallel-execution refactor stays free) and the formula language itself (charlie-ast owns it) | IO: in-memory (and one temp-dir) `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `FormulaOutcome`s
+// Concern: the two-pass engine's BEHAVIORAL pins — demand-driven chains, cycle/self-reference/cross-sheet #REF! refusals, the explicit-grid VAL1 rule, diamond/deep-DAG compute-once, memoization stability, the pull-depth and range-materialization #NUM! bounds and their order-independence (depth-tainted values/ranges never poison a shallower demand), ad-hoc `eval_formula`, batch `values_at` sharing, and the NAIVE-oracle differential test proving the graph EQUALS a per-cell evaluation (over scalar chains AND GRID5 array-formula regions — the dep_key sharing that collapses region coordinates onto one anchor node) | Non-concern: the engine's internal graph shape/node-count/traversal order (asserted nowhere — only VALUES are graded, so a future parallel-execution refactor stays free) and the formula language itself (charlie-ast owns it) | IO: in-memory (and one temp-dir) `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `FormulaOutcome`s
 use super::*;
 
-use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape, scalarize};
+use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape};
 
 /// A file's content is exactly its grid (GRID1) — no annotation line. This helper owns the body
 /// string so the `&file("…")` call sites hand an owned contents to the loader.
@@ -110,11 +110,12 @@ fn an_explicit_grid_evaluates_absolute_and_relative_refs_as_written() {
 }
 
 #[test]
-fn a_bare_range_formula_in_a_scalar_cell_is_a_value_error() {
-    // A formula that evaluates to a genuinely multi-cell array (`=A1:A3`) written into a single
-    // scalar cell has no scalar meaning — `scalarize` collapses it to `#VALUE!`.
+fn a_bare_range_formula_in_a_single_cell_keeps_the_top_left_element() {
+    // A formula that evaluates to a genuinely multi-cell array (`=A1:A3`) written into a SINGLE cell
+    // keeps only the array's TOP-LEFT element (GRID5/ENG6: no dynamic spill beyond a declared range,
+    // so a one-cell array formula is its implicit-intersection top-left, never `#VALUE!`).
     let wb = load_one_tab("Sheet1", &[("A1:A3", "1\n2\n3"), ("C1", "=A1:A3")]);
-    assert_eq!(wb.value_at(0, 2, 0), Value::Error(ErrKind::Value)); // C1
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(1.0)); // C1 -> A1
 }
 
 #[test]
@@ -498,18 +499,30 @@ fn a_shared_dependency_computes_once_across_a_batch_render() {
 /// grades the two-pass engine against. It evaluates a demanded cell straight from the grids by
 /// native recursion through `charlie_ast::eval`, with a `visiting` set for basic cycle protection
 /// and a tiny memo so a shared/diamond ancestor does not re-evaluate exponentially. It shares NONE
-/// of the two-pass algorithm (no `DepGraph`, no plan, no `topo_order`) — only the workbook's
-/// structural cell-location plumbing (`covering`) and the `Arena`/`scalarize` resolver helpers,
-/// which are not evaluation logic. Its verdict is VALUES; the differential test asserts nothing
-/// about how either side reaches them.
+/// of the two-pass algorithm (no `DepGraph`, no `PlanNode`, no plan/`array_region_anchor` redirect,
+/// no `topo_order`, no `fill_array_region`) — only the workbook's structural cell-location plumbing
+/// (`covering` + the `LoadedFile`'s `region`/`array_formula`) and the `Arena` range-materialization
+/// helper, which are not evaluation logic. Its verdict is VALUES; the differential test asserts
+/// nothing about how either side reaches them.
+///
+/// REGION-AWARE (GRID5): a coordinate inside an array-formula region is NOT read from the region's
+/// lone `1x1` grid (indexing it at a continuation offset would be out of bounds, and scalarizing the
+/// anchor would demote its array to `#VALUE!`). Instead [`NaiveOracle::region_element`] re-derives the
+/// engine's `fill_array_region` rules INDEPENDENTLY — evaluate the region's ONE formula and take its
+/// element `(row-min_row, col-min_col)` row-major — so the dep_key sharing that collapses many region
+/// coordinates onto one anchor node (exactly what the two-pass==naive test exists to prove) is graded
+/// on VALUE, not merely on direct pins. A stored SINGLE-cell formula keeps its array's TOP-LEFT
+/// element (`cell_top_left`, the engine's `cell_scalar` rule), NOT the in-expression `scalarize`.
 ///
 /// NAMED COVERAGE BOUNDARY: this oracle has no pull-depth guard and unconditionally memoizes every
 /// result, so it structurally cannot model the two-pass path's depth-tainted `#NUM!` — that value is
 /// deliberately NOT memoized and is root-relative/order-dependent (see `MAX_PULL_DEPTH`,
 /// `finish_pass`, and the range-materialization `#NUM!` bound). The differential cases here therefore
-/// exercise only CLEAN-value shapes (diamond, deep-but-under-bound chain, cross-tab, shared range).
-/// The memo/taint interactions the oracle can't represent are frozen separately by single-path
-/// `assert_eq` tests (`a_legal_deep_chain…`, the `#NUM!` depth tests, the range-too-large test) —
+/// exercise only CLEAN-value shapes (diamond, deep-but-under-bound chain, cross-tab, shared range,
+/// and GRID5 regions — shared upstream, multi-dependent, region-over-a-chain, and shape/scalar
+/// `#SPILL!`). The memo/taint interactions the oracle can't represent — including a CYCLIC or
+/// DEPTH-REFUSED region — are frozen separately by single-path `assert_eq` tests (`a_legal_deep_chain…`,
+/// the `#NUM!` depth tests, the range-too-large test, `a_cyclic_region…`, `a_depth_refused_region…`) —
 /// they are not graded against this oracle.
 struct NaiveOracle<'w> {
     wb: &'w Workbook,
@@ -537,6 +550,57 @@ impl<'w> NaiveOracle<'w> {
             sheet: Some(SheetId(sheet)),
         })
     }
+
+    /// Collapse a stored SINGLE-cell formula result to its scalar: a genuinely multi-cell array keeps
+    /// only its TOP-LEFT element (the engine's `cell_scalar` GRID5/ENG6 implicit-intersection rule),
+    /// re-derived here so the oracle shares no code with the engine's EVALUATE pass. A 1x1 array yields
+    /// its single cell; an empty array is `Blank`; a scalar passes through. This is the CELL-position
+    /// rule (never `#VALUE!`), deliberately NOT `charlie_ast::scalarize` (the in-expression rule).
+    fn cell_top_left(v: Value) -> Value {
+        match v {
+            Value::Array(_, cells) => cells.into_iter().next().unwrap_or(Value::Blank),
+            other => other,
+        }
+    }
+
+    /// The value at one coordinate `key` of a GRID5 array-formula region — the INDEPENDENT reference
+    /// model of the engine's `fill_array_region`. It evaluates the region's ONE formula (the covering
+    /// file's lone grid cell) against the region's sheet and then applies the same three TOTAL rules the
+    /// engine does, WITHOUT touching any engine plan/eval type (`DepGraph`/`PlanNode`/`array_region_anchor`/
+    /// `fill_array_region`):
+    /// * an array whose shape AND orientation match the region -> element `(row-min_row, col-min_col)`
+    ///   row-major (a 1x1 region can't occur — a 1x1 file is never an array region, so its formula rides
+    ///   the `cell_top_left` single-cell path above);
+    /// * an error value -> that error at every coordinate;
+    /// * anything else (a scalar, or a wrong-shaped/wrong-oriented array) -> a located `#SPILL!`.
+    ///
+    /// The `visiting` guard makes a self-referential region terminate as `#REF!` rather than loop
+    /// (parity with the engine's terminal handling; cyclic/depth regions are graded by single-path
+    /// tests, never this oracle).
+    fn region_element(&self, id: FileId, file: &LoadedFile, key: CellKey) -> Value {
+        let region = file.region;
+        let rows = region.max_row - region.min_row + 1;
+        let cols = region.max_col - region.min_col + 1;
+        self.visiting.borrow_mut().insert(key);
+        let prev = self.cur.replace(id.0);
+        let value = match file.grid.cell_at(0, 0) {
+            GridCell::Formula { expr, .. } => eval(expr, self),
+            GridCell::Value(v) => v.clone(),
+        };
+        self.cur.set(prev);
+        self.visiting.borrow_mut().remove(&key);
+
+        let r_off = key.2 - region.min_row;
+        let c_off = key.1 - region.min_col;
+        match value {
+            Value::Array(shape, cells) if shape.rows == rows && shape.cols == cols => {
+                let idx = (r_off * cols + c_off) as usize;
+                cells.into_iter().nth(idx).unwrap_or(Value::Blank)
+            }
+            Value::Error(k) => Value::Error(k),
+            _ => Value::Error(ErrKind::Spill),
+        }
+    }
 }
 
 impl Resolver for NaiveOracle<'_> {
@@ -552,17 +616,26 @@ impl Resolver for NaiveOracle<'_> {
         let Some((id, file)) = self.wb.covering(sheet, cell.col, cell.row) else {
             return Value::Blank;
         };
-        let dr = cell.row - file.region.min_row;
-        let dc = cell.col - file.region.min_col;
-        let v = match file.grid.cell_at(dr, dc) {
-            GridCell::Value(v) => v.clone(),
-            GridCell::Formula { expr, .. } => {
-                self.visiting.borrow_mut().insert(key);
-                let prev = self.cur.replace(id.0);
-                let r = scalarize(eval(expr, self));
-                self.cur.set(prev);
-                self.visiting.borrow_mut().remove(&key);
-                r
+        // GRID5: a coordinate inside an array-formula region takes the region's ONE formula's element
+        // (row-min_row, col-min_col), re-derived INDEPENDENTLY (never the engine's fill_array_region /
+        // plan redirect). Every non-region cell reads its own grid cell as before.
+        let v = if file.array_formula {
+            self.region_element(id, file, key)
+        } else {
+            let dr = cell.row - file.region.min_row;
+            let dc = cell.col - file.region.min_col;
+            match file.grid.cell_at(dr, dc) {
+                GridCell::Value(v) => v.clone(),
+                GridCell::Formula { expr, .. } => {
+                    self.visiting.borrow_mut().insert(key);
+                    let prev = self.cur.replace(id.0);
+                    // A stored single-cell formula keeps its array's TOP-LEFT element (the engine's
+                    // `cell_scalar` rule), re-derived here — NOT the in-expression `scalarize` (#VALUE!).
+                    let r = Self::cell_top_left(eval(expr, self));
+                    self.cur.set(prev);
+                    self.visiting.borrow_mut().remove(&key);
+                    r
+                }
             }
         };
         self.memo.borrow_mut().insert(key, v.clone());
@@ -727,5 +800,338 @@ fn differential_one_large_range_aggregated_by_several_cells() {
     assert_agrees(
         &wb,
         &[(0, 2, 0), (0, 2, 1), (0, 2, 2), (0, 2, 3), (0, 0, 49)],
+    );
+}
+
+// ------------------------------------------------------------------------------------------
+// GRID5 — array-formula regions (a range file whose whole content is one =formula).
+// ------------------------------------------------------------------------------------------
+
+#[test]
+fn sort_region_fills_its_range_sorted() {
+    // A1:A3 = {3;1;2} (three literal cells); C1:C3 is a SINGLE `=SORT(A1:A3)` filling the 3x1 range.
+    let wb = load_one_tab("Sheet1", &[("A1:A3", "3\n1\n2"), ("C1:C3", "=SORT(A1:A3)")]);
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(1.0)); // C1
+    assert_eq!(wb.value_at(0, 2, 1), Value::Number(2.0)); // C2
+    assert_eq!(wb.value_at(0, 2, 2), Value::Number(3.0)); // C3
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn unique_region_over_a_column_with_dups() {
+    // A1:A5 = {5;5;7;5;7}; C1:C2 = UNIQUE(A1:A5) -> the two distinct values {5;7} in first-seen order.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[("A1:A5", "5\n5\n7\n5\n7"), ("C1:C2", "=UNIQUE(A1:A5)")],
+    );
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(5.0)); // C1
+    assert_eq!(wb.value_at(0, 2, 1), Value::Number(7.0)); // C2
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn sequence_region_generates_its_counter() {
+    // C1:C3 = SEQUENCE(3) -> {1;2;3}, a region with no external dependency.
+    let wb = load_one_tab("Sheet1", &[("C1:C3", "=SEQUENCE(3)")]);
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(1.0));
+    assert_eq!(wb.value_at(0, 2, 1), Value::Number(2.0));
+    assert_eq!(wb.value_at(0, 2, 2), Value::Number(3.0));
+}
+
+#[test]
+fn transpose_region_fills_the_transposed_orientation() {
+    // A1:C1 = {1,2,3} (a 1x3 row); C3:C5... actually transpose to a 3x1 column region E1:E3.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[("A1:C1", "1\t2\t3"), ("E1:E3", "=TRANSPOSE(A1:C1)")],
+    );
+    assert_eq!(wb.value_at(0, 4, 0), Value::Number(1.0)); // E1
+    assert_eq!(wb.value_at(0, 4, 1), Value::Number(2.0)); // E2
+    assert_eq!(wb.value_at(0, 4, 2), Value::Number(3.0)); // E3
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn a_shape_mismatch_region_is_a_located_dimension_error() {
+    // C1:C2 (2x1) holds `=SORT(A1:A3)` whose value is 3x1 — wrong shape. Every coordinate is #SPILL!
+    // and a located dimension error (GRID4's code) is recorded (GRID5, detected AT EVALUATION).
+    let wb = load_one_tab("Sheet1", &[("A1:A3", "3\n1\n2"), ("C1:C2", "=SORT(A1:A3)")]);
+    assert_eq!(wb.value_at(0, 2, 0), Value::Error(ErrKind::Spill)); // C1
+    assert_eq!(wb.value_at(0, 2, 1), Value::Error(ErrKind::Spill)); // C2
+    let diags = wb.eval_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == Code::DimensionMismatch),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn a_scalar_in_a_range_region_is_a_located_dimension_error() {
+    // C1:C3 holds `=SUM(A1:A3)` — a SCALAR in a >1 range. A scalar cannot fill a range: #SPILL!.
+    let wb = load_one_tab("Sheet1", &[("A1:A3", "3\n1\n2"), ("C1:C3", "=SUM(A1:A3)")]);
+    assert_eq!(wb.value_at(0, 2, 0), Value::Error(ErrKind::Spill));
+    assert!(
+        wb.eval_diagnostics()
+            .iter()
+            .any(|d| d.code == Code::DimensionMismatch)
+    );
+}
+
+#[test]
+fn a_one_cell_array_formula_keeps_the_top_left_element() {
+    // A 1x1 file holding an array formula is NOT a region (its range spans one coordinate); it keeps
+    // only the array's TOP-LEFT element (implicit intersection, GRID5): =SORT(A1:A3) -> 1.
+    let wb = load_one_tab("Sheet1", &[("A1:A3", "3\n1\n2"), ("E1", "=SORT(A1:A3)")]);
+    assert_eq!(wb.value_at(0, 4, 0), Value::Number(1.0)); // E1 -> top-left of the sorted array
+}
+
+#[test]
+fn a_coordinate_reference_into_a_region_resolves_to_its_element() {
+    // C1:C3 = SORT(A1:A3) = {1;2;3}; D1 = `=C2` resolves to the region's (1,0) element = 2 (ENG2/ENG3:
+    // the region computes once and a reference into it reads the filled coordinate).
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "3\n1\n2"),
+            ("C1:C3", "=SORT(A1:A3)"),
+            ("D1", "=C2"),
+        ],
+    );
+    assert_eq!(wb.value_at(0, 3, 0), Value::Number(2.0)); // D1 -> C2
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn a_region_whose_input_is_a_formula_chain_computes_once_and_correctly() {
+    // A1:A3 = {3;1;2}; B1:B3 is a per-cell formula grid (=A1+10 ...) = {13;11;12}; C1:C3 = SORT(B1:B3)
+    // = {11;12;13}. The region's input is itself computed formulas — the two-pass engine computes each
+    // once (ENG2) and the sorted region is correct; a reference into the region also reads it.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "3\n1\n2"),
+            ("B1:B3", "=A1+10\n=A2+10\n=A3+10"),
+            ("C1:C3", "=SORT(B1:B3)"),
+            ("D1", "=C1+C3"),
+        ],
+    );
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(11.0)); // C1
+    assert_eq!(wb.value_at(0, 2, 1), Value::Number(12.0)); // C2
+    assert_eq!(wb.value_at(0, 2, 2), Value::Number(13.0)); // C3
+    assert_eq!(wb.value_at(0, 3, 0), Value::Number(24.0)); // D1 = 11 + 13
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn a_single_literal_in_a_multi_cell_range_stays_a_grid4_dimension_error() {
+    // Disambiguation: a lone LITERAL (`5`) in a >1 range is NOT a GRID5 region — only a lone =formula
+    // triggers GRID5. It stays a GRID4 dimension error at LOAD.
+    let err = Workbook::from_tabs(&[("Sheet1", &[("C1:C3", "5")])]).unwrap_err();
+    assert!(
+        err.iter().any(|d| d.code == Code::DimensionMismatch),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_cyclic_region_is_a_located_ref_at_every_coordinate() {
+    // GRID5 region on a REFERENCE CYCLE: C1:C3 = `=SORT(C1:C3)` references itself. The region's ONE
+    // formula never runs (its anchor is a cycle terminal), so every coordinate — INCLUDING the
+    // continuation cells the anchor's array would have filled — must resolve to a located #REF! (ENG2),
+    // never an out-of-bounds read of the region's 1x1 grid (the CORE2 major this pins). Demand ONLY the
+    // continuation cells in a single batched pass, so the resolver must read them from the pass results
+    // rather than a memo hit seeded by an earlier anchor demand.
+    let wb = load_one_tab("Sheet1", &[("C1:C3", "=SORT(C1:C3)")]);
+    let continuations = wb.values_at(&[(0, 2, 1), (0, 2, 2)]); // C2, C3 — continuation cells only
+    assert_eq!(
+        continuations,
+        vec![Value::Error(ErrKind::Ref), Value::Error(ErrKind::Ref)]
+    );
+    assert_eq!(wb.value_at(0, 2, 0), Value::Error(ErrKind::Ref)); // C1 (the anchor)
+    let diags = wb.eval_diagnostics();
+    assert!(diags.iter().any(|d| d.code == Code::Cycle), "{diags:?}");
+}
+
+#[test]
+fn a_cross_reference_into_a_cyclic_region_propagates_the_ref() {
+    // A dependent formula (D1 = `=C3`) referencing a CONTINUATION coordinate of a cyclic region reads
+    // the located #REF! that fills every region coordinate, rather than tripping the grid fall-through.
+    let wb = load_one_tab("Sheet1", &[("C1:C3", "=SORT(C1:C3)"), ("D1", "=C3")]);
+    assert_eq!(wb.value_at(0, 3, 0), Value::Error(ErrKind::Ref)); // D1 -> C3 (continuation) -> #REF!
+    assert!(wb.eval_diagnostics().iter().any(|d| d.code == Code::Cycle));
+}
+
+#[test]
+fn a_depth_refused_region_is_a_located_num_at_every_coordinate() {
+    // GRID5 region reached past the pull-depth bound AS A DEPENDENCY: a chain X1->..->X256 whose
+    // deepest link references a CONTINUATION coordinate (C3) of the region C1:C3 = SEQUENCE(3). Planning
+    // reaches the region's anchor at depth MAX_PULL_DEPTH and refuses it (DepthRefused) BEFORE its
+    // formula runs, so every region coordinate must be filled with a located #NUM! — reading C3 deep
+    // must not fall through to an out-of-bounds grid read (CORE2) — and the refusal propagates up the
+    // chain. `len == MAX_PULL_DEPTH` places the deepest chain cell (X256) at depth 255 (itself
+    // computable) and the region anchor it references at depth 256 (refused).
+    let len = MAX_PULL_DEPTH as usize;
+    let mut owned: Vec<(String, String)> = vec![("C1:C3".to_string(), "=SEQUENCE(3)".to_string())];
+    for i in 0..len {
+        let name = format!("X{}", i + 1);
+        let body = if i + 1 < len {
+            format!("=X{}", i + 2)
+        } else {
+            "=C3".to_string() // the deepest link references the region's continuation coordinate
+        };
+        owned.push((name, body));
+    }
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+    // X1 is column X (index 23), row 1 (zero-based row 0); the deep chain propagates the region's #NUM!.
+    assert_eq!(wb.value_at(0, 23, 0), Value::Error(ErrKind::Num));
+    let diags = wb.eval_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == Code::DepthLimit),
+        "{diags:?}"
+    );
+    // The region was refused as a depth limit, never misclassified as a cycle.
+    assert!(!diags.iter().any(|d| d.code == Code::Cycle), "{diags:?}");
+}
+
+#[test]
+fn render_values_and_functions_over_a_region() {
+    use crate::render::{RenderMode, parse_viewport, render};
+    let wb = load_one_tab("Sheet1", &[("A1:A3", "3\n1\n2"), ("C1:C3", "=SORT(A1:A3)")]);
+    let vp = parse_viewport("C1:C3").unwrap();
+    // --values: each coordinate its own element.
+    let vals = render(&wb, 0, vp, RenderMode::Values);
+    let col: Vec<&str> = vals.rows.iter().map(|r| r.cells[0].as_str()).collect();
+    assert_eq!(col, vec!["1", "2", "3"]);
+    // --functions: the anchor shows the array formula; continuation cells show the caret marker.
+    let fns = render(&wb, 0, vp, RenderMode::Functions);
+    let col: Vec<&str> = fns.rows.iter().map(|r| r.cells[0].as_str()).collect();
+    assert_eq!(col, vec!["=SORT(A1:A3)", "^", "^"]);
+}
+
+// ------------------------------------------------------------------------------------------
+// GRID5 region DIFFERENTIAL cases (naive == two-pass over the dep_key region sharing) — these
+// route through the REGION-AWARE `NaiveOracle`, so the sharing that collapses many region
+// coordinates onto one anchor node is graded on VALUE, not merely on direct pins.
+// ------------------------------------------------------------------------------------------
+
+#[test]
+fn differential_region_shares_its_input_range_with_another_cell() {
+    // (a) SHARED UPSTREAM: the region's input range A1:A3 is ALSO read by E1=SUM(A1:A3). The plan
+    // merges the region node's deps and E1's deps onto the same A-cells; naive==two-pass proves the
+    // shared input is evaluated identically whether pulled by the region or by the ordinary formula.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "3\n1\n2"),
+            ("C1:C3", "=SORT(A1:A3)"), // region over the shared range
+            ("E1", "=SUM(A1:A3)"),     // another cell reading the SAME range
+        ],
+    );
+    assert_agrees(
+        &wb,
+        &[
+            (0, 0, 0), // A1
+            (0, 0, 1), // A2
+            (0, 0, 2), // A3
+            (0, 2, 0), // C1 (region anchor)
+            (0, 2, 1), // C2 (continuation)
+            (0, 2, 2), // C3 (continuation)
+            (0, 4, 0), // E1 = SUM(A1:A3), shares the region's input range
+        ],
+    );
+}
+
+#[test]
+fn differential_region_read_by_multiple_dependents() {
+    // (b) MULTIPLE DEPENDENTS reading INTO one region: D1=C1, D2=C3, D3=C1+C3 all reference region
+    // coordinates of C1:C3=SORT(A1:A3)={1;2;3}. `dep_key` redirects EACH referenced coordinate onto the
+    // ONE anchor node (C1, C3 and both-in-C3+C1 collapse to the C1 anchor), so the region computes once
+    // and each dependent must see the RIGHT element (D1->1, D2->3, D3->4). Grading D1/D2/D3 on VALUE is
+    // exactly the anchor-collapse the two-pass==naive test exists to prove.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "3\n1\n2"),
+            ("C1:C3", "=SORT(A1:A3)"),
+            ("D1", "=C1"),    // reads the anchor coordinate
+            ("D2", "=C3"),    // reads a continuation coordinate
+            ("D3", "=C1+C3"), // reads two coordinates of the same region
+        ],
+    );
+    assert_agrees(
+        &wb,
+        &[
+            (0, 2, 0), // C1
+            (0, 2, 1), // C2
+            (0, 2, 2), // C3
+            (0, 3, 0), // D1 -> C1 = 1
+            (0, 3, 1), // D2 -> C3 = 3
+            (0, 3, 2), // D3 -> C1 + C3 = 4
+        ],
+    );
+}
+
+#[test]
+fn differential_region_over_a_formula_chain() {
+    // (c) REGION OVER A FORMULA CHAIN: the region's input B1:B3 is itself a per-cell formula grid
+    // reading a further range A1:A3 (a chain A -> B -> the region), and D1 reads two region coordinates.
+    // The two-pass engine computes each B once (ENG2) and fills the sorted region; naive==two-pass proves
+    // the chained-input region agrees element for element.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "3\n1\n2"),
+            ("B1:B3", "=A1+10\n=A2+10\n=A3+10"), // {13;11;12}
+            ("C1:C3", "=SORT(B1:B3)"),           // {11;12;13}
+            ("D1", "=C1+C3"),                    // 24
+        ],
+    );
+    assert_agrees(
+        &wb,
+        &[
+            (0, 0, 0), // A1
+            (0, 1, 0), // B1
+            (0, 1, 2), // B3
+            (0, 2, 0), // C1
+            (0, 2, 1), // C2
+            (0, 2, 2), // C3
+            (0, 3, 0), // D1 = C1 + C3
+        ],
+    );
+}
+
+#[test]
+fn differential_shape_mismatch_and_scalar_regions_agree_on_the_spill() {
+    // (d) SHAPE-MISMATCH and SCALAR regions: C1:C2 (2x1) holds a 3x1 SORT (wrong shape) and G1:G3 holds
+    // a SUM (a scalar) — both fill every coordinate with a located `#SPILL!`. The region-aware oracle
+    // re-derives the SAME located error, so naive==two-pass on the refusal shape too (not only clean
+    // values).
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "3\n1\n2"),
+            ("C1:C2", "=SORT(A1:A3)"), // 3x1 array into a 2x1 range -> #SPILL!
+            ("G1:G3", "=SUM(A1:A3)"),  // a scalar into a 3x1 range -> #SPILL!
+        ],
+    );
+    assert_agrees(
+        &wb,
+        &[
+            (0, 2, 0), // C1 -> #SPILL!
+            (0, 2, 1), // C2 -> #SPILL!
+            (0, 6, 0), // G1 -> #SPILL!
+            (0, 6, 1), // G2 -> #SPILL!
+            (0, 6, 2), // G3 -> #SPILL!
+        ],
+    );
+    // Both paths also surface the located dimension error (GRID5, detected at evaluation).
+    assert!(
+        wb.eval_diagnostics()
+            .iter()
+            .any(|d| d.code == Code::DimensionMismatch)
     );
 }

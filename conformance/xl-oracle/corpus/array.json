@@ -1,4 +1,16 @@
 [
   { "name": "sumproduct_pair", "category": "array", "inputs": {"A1":1,"A2":2,"A3":3,"B1":10,"B2":20,"B3":30}, "formula": "=SUMPRODUCT(A1:A3,B1:B3)" },
-  { "name": "array_literal_sum", "category": "array", "inputs": {}, "formula": "=SUM({1,2,3,4})" }
+  { "name": "array_literal_sum", "category": "array", "inputs": {}, "formula": "=SUM({1,2,3,4})" },
+  { "name": "sort_col_topleft", "category": "array", "inputs": {"A1":3,"A2":1,"A3":2}, "formula": "=SORT(A1:A3)" },
+  { "name": "unique_col_topleft", "category": "array", "inputs": {"A1":5,"A2":5,"A3":7,"A4":5,"A5":7}, "formula": "=UNIQUE(A1:A5)" },
+  { "name": "filter_col_topleft", "category": "array", "inputs": {"A1":10,"A2":20,"A3":30,"B1":false,"B2":true,"B3":true}, "formula": "=FILTER(A1:A3,B1:B3)" },
+  { "name": "transpose_row_topleft", "category": "array", "inputs": {"A1":1,"B1":2,"C1":3}, "formula": "=TRANSPOSE(A1:C1)" },
+  {
+    "name": "sequence_topleft",
+    "category": "array",
+    "inputs": {},
+    "formula": "=SEQUENCE(3)",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 does not implement SEQUENCE: =SEQUENCE(3) returns #NAME? (unknown function). Excel & charlie: a 3x1 array {1;2;3} whose top-left (implicit-intersection) value is 1. See KNOWN-LIB-GAPS.md."
+  }
 ]

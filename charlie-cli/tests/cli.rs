@@ -124,6 +124,50 @@ fn check_missing_path_is_not_found() {
 }
 
 #[test]
+fn render_a_grid5_array_formula_region_fills_its_range() {
+    // A1:A3 = {3;1;2} (three literals) and C1:C3 = `=SORT(A1:A3)` (one array formula) — the GRID5
+    // smoke case. --values shows each coordinate its sorted element; --functions shows the formula at
+    // the anchor and the `^` continuation marker below it.
+    let fx = Fixture::new("grid5");
+    fx.file("Sheet1", "A1:A3", "3\n1\n2")
+        .file("Sheet1", "C1:C3", "=SORT(A1:A3)");
+    let (code, out) = run(&["render", fx.path().to_str().unwrap(), "--range", "C1:C3"]);
+    assert_eq!(code, 0, "clean region render exits 0:\n{out}");
+    for v in ["| 1 ", "| 2 ", "| 3 "] {
+        assert!(out.contains(v), "sorted element {v}:\n{out}");
+    }
+    let (code, out) = run(&[
+        "render",
+        fx.path().to_str().unwrap(),
+        "--range",
+        "C1:C3",
+        "--functions",
+    ]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("=SORT(A1:A3)"),
+        "anchor shows the formula:\n{out}"
+    );
+    assert!(
+        out.contains("| ^ "),
+        "continuation cells show the caret marker:\n{out}"
+    );
+}
+
+#[test]
+fn check_a_grid5_shape_mismatch_reports_a_dimension_error() {
+    // C1:C2 (2x1) holds `=SORT(A1:A3)` whose value is 3x1 — a shape mismatch is a located dimension
+    // error detected at evaluation (GRID5), exit 3.
+    let fx = Fixture::new("grid5mismatch");
+    fx.file("Sheet1", "A1:A3", "3\n1\n2")
+        .file("Sheet1", "C1:C2", "=SORT(A1:A3)");
+    let (code, out) = run(&["check", fx.path().to_str().unwrap()]);
+    assert_eq!(code, 3, "a region shape mismatch is exit 3:\n{out}");
+    assert!(out.contains("dimension-mismatch"), "the code:\n{out}");
+    assert!(out.contains("array formula"), "the located message:\n{out}");
+}
+
+#[test]
 fn eval_computes_a_sum_against_the_workbook() {
     // A range SUM over literal cells: the ad-hoc formula pulls A1:A3 through the model.
     let fx = Fixture::new("eval-sum");

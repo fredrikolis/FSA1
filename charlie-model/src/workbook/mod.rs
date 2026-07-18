@@ -64,11 +64,17 @@ const MAX_RANGE_CELLS: u64 = 1_000_000;
 /// One loaded file: its name and claimed region plus its deserialized [`Grid`] (each coordinate a
 /// literal value or a parsed formula). A formula cell's value is computed at eval and cached in
 /// [`Workbook::memo`], not here.
+///
+/// `array_formula` marks a GRID5 ARRAY-FORMULA REGION: the whole file is one `=formula` (the lone
+/// `1x1` `grid` cell) whose declared `region` spans more than one coordinate. The engine evaluates it
+/// ONCE at the region's top-left and fills every coordinate with the matching array element (VAL1: one
+/// array-formula cell spanning its range, not many cells).
 #[derive(Clone, Debug)]
 struct LoadedFile {
     name: String,
     region: Rect,
     grid: Grid,
+    array_formula: bool,
 }
 
 /// One tab (folder): its sheet name and the files that partition its used region.
@@ -100,6 +106,10 @@ type CellKey = (u32, u32, u32);
 #[derive(Debug)]
 pub struct Workbook {
     tabs: Vec<Tab>,
+    /// Whether ANY loaded file is a GRID5 array-formula region. The plan/dep passes only pay the
+    /// per-coordinate "is this an array region?" redirect cost when this is `true`, so a workbook with
+    /// no array regions (the overwhelming common case) plans exactly as it did before GRID5.
+    has_array_regions: bool,
     /// The "now" instant [`Resolver::now_serial`] reports. Defaults to the wall clock at load; a test
     /// pins it with [`Workbook::with_now`]. (Production gets wall-clock time for free.)
     now: f64,
@@ -160,8 +170,14 @@ pub struct CellSource<'a> {
     /// The declared region the file claims.
     pub region: Rect,
     /// The specific grid cell at the requested coordinate — a parsed `=formula` (with its source
-    /// text) or a literal value (un-evaluated).
+    /// text) or a literal value (un-evaluated). For a GRID5 array-formula region, this is always the
+    /// region's single `=formula` (the file's lone grid cell), whatever coordinate was requested.
     pub cell: &'a GridCell,
+    /// `true` iff the requested coordinate is a CONTINUATION cell of a GRID5 array-formula region — a
+    /// cell filled by the array formula anchored at the region's TOP-LEFT, but not the anchor itself.
+    /// The `--functions` render marks it rather than re-printing the formula at every coordinate (the
+    /// formula lives once, at the anchor — VAL1). `false` for the anchor and for every non-region cell.
+    pub array_continuation: bool,
 }
 
 impl Workbook {
@@ -228,12 +244,14 @@ impl Workbook {
                         region,
                         declared_shape: _,
                         grid,
+                        array_formula,
                     }) => {
                         regions.push((fname.clone(), region));
                         loaded.push(LoadedFile {
                             name: fname,
                             region,
                             grid,
+                            array_formula,
                         });
                     }
                     Err(d) => diags.push(d),
@@ -246,8 +264,12 @@ impl Workbook {
             });
         }
         if diags.is_empty() {
+            let has_array_regions = out_tabs
+                .iter()
+                .any(|t| t.files.iter().any(|f| f.array_formula));
             Ok(Workbook {
                 tabs: out_tabs,
+                has_array_regions,
                 now: system_now_serial(),
                 current_sheet: Cell::new(0),
                 memo: RefCell::new(HashMap::new()),
@@ -407,12 +429,20 @@ impl Workbook {
     /// claims the cell). Overlaps are rejected at load, so at most one file covers a cell.
     pub fn source_at(&self, sheet: u32, col: u32, row: u32) -> Option<CellSource<'_>> {
         let (_, file) = self.covering(sheet, col, row)?;
-        let dr = row - file.region.min_row;
-        let dc = col - file.region.min_col;
+        // A GRID5 array-formula region has one grid cell (its `=formula`, at grid (0,0)); every
+        // coordinate maps to that cell. The anchor (top-left) renders the formula; a continuation cell
+        // is flagged so `--functions` marks it instead of re-printing the shared formula.
+        let (dr, dc, array_continuation) = if file.array_formula {
+            let is_anchor = row == file.region.min_row && col == file.region.min_col;
+            (0, 0, !is_anchor)
+        } else {
+            (row - file.region.min_row, col - file.region.min_col, false)
+        };
         Some(CellSource {
             file_name: &file.name,
             region: file.region,
             cell: file.grid.cell_at(dr, dc),
+            array_continuation,
         })
     }
 
@@ -470,6 +500,21 @@ impl Workbook {
 
     fn file_name(&self, id: FileId) -> String {
         self.tabs[id.0 as usize].files[id.1].name.clone()
+    }
+
+    /// If `(sheet,col,row)` sits inside a GRID5 array-formula region, the region's TOP-LEFT (anchor)
+    /// [`CellKey`] — the single cell the region's ONE formula is planned and computed at (VAL1/ENG3:
+    /// the region is one array-formula cell, computed once). `None` for a coordinate that is not in an
+    /// array region (a literal cell, a per-cell formula, or a gap). Free when the workbook has no
+    /// array regions at all (the `has_array_regions` short-circuit), so non-GRID5 workbooks are
+    /// unaffected.
+    fn array_region_anchor(&self, sheet: u32, col: u32, row: u32) -> Option<CellKey> {
+        if !self.has_array_regions {
+            return None;
+        }
+        let (_, file) = self.covering(sheet, col, row)?;
+        file.array_formula
+            .then_some((sheet, file.region.min_col, file.region.min_row))
     }
 }
 

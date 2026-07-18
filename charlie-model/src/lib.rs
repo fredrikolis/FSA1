@@ -39,11 +39,19 @@ use charlie_ast::Shape;
 
 /// One fully-loaded file: the declared closed range (region + shape) and the grid its content
 /// deserialized to. This is the end-to-end artifact for a single file.
+///
+/// `array_formula` is the GRID5 disambiguation, decided once here (see [`parse_file`]): `true` iff the
+/// whole file content is a single `=formula` whose declared range spans MORE than one coordinate — an
+/// ARRAY-FORMULA REGION (VAL1: ONE array-formula cell spanning its range, not many cells). Its `grid`
+/// is then the lone `1x1` formula cell; the region's shape is `declared_shape`, and the engine
+/// evaluates the formula ONCE and fills each coordinate with the matching array element (GRID5). For a
+/// normal per-cell file (`false`) the grid fills the range exactly (GRID4).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedFile {
     pub region: Rect,
     pub declared_shape: Shape,
     pub grid: Grid,
+    pub array_formula: bool,
 }
 
 /// Load one file from its name and contents: parse the filename to a closed range, deserialize the
@@ -54,26 +62,43 @@ pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Diagnostic> 
     let declared = parse_filename(name)?;
 
     let grid = deserialize_tsv(name, contents)?;
-    // GRID4: the deserialized grid must fill the file's closed range exactly.
-    if grid.shape != declared.declared_shape {
+    let declared_shape = declared.declared_shape;
+    // GRID4/GRID5 disambiguation — three cases, decided once:
+    //   1. the grid fills the range exactly              -> the normal per-cell form (GRID4 satisfied);
+    //   2. the grid is a SINGLE `=formula` cell and the  -> a GRID5 ARRAY-FORMULA REGION (the formula
+    //      declared range spans MORE than one coordinate    computes once at eval and fills the range);
+    //   3. anything else (a wrong-sized literal grid, a  -> a located dimension error (GRID4).
+    //      wrong-sized multi-cell grid, a single literal)
+    // A single LITERAL in a multi-cell range is case 3, NOT a region — only a lone `=formula` triggers
+    // GRID5. A 1x1 file that holds an array formula is case 1 (grid fills its 1x1 range); it keeps the
+    // array's top-left element at eval (implicit intersection, GRID5), handled by the engine.
+    let fills_range = grid.shape == declared_shape;
+    let spans_multiple = (declared_shape.rows as u64) * (declared_shape.cols as u64) > 1;
+    let is_single_formula = grid.shape == (Shape { rows: 1, cols: 1 })
+        && matches!(grid.cells.first(), Some(Cell::Formula { .. }));
+
+    let array_formula = if fills_range {
+        false
+    } else if spans_multiple && is_single_formula {
+        true
+    } else {
         return Err(Diagnostic::new(
             Code::DimensionMismatch,
             Loc::file(name),
             format!(
                 "the grid is {}x{} but the file's range {name:?} declares {}x{}: the grid must \
-                 fill the closed range exactly (GRID4)",
-                grid.shape.rows,
-                grid.shape.cols,
-                declared.declared_shape.rows,
-                declared.declared_shape.cols,
+                 fill the closed range exactly (GRID4), or be a single =formula whose array value \
+                 fills the range (GRID5)",
+                grid.shape.rows, grid.shape.cols, declared_shape.rows, declared_shape.cols,
             ),
         ));
-    }
+    };
 
     Ok(ParsedFile {
         region: declared.region,
-        declared_shape: declared.declared_shape,
+        declared_shape,
         grid,
+        array_formula,
     })
 }
 

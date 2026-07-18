@@ -402,8 +402,8 @@ mod tests {
             },
             Fixture {
                 key: "agg/unimplemented".into(),
-                funcs: vec!["FILTER".into()], // a deferred spill fn, not in the registry — never modeled
-                formula: "=FILTER(A1,A1:A2)".into(),
+                funcs: vec!["LAMBDA".into()], // a deferred fn, not in the registry — never modeled
+                formula: "=LAMBDA(A1,A1:A2)".into(),
                 expect: Value::Number(3.0),
                 cells: vec![],
             },
@@ -429,7 +429,7 @@ mod tests {
             Verdict::matched("agg/mislabeled"),
         ];
         let cov = Coverage::compute(&fixtures, &verdicts);
-        // Only SUM: FILTER is not in the registry, ROUND's only fixture diverges, and the
+        // Only SUM: LAMBDA is not in the registry, ROUND's only fixture diverges, and the
         // `funcs: ABS` label on `=1+1` is dropped by the call cross-check (the formula never calls
         // ABS) so a mislabeled fixture cannot inflate the numerator.
         assert_eq!(cov.functions, vec!["SUM"]);

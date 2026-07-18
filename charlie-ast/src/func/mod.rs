@@ -29,6 +29,7 @@ mod info;
 mod logical;
 mod lookup;
 mod math;
+mod spill;
 mod stats;
 mod text;
 
@@ -41,6 +42,7 @@ use info::*;
 use logical::*;
 use lookup::*;
 use math::*;
+use spill::*;
 use stats::*;
 use text::*;
 
@@ -1252,6 +1254,55 @@ pub static FUNCS: &[FuncDef] = &[
         min_args: 3,
         max_args: Some(3),
         eval: time_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    // --- Dynamic-array (spill) batch: UNIQUE SORT FILTER SEQUENCE TRANSPOSE (impls in func/spill.rs).
+    //     Each RETURNS an `array`, so its value fills a GRID5 range file whose declared range spans >1
+    //     coordinate (charlie-model owns the shape/orientation match); they consume arrays WHOLE, so
+    //     no `broadcast` positions. Appended so every earlier row keeps its stable FuncId. ---
+    FuncDef {
+        name: "UNIQUE",
+        min_args: 1,
+        max_args: Some(3),
+        eval: unique_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "SORT",
+        min_args: 1,
+        max_args: Some(4),
+        eval: sort_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "FILTER",
+        min_args: 2,
+        max_args: Some(3),
+        eval: filter_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "SEQUENCE",
+        min_args: 1,
+        max_args: Some(4),
+        eval: sequence_fn,
+        validate: None,
+        volatile: false,
+        broadcast: &[],
+    },
+    FuncDef {
+        name: "TRANSPOSE",
+        min_args: 1,
+        max_args: Some(1),
+        eval: transpose_fn,
         validate: None,
         volatile: false,
         broadcast: &[],
