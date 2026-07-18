@@ -144,3 +144,20 @@ functions =
   IRR : 1-2
   XNPV : 3
   XIRR : 2-3
+  REPT : 2
+  PROPER : 1
+  EXACT : 2
+  VALUE : 1
+  CHAR : 1
+  CODE : 1
+  EOMONTH : 2
+  DAYS : 2
+  WEEKDAY : 1-2
+  WEEKNUM : 1-2
+  WORKDAY : 2-3
+  NETWORKDAYS : 2-3
+  YEARFRAC : 2-3
+  HOUR : 1
+  MINUTE : 1
+  SECOND : 1
+  TIME : 3

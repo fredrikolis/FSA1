@@ -1,4 +1,4 @@
-// Concern: the TEXT worksheet functions (CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE TRIM UPPER LOWER TEXT) — the string built-ins, coercing every text argument through eval.rs's `to_text` (so the function forms agree with the `&` operator), indexing 1-based by CHARACTER, and TEXT's supported format-code subset (single-sourced in `classify_format`, shared with the parser's `validate_text_format`) | Non-concern: the registry table + dispatch (func/mod.rs), the text-coercion primitive (eval.rs owns `to_text`), and the shared `one_num`/`arg_text` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the TEXT worksheet functions (CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE REPT TRIM UPPER LOWER PROPER EXACT VALUE CHAR CODE TEXT) — the string built-ins, coercing every text argument through eval.rs's `to_text` (so the function forms agree with the `&` operator), indexing 1-based by CHARACTER, and TEXT's supported format-code subset (single-sourced in `classify_format`, shared with the parser's `validate_text_format`) | Non-concern: the registry table + dispatch (func/mod.rs), the text-coercion primitive (eval.rs owns `to_text`), and the shared `one_num`/`arg_text` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
 // Text batch v1: CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE TRIM UPPER LOWER
@@ -438,6 +438,297 @@ pub(crate) fn lower_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     match arg_text(ctx, &args[0]) {
         Ok(s) => Value::Text(s.to_lowercase()),
         Err(k) => Value::Error(k),
+    }
+}
+
+/// `REPT(text, number_times)` — `text` repeated `number_times` times (the count truncates toward zero;
+/// a negative count is `#VALUE!`). The result is capped at Excel's 32767-character cell limit — a
+/// longer result is `#VALUE!` (a located refusal), never an unbounded allocation.
+pub(crate) fn rept_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let s = match arg_text(ctx, &args[0]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    let n = match count_arg(ctx, &args[1]) {
+        Ok(n) => n,
+        Err(k) => return Value::Error(k),
+    };
+    // Guard the length multiply so a huge count never tries to allocate an unbounded string — a
+    // `#VALUE!` refusal at/over Excel's 32767-char cap instead.
+    match s.chars().count().checked_mul(n) {
+        Some(len) if len <= 32_767 => Value::Text(s.repeat(n)),
+        _ => Value::Error(ErrKind::Value),
+    }
+}
+
+/// `PROPER(text)` — capitalize the first letter of every word (a letter that follows a non-letter, or
+/// the first character) and lower-case the rest. Full Unicode case mapping; a word boundary is any
+/// non-alphabetic character.
+pub(crate) fn proper_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let s = match arg_text(ctx, &args[0]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    let mut out = String::with_capacity(s.len());
+    let mut prev_alpha = false;
+    for c in s.chars() {
+        if c.is_alphabetic() {
+            if prev_alpha {
+                out.extend(c.to_lowercase());
+            } else {
+                out.extend(c.to_uppercase());
+            }
+            prev_alpha = true;
+        } else {
+            out.push(c);
+            prev_alpha = false;
+        }
+    }
+    Value::Text(out)
+}
+
+/// `EXACT(text1, text2)` — whether the two texts are exactly equal, CASE-SENSITIVELY (unlike the `=`
+/// operator, which folds case for text). Returns a boolean.
+pub(crate) fn exact_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let a = match arg_text(ctx, &args[0]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    let b = match arg_text(ctx, &args[1]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    Value::Bool(a == b)
+}
+
+/// `VALUE(text)` — convert numeric/date/time text to a number. A `Number` passes through and a `Blank`
+/// is `0`; a text string parses through the accepted subset (see [`parse_value_text`]: a decimal with
+/// optional `$`/`,`/`%`/accounting-`(…)` decorations, or a `yyyy-mm-dd` / `hh:mm[:ss]` date-time mapped
+/// to its serial); anything else — a boolean, unparsable text, or a multi-cell array — is `#VALUE!`. An
+/// error propagates.
+pub(crate) fn value_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match scalarize(ctx.eval(&args[0])) {
+        Value::Number(n) => Value::Number(n),
+        Value::Blank => Value::Number(0.0),
+        Value::Error(k) => Value::Error(k),
+        Value::Text(t) => parse_value_text(&t),
+        // A boolean is not numeric text (Excel `VALUE(TRUE)` is `#VALUE!`); a genuinely multi-cell
+        // array is collapsed to `Error(Value)` by `scalarize` and caught by the `Error` arm above.
+        Value::Bool(_) | Value::Array(..) => Value::Error(ErrKind::Value),
+    }
+}
+
+/// Parse the text form `VALUE` accepts, trying the two Excel readings in turn: a NUMBER string (a plain
+/// decimal with optional leading sign / scientific notation, plus the common money-and-report
+/// decorations Excel strips — `$` currency, `,` thousands separators, a trailing `%` scaling by 1/100,
+/// and accounting `(…)` parentheses for a negative), then a DATE/TIME string mapped to its Excel serial
+/// (`yyyy-mm-dd`, `hh:mm[:ss]`, or the two space-separated). Anything else — including an empty/blank
+/// string — is `#VALUE!`. This is a documented SUBSET of Excel's locale-driven VALUE (en-US decorations
+/// and ISO-style date/time only); a form outside the subset is a false-NEGATIVE `#VALUE!`, never a
+/// wrong number.
+fn parse_value_text(t: &str) -> Value {
+    let s = t.trim();
+    if s.is_empty() {
+        return Value::Error(ErrKind::Value);
+    }
+    if let Some(n) = parse_number_text(s) {
+        return Value::Number(n);
+    }
+    if let Some(serial) = parse_datetime_serial(s) {
+        return Value::Number(serial);
+    }
+    Value::Error(ErrKind::Value)
+}
+
+/// Parse the NUMBER form `VALUE` accepts (see [`parse_value_text`]), returning `None` when `s` is not a
+/// number in the accepted subset. Peels the decorations in a fixed order — accounting parentheses,
+/// a leading `$`, a trailing `%`, then thousands separators — before an `f64` parse; a rejected
+/// grouping (`strip_thousands` returns `None`) or an unparsable core is `None`.
+fn parse_number_text(s: &str) -> Option<f64> {
+    // Accounting-style negative: a whole `(…)` wrapper negates the enclosed magnitude.
+    let (body, negate) = match s.strip_prefix('(').and_then(|b| b.strip_suffix(')')) {
+        Some(inner) => (inner.trim(), true),
+        None => (s, false),
+    };
+    // A leading currency symbol (en-US `$`) is stripped. A TRAILING `$` is NOT en-US currency, so
+    // `VALUE("5$")` stays outside the subset and falls through to #VALUE! (never a wrong number).
+    let body = body.strip_prefix('$').unwrap_or(body).trim_start();
+    // A single trailing `%` scales the parsed magnitude by 1/100.
+    let (body, scale) = match body.strip_suffix('%') {
+        Some(pct) => (pct.trim_end(), 0.01),
+        None => (body, 1.0),
+    };
+    let cleaned = strip_thousands(body)?;
+    match cleaned.parse::<f64>() {
+        Ok(n) if n.is_finite() => {
+            let v = n * scale;
+            Some(if negate { -v } else { v })
+        }
+        _ => None,
+    }
+}
+
+/// Remove `,` thousands separators from a numeric body, but ONLY when they form a valid grouping (an
+/// optional sign, then a first group of 1–3 digits followed by comma-separated groups of exactly 3, and
+/// no comma in the fractional part). A malformed grouping (`"1,00,0"`, `",5"`, a comma in the decimals)
+/// returns `None` so it is refused rather than silently misread. A body with no comma passes through
+/// unchanged.
+fn strip_thousands(s: &str) -> Option<String> {
+    if !s.contains(',') {
+        return Some(s.to_string());
+    }
+    let (sign, rest) = match s.strip_prefix(['+', '-']) {
+        Some(r) => (&s[..1], r),
+        None => ("", s),
+    };
+    let (int_part, frac_part) = match rest.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (rest, None),
+    };
+    if frac_part.is_some_and(|f| f.contains(',')) {
+        return None;
+    }
+    let groups: Vec<&str> = int_part.split(',').collect();
+    if groups.len() < 2 {
+        return None; // the comma was not a group separator in the integer part.
+    }
+    for (i, g) in groups.iter().enumerate() {
+        let len_ok = if i == 0 {
+            (1..=3).contains(&g.len())
+        } else {
+            g.len() == 3
+        };
+        if !len_ok || !g.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+    }
+    let mut out = String::from(sign);
+    out.extend(groups);
+    if let Some(f) = frac_part {
+        out.push('.');
+        out.push_str(f);
+    }
+    Some(out)
+}
+
+/// Parse the DATE/TIME form `VALUE` accepts into an Excel serial: a `yyyy-mm-dd` date, an `hh:mm[:ss]`
+/// clock time (a day fraction, so `"12:00"` → `0.5`), or the two separated by whitespace (date serial +
+/// time fraction). Returns `None` for anything outside that shape.
+fn parse_datetime_serial(s: &str) -> Option<f64> {
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    match parts.as_slice() {
+        [one] => parse_iso_date(one)
+            .map(|d| d as f64)
+            .or_else(|| parse_clock(one)),
+        [date, time] => Some(parse_iso_date(date)? as f64 + parse_clock(time)?),
+        _ => None,
+    }
+}
+
+/// Parse a `yyyy-mm-dd` date into its Excel serial (1900 system, leap-bug faithful via
+/// [`serial_from_ymd`]), validating the month and the day-of-month and gating the result to the valid
+/// serial band `[1, MAX_SERIAL]`. `None` for a non-`yyyy-mm-dd` shape or an out-of-range field.
+fn parse_iso_date(s: &str) -> Option<i64> {
+    let mut it = s.split('-');
+    let (y, m, d) = (it.next()?, it.next()?, it.next()?);
+    if it.next().is_some() {
+        return None;
+    }
+    let y: i64 = y.parse().ok()?;
+    let m: u32 = m.parse().ok()?;
+    let d: u32 = d.parse().ok()?;
+    if !(1..=9999).contains(&y) || !(1..=12).contains(&m) || d < 1 || d > days_in_month(y, m) {
+        return None;
+    }
+    let serial = serial_from_ymd(y, m, d);
+    (1..=MAX_SERIAL).contains(&serial).then_some(serial)
+}
+
+/// Parse an `hh:mm[:ss]` clock time into a day fraction in `[0, 1)`. `None` for a non-clock shape or an
+/// out-of-range field (`hh > 23`, `mm`/`ss` `> 59`).
+fn parse_clock(s: &str) -> Option<f64> {
+    let mut it = s.split(':');
+    let h: i64 = it.next()?.parse().ok()?;
+    let m: i64 = it.next()?.parse().ok()?;
+    let sec: i64 = match it.next() {
+        Some(x) => x.parse().ok()?,
+        None => 0,
+    };
+    if it.next().is_some() {
+        return None;
+    }
+    if !(0..=23).contains(&h) || !(0..=59).contains(&m) || !(0..=59).contains(&sec) {
+        return None;
+    }
+    Some((h * 3600 + m * 60 + sec) as f64 / 86_400.0)
+}
+
+/// The Windows-1252 (ANSI) code-page characters for the `0x80..=0x9F` band, indexed by `code - 0x80`.
+/// This band is the ONLY place the code page Excel's CHAR/CODE use diverges from ISO-8859-1 (Latin-1):
+/// `1..=127` and `160..=255` are the Latin-1 identity, while `128..=159` carry these typographic
+/// characters (euro, curly quotes, en/em dash, ellipsis, …). The five positions Windows-1252 leaves
+/// undefined (`0x81 0x8D 0x8F 0x90 0x9D`) fall back to their C1 control code point (the Latin-1
+/// identity), so CHAR/CODE still round-trip them.
+const WIN1252_HIGH: [char; 32] = [
+    '\u{20AC}', '\u{0081}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}', '\u{2021}',
+    '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{008D}', '\u{017D}', '\u{008F}',
+    '\u{0090}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}', '\u{2022}', '\u{2013}', '\u{2014}',
+    '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}', '\u{0153}', '\u{009D}', '\u{017E}', '\u{0178}',
+];
+
+/// `CHAR(number)` — the single character whose code is `number` (truncated toward zero) under the
+/// Windows-1252 (ANSI) code page Excel's CHAR uses, valid for `1..=255`; anything outside that band is
+/// `#VALUE!`. The code maps 1:1 to a Unicode scalar on `1..=127` and `160..=255`; the `128..=159` band
+/// maps through [`WIN1252_HIGH`] (so `CHAR(128)="€"`, `CHAR(151)="—"`), matching Excel rather than
+/// returning the raw C1 control character.
+pub(crate) fn char_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let n = match one_num(ctx, &args[0]) {
+        Ok(x) => x.trunc(),
+        Err(k) => return Value::Error(k),
+    };
+    if !(1.0..=255.0).contains(&n) {
+        return Value::Error(ErrKind::Value);
+    }
+    let code = n as u32;
+    let c = if (128..=159).contains(&code) {
+        WIN1252_HIGH[(code - 128) as usize]
+    } else {
+        // `1..=127` and `160..=255` are the Basic-Latin / Latin-1 identity, so `from_u32` is always
+        // `Some`; the `None` arm keeps the function total against a synthesized out-of-range value.
+        match char::from_u32(code) {
+            Some(c) => c,
+            None => return Value::Error(ErrKind::Value),
+        }
+    };
+    Value::Text(c.to_string())
+}
+
+/// `CODE(text)` — the Windows-1252 (ANSI) code-page byte of the FIRST character of `text`, the inverse
+/// of [`char_fn`]; an empty text is `#VALUE!`. A character the code page cannot represent yields `63`
+/// (`'?'`), matching Excel (e.g. `CODE("€")=128`, but a non-Latin glyph → `63`).
+pub(crate) fn code_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let s = match arg_text(ctx, &args[0]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    match s.chars().next() {
+        Some(c) => Value::Number(char_to_win1252(c) as f64),
+        None => Value::Error(ErrKind::Value),
+    }
+}
+
+/// Map a character to its Windows-1252 (ANSI) code-page byte — the inverse of the CHAR mapping. The
+/// `0x00..=0x7F` and `0xA0..=0xFF` ranges are the Latin-1 identity; the `0x80..=0x9F` typographic band
+/// is found in [`WIN1252_HIGH`]. A character outside the code page returns `63` (`'?'`), as Excel's
+/// CODE does.
+fn char_to_win1252(c: char) -> u32 {
+    let cp = c as u32;
+    if cp <= 0x7F || (0xA0..=0xFF).contains(&cp) {
+        return cp;
+    }
+    match WIN1252_HIGH.iter().position(|&h| h == c) {
+        Some(i) => 128 + i as u32,
+        None => 63,
     }
 }
 

@@ -1,5 +1,6 @@
-// Concern: the DATE/TIME worksheet functions (DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW) — the Excel 1900 date-serial built-ins WITH the 1900 leap-year bug replicated (the ymd->serial map `serial_from_ymd` lives here; its inverse `serial_to_ymd` + the shared epoch live in `func::text`, which TEXT's date render also needs), the valid serial band, and the TODAY/NOW volatiles that read the resolver's injectable clock (never `std::time` from here) | Non-concern: the registry table + dispatch (func/mod.rs), the injectable clock seam (eval.rs/`Resolver` own `now_serial`), and the shared `one_num`/`arg_text`/`finite_or_num` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the DATE/TIME worksheet functions (DATE YEAR MONTH DAY EDATE EOMONTH DATEDIF DAYS WEEKDAY WEEKNUM WORKDAY NETWORKDAYS YEARFRAC HOUR MINUTE SECOND TIME TODAY NOW) — the Excel 1900 date-serial built-ins WITH the 1900 leap-year bug replicated (the ymd->serial map `serial_from_ymd` lives here; its inverse `serial_to_ymd` + the shared epoch live in `func::text`, which TEXT's date render also needs), the valid serial band, the day-count / weekday / working-day / time-of-day arithmetic, and the TODAY/NOW volatiles that read the resolver's injectable clock (never `std::time` from here) | Non-concern: the registry table + dispatch (func/mod.rs), the injectable clock seam (eval.rs/`Resolver` own `now_serial`), and the shared `one_num`/`arg_text`/`finite_or_num` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
+use std::collections::HashSet;
 
 // Date/time batch v1: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW.
 //
@@ -34,8 +35,9 @@ fn is_leap(y: i64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
-/// The number of days in month `m` (1-based) of year `y`.
-fn days_in_month(y: i64, m: u32) -> u32 {
+/// The number of days in month `m` (1-based) of year `y`. Shared with `func::text` (VALUE's date-text
+/// parser validates a day against its month here) alongside [`serial_from_ymd`].
+pub(crate) fn days_in_month(y: i64, m: u32) -> u32 {
     match m {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -66,8 +68,9 @@ const fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 /// (serial 1 = 1900-01-01). The inverse of [`serial_to_ymd`] for every real civil date (the phantom
 /// serial 60 has no civil pre-image — it is produced only by the forward map / by day-offset
 /// arithmetic). The returned serial may fall outside the valid band for a pre-epoch input; callers
-/// gate the range.
-fn serial_from_ymd(y: i64, m: u32, d: u32) -> i64 {
+/// gate the range. Shared with `func::text` (VALUE's date-text parser turns a `yyyy-mm-dd` string into
+/// a serial through this map).
+pub(crate) fn serial_from_ymd(y: i64, m: u32, d: u32) -> i64 {
     // On/after 1900-03-01 the phantom leap day sits in the count → shift +1. The threshold is a
     // compile-time constant (const-folded, not recomputed per call).
     const LEAP_BUG_SHIFT_THRESHOLD: i64 = days_from_civil(1900, 3, 1);
@@ -262,6 +265,426 @@ pub(crate) fn datedif_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
         _ => return Value::Error(ErrKind::Num),
     };
     Value::Number(result as f64)
+}
+
+/// `EOMONTH(start_date, months)` — the serial of the LAST day of the month `months` months from
+/// `start_date` (`months` truncates toward zero; negative goes back). A result outside [1, MAX_SERIAL]
+/// is #NUM!.
+pub(crate) fn eomonth_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let start = match date_serial_arg(ctx, &args[0]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let months = match date_int_arg(ctx, &args[1]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (y, m, _) = serial_to_ymd(start);
+    let total = y * 12 + (m as i64 - 1) + months;
+    let ny = total.div_euclid(12);
+    let nm = (total.rem_euclid(12) + 1) as u32;
+    if !(0..=9999).contains(&ny) {
+        return Value::Error(ErrKind::Num);
+    }
+    let serial = serial_from_ymd(ny, nm, days_in_month(ny, nm));
+    if !(1..=MAX_SERIAL).contains(&serial) {
+        return Value::Error(ErrKind::Num);
+    }
+    Value::Number(serial as f64)
+}
+
+/// `DAYS(end_date, start_date)` — the number of days from `start_date` to `end_date` (both serials);
+/// note the END-first argument order. Negative when `end_date` precedes `start_date`.
+pub(crate) fn days_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let end = match date_serial_arg(ctx, &args[0]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let start = match date_serial_arg(ctx, &args[1]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    Value::Number((end - start) as f64)
+}
+
+/// The day-of-week of a date serial in Excel's default `WEEKDAY` numbering (1 = Sunday … 7 = Saturday),
+/// computed straight from the serial modulo 7 (serial 1 = Sunday, matching Excel — the count runs in
+/// the contiguous serial space, so the 1900 leap bug rides along automatically). The shared weekday
+/// primitive behind WEEKDAY / WEEKNUM / WORKDAY / NETWORKDAYS.
+fn weekday_sun1(serial: i64) -> i64 {
+    (serial - 1).rem_euclid(7) + 1
+}
+
+/// `WEEKDAY(serial, [return_type])` — the day of week of a date serial. `return_type` picks the
+/// numbering: 1 (default) Sun=1..Sat=7; 2 or 11 Mon=1..Sun=7; 3 Mon=0..Sun=6; 12..17 weeks starting
+/// Tue..Sun returning 1..7. An unsupported type is #NUM!.
+pub(crate) fn weekday_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let serial = match date_serial_arg(ctx, &args[0]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let rtype = match opt_int_arg(ctx, args, 1, 1) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let wd = weekday_sun1(serial); // 1=Sun..7=Sat
+    let result = match rtype {
+        1 => wd,                         // Sun=1..Sat=7
+        2 => (wd - 2).rem_euclid(7) + 1, // Mon=1..Sun=7
+        3 => (wd - 2).rem_euclid(7),     // Mon=0..Sun=6
+        // 11→Mon(Sun-code 2) … 16→Sat(7) … 17→Sun(1); return 1..7 from the week's first day.
+        11..=17 => {
+            let start = if rtype == 17 { 1 } else { rtype - 9 };
+            (wd - start).rem_euclid(7) + 1
+        }
+        _ => return Value::Error(ErrKind::Num),
+    };
+    Value::Number(result as f64)
+}
+
+/// `WEEKNUM(serial, [return_type])` — the week of the year for a date serial. For the day-of-week
+/// types (1 default = weeks start Sunday; 2 / 11..17 = weeks start Mon..Sun) week 1 is the week
+/// CONTAINING January 1. Type 21 is the ISO-8601 week (weeks start Monday; week 1 holds the year's
+/// first Thursday). An unsupported type is #NUM!.
+pub(crate) fn weeknum_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let serial = match date_serial_arg(ctx, &args[0]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let rtype = match opt_int_arg(ctx, args, 1, 1) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    if rtype == 21 {
+        return Value::Number(iso_weeknum(serial) as f64);
+    }
+    // The Sun=1..Sat=7 code of each simple numbering's week-start day.
+    let start = match rtype {
+        1 | 17 => 1,          // Sunday
+        2 | 11 => 2,          // Monday
+        12..=16 => rtype - 9, // Tue..Sat
+        _ => return Value::Error(ErrKind::Num),
+    };
+    let (y, _, _) = serial_to_ymd(serial);
+    let jan1 = serial_from_ymd(y, 1, 1);
+    // Days from Jan 1 (0-based) plus Jan 1's offset within its week gives the completed-week count.
+    let offset = (weekday_sun1(jan1) - start).rem_euclid(7);
+    let week = (serial - jan1 + offset) / 7 + 1;
+    Value::Number(week as f64)
+}
+
+/// The ISO-8601 week number of a date serial (weeks start Monday; week 1 holds the year's first
+/// Thursday), resolving the year-boundary weeks that belong to the adjacent ISO year.
+fn iso_weeknum(serial: i64) -> i64 {
+    let (y, _, _) = serial_to_ymd(serial);
+    let jan1 = serial_from_ymd(y, 1, 1);
+    let ordinal = serial - jan1 + 1; // 1-based day of year
+    let weekday_iso = (weekday_sun1(serial) + 5).rem_euclid(7) + 1; // Mon=1..Sun=7
+    let week = (ordinal - weekday_iso + 10).div_euclid(7);
+    if week < 1 {
+        iso_weeks_in_year(y - 1)
+    } else if week > iso_weeks_in_year(y) {
+        1
+    } else {
+        week
+    }
+}
+
+/// The number of ISO-8601 weeks in year `y` — 53 when the year starts on a Thursday (or a leap year
+/// starts on a Wednesday), else 52.
+fn iso_weeks_in_year(y: i64) -> i64 {
+    let p = |y: i64| (y + y.div_euclid(4) - y.div_euclid(100) + y.div_euclid(400)).rem_euclid(7);
+    if p(y) == 4 || p(y - 1) == 3 { 53 } else { 52 }
+}
+
+/// `YEARFRAC(start_date, end_date, [basis])` — the fraction of a year between two date serials under
+/// the day-count `basis`: 0 (default) 30/360 US (NASD), 1 actual/actual, 2 actual/360, 3 actual/365,
+/// 4 30E/360 (European). The endpoints are used order-independently (`YEARFRAC` is symmetric). An
+/// unsupported basis is #NUM!.
+pub(crate) fn yearfrac_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let a = match date_serial_arg(ctx, &args[0]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let b = match date_serial_arg(ctx, &args[1]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let basis = match opt_int_arg(ctx, args, 2, 0) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    // Symmetric: order the endpoints so start <= end.
+    let (s, e) = if a <= b { (a, b) } else { (b, a) };
+    let frac = match basis {
+        0 => yf_30_360(s, e, false),
+        1 => yf_actual_actual(s, e),
+        2 => (e - s) as f64 / 360.0,
+        3 => (e - s) as f64 / 365.0,
+        4 => yf_30_360(s, e, true),
+        _ => return Value::Error(ErrKind::Num),
+    };
+    finite_or_num(frac)
+}
+
+/// The 30/360 year fraction between two serials. `european` selects 30E/360 (basis 4): a day of 31 is
+/// clamped to 30 on both endpoints. The US (NASD, basis 0) form additionally applies the end-of-Feb
+/// rule and only clamps the end day to 30 when the start day is already 30 — Excel's documented order.
+fn yf_30_360(s: i64, e: i64, european: bool) -> f64 {
+    let (y1, m1, d1r) = serial_to_ymd(s);
+    let (y2, m2, d2r) = serial_to_ymd(e);
+    let (mut d1, mut d2) = (d1r as i64, d2r as i64);
+    if european {
+        if d1 == 31 {
+            d1 = 30;
+        }
+        if d2 == 31 {
+            d2 = 30;
+        }
+    } else {
+        let last1 = d1r == days_in_month(y1, m1);
+        let last2 = d2r == days_in_month(y2, m2);
+        if m1 == 2 && last1 && m2 == 2 && last2 {
+            d2 = 30;
+        }
+        if m1 == 2 && last1 {
+            d1 = 30;
+        }
+        // Clamp the start day (31 -> 30) BEFORE testing the end day, so a 31-to-31 span reduces both
+        // endpoints. Reversing these — the earlier bug — left d1 == 31 when the d2 test ran, so a
+        // month-end-to-month-end pair (e.g. 2020-01-31 -> 2020-07-31) was one day too long.
+        if d1 == 31 {
+            d1 = 30;
+        }
+        if d2 == 31 && d1 == 30 {
+            d2 = 30;
+        }
+    }
+    let days = 360 * (y2 - y1) + 30 * (m2 as i64 - m1 as i64) + (d2 - d1);
+    days as f64 / 360.0
+}
+
+/// The actual/actual year fraction (basis 1): actual elapsed days over a year length that is the
+/// year's own length when both endpoints share a year, 365/366 for a sub-year span crossing one year
+/// boundary (366 iff a February 29 lies in the interval), and the average calendar-year length over
+/// the spanned years otherwise — Excel's documented method.
+fn yf_actual_actual(s: i64, e: i64) -> f64 {
+    if s == e {
+        return 0.0;
+    }
+    let days = (e - s) as f64;
+    let (y1, m1, d1) = serial_to_ymd(s);
+    let (y2, m2, d2) = serial_to_ymd(e);
+    let denom = if y1 == y2 {
+        days_in_year(y1) as f64
+    } else if y2 - y1 == 1 && (m1, d1) >= (m2, d2) {
+        // A span of at most one year that crosses a single year boundary.
+        if leap_day_in_range(s, e) {
+            366.0
+        } else {
+            365.0
+        }
+    } else {
+        let total: i64 = (y1..=y2).map(days_in_year).sum();
+        total as f64 / (y2 - y1 + 1) as f64
+    };
+    days / denom
+}
+
+/// The number of days in year `y` (366 in a leap year).
+fn days_in_year(y: i64) -> i64 {
+    if is_leap(y) { 366 } else { 365 }
+}
+
+/// Whether a February 29 falls within the inclusive serial range `[s, e]` (used by actual/actual to
+/// pick a 366-day denominator for a sub-year span). Only the two endpoints' years can contribute for
+/// such a span, so both are checked.
+fn leap_day_in_range(s: i64, e: i64) -> bool {
+    let (y1, _, _) = serial_to_ymd(s);
+    let (y2, _, _) = serial_to_ymd(e);
+    (y1..=y2).any(|y| {
+        is_leap(y) && {
+            let feb29 = serial_from_ymd(y, 2, 29);
+            s <= feb29 && feb29 <= e
+        }
+    })
+}
+
+/// Gather the optional `holidays` argument (a scalar, range, or array) into a set of integer date
+/// serials for WORKDAY / NETWORKDAYS. A blank cell is skipped; a non-coercible value is #VALUE!; an
+/// error propagates.
+fn gather_holidays(ctx: &mut EvalCtx, e: &Expr) -> Result<HashSet<i64>, ErrKind> {
+    let mut set = HashSet::new();
+    let push = |v: &Value, set: &mut HashSet<i64>| -> Result<(), ErrKind> {
+        match v {
+            Value::Blank => {}
+            Value::Error(k) => return Err(*k),
+            other => {
+                set.insert(coerce_num(other)?.floor() as i64);
+            }
+        }
+        Ok(())
+    };
+    match ctx.eval(e) {
+        Value::Array(_, cells) => {
+            for c in &cells {
+                push(c, &mut set)?;
+            }
+        }
+        other => push(&other, &mut set)?,
+    }
+    Ok(set)
+}
+
+/// `WORKDAY(start_date, days, [holidays])` — the serial `days` working days (Mon–Fri, excluding any
+/// `holidays`) after `start_date` (`days` truncates toward zero; negative counts backward). A result
+/// outside [1, MAX_SERIAL] is #NUM! — the band exit also BOUNDS the step loop against a huge `days`.
+pub(crate) fn workday_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let start = match date_serial_arg(ctx, &args[0]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let days = match date_int_arg(ctx, &args[1]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let holidays = match opt_holidays(ctx, args, 2) {
+        Ok(h) => h,
+        Err(k) => return Value::Error(k),
+    };
+    let step = if days >= 0 { 1 } else { -1 };
+    let mut remaining = days.abs();
+    let mut cur = start;
+    while remaining > 0 {
+        cur += step;
+        // Every step moves one serial toward a band edge, so this exit bounds the loop even for a
+        // `days` far larger than the ~2.9M-wide valid band.
+        if !(1..=MAX_SERIAL).contains(&cur) {
+            return Value::Error(ErrKind::Num);
+        }
+        let wd = weekday_sun1(cur);
+        if wd == 1 || wd == 7 || holidays.contains(&cur) {
+            continue;
+        }
+        remaining -= 1;
+    }
+    Value::Number(cur as f64)
+}
+
+/// `NETWORKDAYS(start_date, end_date, [holidays])` — the count of working days (Mon–Fri, excluding any
+/// `holidays`) in the inclusive interval between the two serials. Negative when `end_date` precedes
+/// `start_date` (Excel's sign convention).
+pub(crate) fn networkdays_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let s = match date_serial_arg(ctx, &args[0]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let e = match date_serial_arg(ctx, &args[1]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let holidays = match opt_holidays(ctx, args, 2) {
+        Ok(h) => h,
+        Err(k) => return Value::Error(k),
+    };
+    let (lo, hi, sign) = if s <= e { (s, e, 1) } else { (e, s, -1) };
+    let mut count = 0i64;
+    for cur in lo..=hi {
+        let wd = weekday_sun1(cur);
+        if wd == 1 || wd == 7 || holidays.contains(&cur) {
+            continue;
+        }
+        count += 1;
+    }
+    Value::Number((sign * count) as f64)
+}
+
+/// Resolve an optional integer argument at `idx` (truncated toward zero), or `default` when the call
+/// omitted it. Shared by WEEKDAY/WEEKNUM/YEARFRAC's trailing type/basis selector.
+fn opt_int_arg(ctx: &mut EvalCtx, args: &[Expr], idx: usize, default: i64) -> Result<i64, ErrKind> {
+    match args.get(idx) {
+        Some(e) => Ok(one_num(ctx, e)?.trunc() as i64),
+        None => Ok(default),
+    }
+}
+
+/// Resolve the optional `holidays` argument at `idx` into a serial set, or an empty set when omitted.
+fn opt_holidays(ctx: &mut EvalCtx, args: &[Expr], idx: usize) -> Result<HashSet<i64>, ErrKind> {
+    match args.get(idx) {
+        Some(e) => gather_holidays(ctx, e),
+        None => Ok(HashSet::new()),
+    }
+}
+
+/// Evaluate a serial argument to its time-of-day in whole seconds, `[0, 86400)`. The fractional part
+/// of the serial is the time of day, rounded to the nearest second (so a value a hair under the next
+/// day rolls to 0). The serial is gated to Excel's valid datetime band `[0, MAX_SERIAL + 1)` — a
+/// negative serial OR one at/beyond the day after 9999-12-31 (a date Excel cannot represent) is #NUM!,
+/// so HOUR/MINUTE/SECOND agree with the date readers' upper edge instead of silently reading a time
+/// off an out-of-band serial.
+fn time_of_day_seconds(ctx: &mut EvalCtx, e: &Expr) -> Result<i64, ErrKind> {
+    let n = one_num(ctx, e)?;
+    if !(0.0..(MAX_SERIAL + 1) as f64).contains(&n) {
+        return Err(ErrKind::Num);
+    }
+    let frac = n - n.floor();
+    Ok(((frac * 86_400.0).round() as i64).rem_euclid(86_400))
+}
+
+/// `HOUR(serial)` — the hour (0–23) of a serial's time-of-day fraction.
+pub(crate) fn hour_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match time_of_day_seconds(ctx, &args[0]) {
+        Ok(secs) => Value::Number((secs / 3600) as f64),
+        Err(k) => Value::Error(k),
+    }
+}
+
+/// `MINUTE(serial)` — the minute (0–59) of a serial's time-of-day fraction.
+pub(crate) fn minute_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match time_of_day_seconds(ctx, &args[0]) {
+        Ok(secs) => Value::Number((secs / 60 % 60) as f64),
+        Err(k) => Value::Error(k),
+    }
+}
+
+/// `SECOND(serial)` — the second (0–59) of a serial's time-of-day fraction.
+pub(crate) fn second_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match time_of_day_seconds(ctx, &args[0]) {
+        Ok(secs) => Value::Number((secs % 60) as f64),
+        Err(k) => Value::Error(k),
+    }
+}
+
+/// `TIME(hour, minute, second)` — the day fraction for a time of day. Each component truncates toward
+/// zero and must lie in Excel's accepted `0..=32767` band (a value outside it is #NUM!); the total then
+/// rolls over a 24-hour day (`TIME(25,0,0)` = `TIME(1,0,0)`).
+pub(crate) fn time_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let h = match time_component_arg(ctx, &args[0]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let m = match time_component_arg(ctx, &args[1]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let s = match time_component_arg(ctx, &args[2]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    // Each component is in 0..=32767, so this sum cannot overflow i64.
+    let total = h * 3600 + m * 60 + s;
+    Value::Number(total.rem_euclid(86_400) as f64 / 86_400.0)
+}
+
+/// Evaluate a TIME hour/minute/second argument: truncate toward zero (Excel) and gate the accepted
+/// `0..=32767` band — a component outside it (negative, or larger than Excel's per-field cap) is #NUM!.
+/// A non-coercible value is #VALUE!; an error propagates.
+fn time_component_arg(ctx: &mut EvalCtx, e: &Expr) -> Result<i64, ErrKind> {
+    let n = one_num(ctx, e)?.trunc();
+    if !(0.0..=32767.0).contains(&n) {
+        return Err(ErrKind::Num);
+    }
+    Ok(n as i64)
 }
 
 /// `TODAY()` — the current date as an integer serial (the time-of-day fraction FLOORed off). VOLATILE:
