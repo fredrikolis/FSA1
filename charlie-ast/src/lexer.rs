@@ -332,8 +332,18 @@ fn lex_quoted_sheet_name(src: &str, b: &[u8], i: usize) -> Result<(String, usize
 fn lex_word(src: &str, b: &[u8], i: usize) -> (TokenKind, usize) {
     let start = i;
     let mut j = i;
-    while j < b.len() && (b[j] == b'$' || b[j].is_ascii_alphanumeric()) {
-        j += 1;
+    while j < b.len() {
+        if b[j] == b'$' || b[j].is_ascii_alphanumeric() {
+            j += 1;
+        } else if b[j] == b'.' && j + 1 < b.len() && b[j + 1].is_ascii_alphabetic() {
+            // Excel function names contain dots (`NORM.DIST`, `STDEV.S`, `QUARTILE.INC`): a `.`
+            // between an identifier char and a LETTER extends the word so `STDEV.S(` lexes as one
+            // `Func`. Requiring a letter after the `.` (not a digit) leaves `A1.5` = `A1` then `.5`
+            // (a ref then a number) unchanged — no numeric lexeme is absorbed.
+            j += 1;
+        } else {
+            break;
+        }
     }
     let w = &src[start..j];
 
@@ -500,6 +510,31 @@ mod tests {
         assert_eq!(
             kinds("SUM("),
             vec![TokenKind::Func("SUM".to_string()), TokenKind::LParen]
+        );
+        // A dotted Excel function name (STDEV.S, NORM.DIST) lexes as ONE Func word.
+        assert_eq!(
+            kinds("STDEV.S("),
+            vec![TokenKind::Func("STDEV.S".to_string()), TokenKind::LParen]
+        );
+        assert_eq!(
+            kinds("PERCENTILE.INC("),
+            vec![
+                TokenKind::Func("PERCENTILE.INC".to_string()),
+                TokenKind::LParen
+            ]
+        );
+        // A `.` before a DIGIT is NOT absorbed: `A1.5` stays a ref then a number (unchanged).
+        assert_eq!(
+            kinds("A1.5"),
+            vec![
+                TokenKind::CellRef {
+                    col: 0,
+                    row: 0,
+                    col_abs: false,
+                    row_abs: false
+                },
+                TokenKind::Num(0.5)
+            ]
         );
         // A leading-zero row is not a ref — it is a bare name.
         assert_eq!(kinds("A01"), vec![TokenKind::Name("A01".to_string())]);

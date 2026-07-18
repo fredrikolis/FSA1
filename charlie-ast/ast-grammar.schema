@@ -72,6 +72,22 @@ functions =
   RANK : 2-3
   COUNTA : 1+
   COUNTBLANK : 1
+  STDEV : 1+
+  STDEV.S : 1+
+  STDEVP : 1+
+  STDEV.P : 1+
+  VAR : 1+
+  VAR.S : 1+
+  VARP : 1+
+  VAR.P : 1+
+  MODE : 1+
+  MODE.SNGL : 1+
+  LARGE : 2
+  SMALL : 2
+  PERCENTILE : 2
+  PERCENTILE.INC : 2
+  QUARTILE : 2
+  QUARTILE.INC : 2
   IFS : 2+
   NOT : 1
   IFNA : 2
@@ -105,6 +121,11 @@ functions =
   CHOOSE : 2+
   ROW : 1
   COLUMN : 1
+  HLOOKUP : 3-4
+  LOOKUP : 2-3
+  ROWS : 1
+  COLUMNS : 1
+  XMATCH : 2-3
   INDIRECT : 0+
   OFFSET : 0+
   ISBLANK : 1

@@ -1,4 +1,4 @@
-// Concern: the LOOKUP & REFERENCE worksheet functions (XLOOKUP INDEX MATCH VLOOKUP CHOOSE ROW COLUMN, + the reserved INDIRECT/OFFSET refusal) — the search family agreeing on ONE cross-type ordering (`eval::value_cmp`) and ONE wildcard engine (`criteria::wildcard_match`), with a guaranteed-terminating approximate `binary_search_approx` and XLOOKUP's modern exact-by-default | Non-concern: the registry table + dispatch (func/mod.rs), the ordering/wildcard primitives (eval.rs owns `value_cmp`, criteria.rs owns `wildcard_match`), and the shared `block` helper (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the LOOKUP & REFERENCE worksheet functions (XLOOKUP INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH CHOOSE ROW COLUMN ROWS COLUMNS, + the reserved INDIRECT/OFFSET refusal) — the search family agreeing on ONE cross-type ordering (`eval::value_cmp`) and ONE wildcard engine (`criteria::wildcard_match`), with a guaranteed-terminating approximate `binary_search_approx`, XLOOKUP/XMATCH's modern exact-by-default, and the shape queries ROWS/COLUMNS | Non-concern: the registry table + dispatch (func/mod.rs), the ordering/wildcard primitives (eval.rs owns `value_cmp`, criteria.rs owns `wildcard_match`), and the shared `block` helper (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
 // Lookup & reference batch v1: XLOOKUP INDEX MATCH VLOOKUP CHOOSE ROW COLUMN (+ reserved INDIRECT /
@@ -415,6 +415,179 @@ pub(crate) fn column_fn(_ctx: &mut EvalCtx, args: &[Expr]) -> Value {
         Expr::Ref(r) => Value::Number((r.col + 1) as f64),
         Expr::Range(rn) => Value::Number((rn.start_col.min(rn.end_col) + 1) as f64),
         _ => Value::Error(ErrKind::Value),
+    }
+}
+
+/// `HLOOKUP(lookup_value, table_array, row_index, [range_lookup])` — the HORIZONTAL dual of
+/// [`vlookup`]: find `lookup_value` in the FIRST ROW of `table_array`, return the `row_index`-th row's
+/// cell of that column. Approximate BY DEFAULT (omitted/`TRUE` → the largest first-row value `<=`
+/// `lookup_value`, first row ASSUMED sorted ascending); `FALSE` → an exact first-hit (wildcards on a
+/// text needle). `row_index < 1` is `#VALUE!`, `> height` is `#REF!`; no match is `#N/A`.
+pub(crate) fn hlookup(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let needle = scalarize(ctx.eval(&args[0]));
+    if let Value::Error(k) = needle {
+        return Value::Error(k);
+    }
+    let (rows, cols, cells) = match lookup_block(ctx, &args[1]) {
+        Err(k) => return Value::Error(k),
+        Ok(t) => t,
+    };
+    let row_index = match coerce_num(&scalarize(ctx.eval(&args[2]))) {
+        Err(k) => return Value::Error(k),
+        Ok(n) => n.trunc(),
+    };
+    if row_index < 1.0 {
+        return Value::Error(ErrKind::Value);
+    }
+    if row_index > rows as f64 {
+        return Value::Error(ErrKind::Ref);
+    }
+    let approximate = match args.get(3) {
+        None => true,
+        Some(e) => match coerce_bool(&ctx.eval(e)) {
+            Err(k) => return Value::Error(k),
+            Ok(b) => b,
+        },
+    };
+    // The first row, materialized as a vector for the search.
+    let first_row: Vec<Value> = (0..cols).map(|c| cells[c as usize].clone()).collect();
+    let hit = if approximate {
+        binary_search_approx(&first_row, &needle, true)
+    } else {
+        linear_exact(&first_row, &needle, true)
+    };
+    match hit {
+        None => Value::Error(ErrKind::Na),
+        Some(c) => matched_scalar(&cells[((row_index as u32 - 1) * cols + c as u32) as usize]),
+    }
+}
+
+/// `LOOKUP(lookup_value, lookup_vector, [result_vector])` — has TWO Excel syntaxes on one arity, and
+/// this implements BOTH so a migrated `=LOOKUP(x, A1:C10)` never grades as a silent Diverge:
+///   * VECTOR form (3-arg, OR 2-arg on a genuine 1-row/1-col vector): approximate-match `lookup_value`
+///     in `lookup_vector` (ASSUMED sorted ascending — the largest value `<=` needle), then return the
+///     value at the SAME position of `result_vector` (or of `lookup_vector` itself when omitted).
+///   * ARRAY form (2-arg on a true 2-D array): Excel's aspect-ratio rule — a WIDER-than-tall array
+///     searches its FIRST ROW and returns the aligned cell of the LAST ROW; a square-or-taller array
+///     searches its FIRST COLUMN and returns the aligned cell of the LAST COLUMN. A 1×n / n×1 vector
+///     reduces to exactly the vector form (its search line and result line coincide).
+///
+/// A needle below every key, or a position past a shorter `result_vector`, is `#N/A`.
+pub(crate) fn lookup_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let needle = scalarize(ctx.eval(&args[0]));
+    if let Value::Error(k) = needle {
+        return Value::Error(k);
+    }
+    let (rows, cols, cells) = match lookup_block(ctx, &args[1]) {
+        Err(k) => return Value::Error(k),
+        Ok(t) => t,
+    };
+    // 2-arg → Excel's ARRAY form (which reduces to the vector form for a vector). 3-arg → the classic
+    // vector form with an explicit result vector, searched on the flattened lookup vector.
+    let Some(result_e) = args.get(2) else {
+        return lookup_array_form(&needle, rows, cols, &cells);
+    };
+    let pos = match binary_search_approx(&cells, &needle, true) {
+        None => return Value::Error(ErrKind::Na),
+        Some(p) => p,
+    };
+    let (_rr, _rc, result_vec) = match lookup_block(ctx, result_e) {
+        Err(k) => return Value::Error(k),
+        Ok(t) => t,
+    };
+    match result_vec.get(pos) {
+        Some(v) => matched_scalar(v),
+        None => Value::Error(ErrKind::Na),
+    }
+}
+
+/// The 2-arg ARRAY form of `LOOKUP` (Excel's aspect-ratio rule): search the FIRST ROW when the array
+/// is wider than tall (more columns than rows) and return the aligned cell of the LAST ROW; otherwise
+/// (square or taller) search the FIRST COLUMN and return the aligned cell of the LAST COLUMN. A 1-row
+/// or 1-col vector reduces exactly to the classic vector form — its search line IS its result line, so
+/// a matched key returns itself. A needle below every key is `#N/A`.
+fn lookup_array_form(needle: &Value, rows: u32, cols: u32, cells: &[Value]) -> Value {
+    let at = |r: u32, c: u32| cells[(r * cols + c) as usize].clone();
+    let (search, result): (Vec<Value>, Vec<Value>) = if cols > rows {
+        // Wider than tall: first row is the search line, last row the aligned result line (by column).
+        let last = rows - 1;
+        (
+            (0..cols).map(|c| at(0, c)).collect(),
+            (0..cols).map(|c| at(last, c)).collect(),
+        )
+    } else {
+        // Square or taller: first column is the search line, last column the result line (by row).
+        let last = cols - 1;
+        (
+            (0..rows).map(|r| at(r, 0)).collect(),
+            (0..rows).map(|r| at(r, last)).collect(),
+        )
+    };
+    match binary_search_approx(&search, needle, true) {
+        None => Value::Error(ErrKind::Na),
+        Some(pos) => matched_scalar(&result[pos]),
+    }
+}
+
+/// `ROWS(range_or_array)` — the ROW COUNT of a reference or array (a bare scalar is `1`). Reads the
+/// shape via [`lookup_block`]; an error argument propagates. (This is a shape-only query, but the
+/// shared [`lookup_block`] materializes every cell to learn `(rows, cols)` — a minor cost on a large
+/// range; a value-free shape seam on `EvalCtx` is a later optimization, not a v1 concern.)
+pub(crate) fn rows_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match lookup_block(ctx, &args[0]) {
+        Err(k) => Value::Error(k),
+        Ok((rows, _, _)) => Value::Number(rows as f64),
+    }
+}
+
+/// `COLUMNS(range_or_array)` — the COLUMN COUNT of a reference or array (the column dual of
+/// [`rows_fn`]; a bare scalar is `1`). An error argument propagates.
+pub(crate) fn columns_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match lookup_block(ctx, &args[0]) {
+        Err(k) => Value::Error(k),
+        Ok((_, cols, _)) => Value::Number(cols as f64),
+    }
+}
+
+/// `XMATCH(lookup_value, lookup_array, [match_mode])` — the modern [`match_fn`]: return the 1-based
+/// position of `lookup_value` in a 1-D `lookup_array`. `match_mode` `0` (default) is exact, `-1`
+/// exact-or-next-SMALLER, `1` exact-or-next-LARGER, `2` exact with wildcards; any other mode is
+/// `#VALUE!`. Unlike MATCH the approximate modes do NOT assume sorted data (a linear closest-scan,
+/// shared with XLOOKUP via [`xlookup_find`]). A 2-D array, or no match, is `#N/A`.
+///
+/// DEFERRED (v1 gap): Excel's full signature has a 4th `[search_mode]` argument
+/// (`XMATCH(lookup_value, lookup_array, [match_mode], [search_mode])`) for forward/reverse and binary
+/// search order. v1 registers `max_args: Some(3)` and always searches first-to-last, so a
+/// last-to-first tie-break (`search_mode -1`) is not yet expressible — it lands as a `BadArity`
+/// refusal, never a silently-wrong position. XLOOKUP already carries the `search_mode` seam; XMATCH
+/// gains it in the same batch that widens this row.
+pub(crate) fn xmatch(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let needle = scalarize(ctx.eval(&args[0]));
+    if let Value::Error(k) = needle {
+        return Value::Error(k);
+    }
+    let (rows, cols, cells) = match lookup_block(ctx, &args[1]) {
+        Err(k) => return Value::Error(k),
+        Ok(t) => t,
+    };
+    // XMATCH wants a vector: exactly one dimension must be 1 (a lone scalar 1×1 qualifies).
+    if rows > 1 && cols > 1 {
+        return Value::Error(ErrKind::Na);
+    }
+    let match_mode = match args.get(2) {
+        None => 0,
+        Some(e) => match coerce_num(&scalarize(ctx.eval(e))) {
+            Err(k) => return Value::Error(k),
+            Ok(n) => n.trunc() as i64,
+        },
+    };
+    // Excel rejects a match_mode outside {-1, 0, 1, 2} with #VALUE! (mirrors XLOOKUP).
+    if !matches!(match_mode, -1..=2) {
+        return Value::Error(ErrKind::Value);
+    }
+    match xlookup_find(&needle, &cells, match_mode, false) {
+        Some(i) => Value::Number((i + 1) as f64),
+        None => Value::Error(ErrKind::Na),
     }
 }
 

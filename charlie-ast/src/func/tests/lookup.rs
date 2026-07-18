@@ -1,4 +1,4 @@
-// Concern: UNIT-TEST pins for the lookup & reference family built-ins (INDEX MATCH VLOOKUP XLOOKUP CHOOSE ROW COLUMN + the reserved INDIRECT/OFFSET) exercised through `FUNCS` dispatch — scalar/whole-row/whole-col indexing with bounds, exact-vs-approximate matching in both directions, lazy CHOOSE, reference-node reads, and the parse-time reserved-ref-function refusals | Non-concern: the lookup impls (`func/lookup.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`arr`/`n`/`t`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
+// Concern: UNIT-TEST pins for the lookup & reference family built-ins (INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH XLOOKUP CHOOSE ROW COLUMN ROWS COLUMNS + the reserved INDIRECT/OFFSET) exercised through `FUNCS` dispatch — scalar/whole-row/whole-col indexing with bounds, exact-vs-approximate matching in both directions, horizontal + vector lookups, shape queries, lazy CHOOSE, reference-node reads, and the parse-time reserved-ref-function refusals | Non-concern: the lookup impls (`func/lookup.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`arr`/`n`/`t`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
 use super::*;
 
 #[test]
@@ -258,6 +258,202 @@ fn row_and_column_read_the_reference_node() {
     assert_eq!(
         eval(&call("ROW", vec![num(5.0)]), &g),
         Value::Error(ErrKind::Value)
+    );
+}
+
+#[test]
+fn hlookup_horizontal_exact_and_approximate() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // {1,2,3;10,20,30} — first row sorted ascending, second row the payload.
+    let table = || {
+        arr(
+            2,
+            3,
+            vec![n(1.0), n(2.0), n(3.0), n(10.0), n(20.0), n(30.0)],
+        )
+    };
+    // Exact (FALSE): find 2 in the first row → row 2's cell = 20.
+    assert_eq!(
+        eval(
+            &call(
+                "HLOOKUP",
+                vec![num(2.0), table(), num(2.0), Expr::Lit(Value::Bool(false))]
+            ),
+            &g
+        ),
+        n(20.0)
+    );
+    // Approximate default: 2.5 falls to the largest first-row key <= 2.5 → column of key 2 → 20.
+    assert_eq!(
+        eval(&call("HLOOKUP", vec![num(2.5), table(), num(2.0)]), &g),
+        n(20.0)
+    );
+    // row_index past the table height → #REF!.
+    assert_eq!(
+        eval(&call("HLOOKUP", vec![num(2.0), table(), num(3.0)]), &g),
+        Value::Error(ErrKind::Ref)
+    );
+    // row_index < 1 → #VALUE!.
+    assert_eq!(
+        eval(&call("HLOOKUP", vec![num(2.0), table(), num(0.0)]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    // A needle below every key → #N/A.
+    assert_eq!(
+        eval(
+            &call(
+                "HLOOKUP",
+                vec![num(0.0), table(), num(2.0), Expr::Lit(Value::Bool(false))]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Na)
+    );
+    // Exact (FALSE) with a TEXT first row honors wildcards, case-insensitively: "BAN*" → column 2.
+    let words = arr(
+        2,
+        3,
+        vec![t("apple"), t("banana"), t("cherry"), n(1.0), n(2.0), n(3.0)],
+    );
+    assert_eq!(
+        eval(
+            &call(
+                "HLOOKUP",
+                vec![
+                    Expr::Lit(t("BAN*")),
+                    words,
+                    num(2.0),
+                    Expr::Lit(Value::Bool(false))
+                ]
+            ),
+            &g
+        ),
+        n(2.0)
+    );
+}
+
+#[test]
+fn lookup_vector_form_with_and_without_result_vector() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let keys = || arr(1, 3, vec![n(1.0), n(2.0), n(3.0)]);
+    let results = || arr(1, 3, vec![n(10.0), n(20.0), n(30.0)]);
+    // With a result vector: approx-match 2 in keys (position 2) → results position 2 = 20.
+    assert_eq!(
+        eval(&call("LOOKUP", vec![num(2.0), keys(), results()]), &g),
+        n(20.0)
+    );
+    // Approximate: 2.5 lands on key 2's position → 20.
+    assert_eq!(
+        eval(&call("LOOKUP", vec![num(2.5), keys(), results()]), &g),
+        n(20.0)
+    );
+    // Without a result vector: returns the matched key itself.
+    assert_eq!(eval(&call("LOOKUP", vec![num(2.0), keys()]), &g), n(2.0));
+    // A needle below every key → #N/A.
+    assert_eq!(
+        eval(&call("LOOKUP", vec![num(0.0), keys(), results()]), &g),
+        Value::Error(ErrKind::Na)
+    );
+}
+
+#[test]
+fn lookup_array_form_searches_by_aspect_ratio() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // WIDER than tall (2×3): {1,2,3 ; 10,20,30}. The 2-arg array form searches the FIRST ROW and
+    // returns the aligned cell of the LAST ROW — never the flattened-vector value the old v1 gave.
+    let wide = || {
+        arr(
+            2,
+            3,
+            vec![n(1.0), n(2.0), n(3.0), n(10.0), n(20.0), n(30.0)],
+        )
+    };
+    assert_eq!(eval(&call("LOOKUP", vec![num(2.0), wide()]), &g), n(20.0));
+    // Approximate: 2.5 lands on the largest first-row key <= 2.5 (key 2) → last row = 20.
+    assert_eq!(eval(&call("LOOKUP", vec![num(2.5), wide()]), &g), n(20.0));
+    // SQUARE-or-TALLER (3×2): {1,"a" ; 2,"b" ; 3,"c"}. Searches the FIRST COLUMN, returns the LAST.
+    let tall = || arr(3, 2, vec![n(1.0), t("a"), n(2.0), t("b"), n(3.0), t("c")]);
+    assert_eq!(eval(&call("LOOKUP", vec![num(2.0), tall()]), &g), t("b"));
+    assert_eq!(eval(&call("LOOKUP", vec![num(2.5), tall()]), &g), t("b"));
+    // A needle below every key → #N/A (not a spurious flattened hit).
+    assert_eq!(
+        eval(&call("LOOKUP", vec![num(0.0), wide()]), &g),
+        Value::Error(ErrKind::Na)
+    );
+}
+
+#[test]
+fn rows_and_columns_report_shape() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // A column literal {1;2;3} → 3 rows, 1 column.
+    let colv = arr(3, 1, vec![n(1.0), n(2.0), n(3.0)]);
+    assert_eq!(eval(&call("ROWS", vec![colv]), &g), n(3.0));
+    // A row literal {1,2,3} → 1 row, 3 columns.
+    let rowv = arr(1, 3, vec![n(1.0), n(2.0), n(3.0)]);
+    assert_eq!(eval(&call("COLUMNS", vec![rowv]), &g), n(3.0));
+    // A 2×3 block.
+    let block = arr(2, 3, vec![n(1.0), n(2.0), n(3.0), n(4.0), n(5.0), n(6.0)]);
+    assert_eq!(eval(&call("ROWS", vec![block.clone()]), &g), n(2.0));
+    assert_eq!(eval(&call("COLUMNS", vec![block]), &g), n(3.0));
+    // A bare scalar is 1×1.
+    assert_eq!(eval(&call("ROWS", vec![num(5.0)]), &g), n(1.0));
+    // An error argument propagates (the shape query never masks an upstream error).
+    assert_eq!(
+        eval(
+            &call("ROWS", vec![Expr::Lit(Value::Error(ErrKind::Div0))]),
+            &g
+        ),
+        Value::Error(ErrKind::Div0)
+    );
+    assert_eq!(
+        eval(
+            &call("COLUMNS", vec![Expr::Lit(Value::Error(ErrKind::Ref))]),
+            &g
+        ),
+        Value::Error(ErrKind::Ref)
+    );
+}
+
+#[test]
+fn xmatch_exact_default_and_next_modes() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let data = || arr(1, 3, vec![n(10.0), n(20.0), n(30.0)]);
+    // Exact by default → position 2.
+    assert_eq!(eval(&call("XMATCH", vec![num(20.0), data()]), &g), n(2.0));
+    // Exact miss → #N/A.
+    assert_eq!(
+        eval(&call("XMATCH", vec![num(25.0), data()]), &g),
+        Value::Error(ErrKind::Na)
+    );
+    // match_mode -1 = exact-or-next-SMALLER: 25 → 20 → position 2.
+    assert_eq!(
+        eval(&call("XMATCH", vec![num(25.0), data(), num(-1.0)]), &g),
+        n(2.0)
+    );
+    // match_mode 1 = exact-or-next-LARGER: 25 → 30 → position 3.
+    assert_eq!(
+        eval(&call("XMATCH", vec![num(25.0), data(), num(1.0)]), &g),
+        n(3.0)
+    );
+    // An out-of-domain match_mode is #VALUE!.
+    assert_eq!(
+        eval(&call("XMATCH", vec![num(20.0), data(), num(3.0)]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    // match_mode 2 = exact WITH WILDCARDS on a text needle (case-insensitive), first hit.
+    let words = arr(1, 3, vec![t("apple"), t("banana"), t("cherry")]);
+    assert_eq!(
+        eval(
+            &call("XMATCH", vec![Expr::Lit(t("BAN*")), words, num(2.0)]),
+            &g
+        ),
+        n(2.0)
+    );
+    // A 2-D array is #N/A.
+    let two_d = arr(2, 2, vec![n(1.0), n(2.0), n(3.0), n(4.0)]);
+    assert_eq!(
+        eval(&call("XMATCH", vec![num(1.0), two_d]), &g),
+        Value::Error(ErrKind::Na)
     );
 }
 

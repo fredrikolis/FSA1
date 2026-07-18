@@ -1,4 +1,4 @@
-// Concern: the STATISTICS worksheet functions (MIN MAX MEDIAN RANK COUNTA COUNTBLANK) — statistical extremes / order / counting, sharing SUM's direct-vs-in-range data-gathering asymmetry and pinning the empty-result calls (MIN/MAX over no numbers is 0, MEDIAN is `#NUM!`) and the COUNTA/COUNTBLANK cell-counting rules | Non-concern: the registry table + dispatch (func/mod.rs) and the shared `collect_numbers`/`block`/`finite_or_num` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the STATISTICS worksheet functions (MIN MAX MEDIAN RANK COUNTA COUNTBLANK; the dispersion family STDEV/STDEVP/VAR/VARP; the order-statistics LARGE/SMALL/PERCENTILE/QUARTILE; MODE) — statistical extremes / order / counting / dispersion, sharing SUM's direct-vs-in-range data-gathering asymmetry and pinning the empty-result calls (MIN/MAX over no numbers is 0, MEDIAN is `#NUM!`, STDEV/VAR under-count is `#DIV/0!`, MODE with no repeat is `#N/A`) and the COUNTA/COUNTBLANK cell-counting rules | Non-concern: the registry table + dispatch (func/mod.rs) and the shared `collect_numbers`/`block`/`finite_or_num` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
 // Statistical extremes / order / counting (the v1 stats batch). MIN/MAX/MEDIAN share the SAME
@@ -137,4 +137,188 @@ pub(crate) fn countblank(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
 /// Whether a value counts as "blank" for `COUNTBLANK`: a `Blank`, or an empty-string `Text("")`.
 fn is_blankish(v: &Value) -> bool {
     matches!(v, Value::Blank) || matches!(v, Value::Text(t) if t.is_empty())
+}
+
+// --- Dispersion + order statistics (the P3 stats batch: STDEV STDEVP VAR VARP MODE LARGE SMALL
+//     PERCENTILE QUARTILE). STDEV/STDEVP/VAR/VARP/MODE are VARIADIC and reuse SUM's `collect_numbers`
+//     direct-vs-in-range asymmetry (an in-range non-number is ignored, a direct boolean/numeric-text
+//     coerces, an error propagates) — matching Excel's variadic non-`A`-suffixed dispersion functions
+//     and Excel's `MODE(number1, [number2], …)`.
+//     LARGE/SMALL/PERCENTILE/QUARTILE take ONE array/range argument gathered under the
+//     in-range rule (via `collect_one`); a degenerate input (empty data, or an out-of-domain k /
+//     quart / no-repeat) is the documented Excel error value, never a panic.
+
+/// Gather the numeric data of a SINGLE array/range argument under the in-range rule (non-numbers
+/// ignored, an error propagated) — the one-array front door LARGE/SMALL/PERCENTILE/QUARTILE
+/// share. (A bare scalar coerces, as `collect_numbers` does for a direct datum.)
+fn collect_one(ctx: &mut EvalCtx, e: &Expr) -> Result<Vec<f64>, ErrKind> {
+    collect_numbers(ctx, std::slice::from_ref(e))
+}
+
+/// The variance of `nums`: `sample` divides by `n-1` (Bessel-corrected), else by `n`. Returns `None`
+/// when the divisor is non-positive (a sample of `< 2`, or a population of `0`) — the caller's
+/// Excel `#DIV/0!`. Numerically the sum-of-squared-deviations about the mean.
+fn variance(nums: &[f64], sample: bool) -> Option<f64> {
+    let n = nums.len() as f64;
+    let denom = if sample { n - 1.0 } else { n };
+    if denom <= 0.0 {
+        return None;
+    }
+    let mean = nums.iter().sum::<f64>() / n;
+    let ss: f64 = nums
+        .iter()
+        .map(|x| {
+            let d = x - mean;
+            d * d
+        })
+        .sum();
+    Some(ss / denom)
+}
+
+/// Shared body of the dispersion four: gather all args (SUM asymmetry), compute the sample/population
+/// variance, and optionally square-root it (STDEV vs VAR). An under-count is `#DIV/0!` (Excel).
+fn dispersion(ctx: &mut EvalCtx, args: &[Expr], sample: bool, root: bool) -> Value {
+    let nums = match collect_numbers(ctx, args) {
+        Ok(n) => n,
+        Err(k) => return Value::Error(k),
+    };
+    match variance(&nums, sample) {
+        None => Value::Error(ErrKind::Div0),
+        Some(v) => finite_or_num(if root { v.sqrt() } else { v }),
+    }
+}
+
+/// `STDEV(a, b, …)` — the SAMPLE standard deviation (divisor `n-1`); `< 2` numbers is `#DIV/0!`.
+pub(crate) fn stdev_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    dispersion(ctx, args, true, true)
+}
+
+/// `STDEVP(a, b, …)` — the POPULATION standard deviation (divisor `n`); no numbers is `#DIV/0!`.
+pub(crate) fn stdevp_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    dispersion(ctx, args, false, true)
+}
+
+/// `VAR(a, b, …)` — the SAMPLE variance (divisor `n-1`); `< 2` numbers is `#DIV/0!`.
+pub(crate) fn var_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    dispersion(ctx, args, true, false)
+}
+
+/// `VARP(a, b, …)` — the POPULATION variance (divisor `n`); no numbers is `#DIV/0!`.
+pub(crate) fn varp_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    dispersion(ctx, args, false, false)
+}
+
+/// `MODE(number1, [number2], …)` — the most frequently occurring number, TIES BROKEN by first
+/// appearance; if NO value repeats (or there is no numeric datum) the result is `#N/A` (Excel).
+/// Equality is exact `f64`. VARIADIC like its dispersion siblings — gathers ALL args under SUM's
+/// direct-vs-in-range asymmetry (via `collect_numbers`), so `MODE(1,2,2,3)` and `MODE(A1:A5,B1:B5)`
+/// both tally across every datum, not just the first argument.
+pub(crate) fn mode_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let nums = match collect_numbers(ctx, args) {
+        Ok(n) => n,
+        Err(k) => return Value::Error(k),
+    };
+    // First-appearance-ordered (value, count) tally, so a count tie keeps the earliest value.
+    let mut seen: Vec<(f64, usize)> = Vec::new();
+    for &x in &nums {
+        match seen.iter_mut().find(|(v, _)| *v == x) {
+            Some(e) => e.1 += 1,
+            None => seen.push((x, 1)),
+        }
+    }
+    let mut best: Option<(f64, usize)> = None;
+    for &(v, c) in &seen {
+        if c >= 2 && best.is_none_or(|(_, bc)| c > bc) {
+            best = Some((v, c));
+        }
+    }
+    match best {
+        Some((v, _)) => finite_or_num(v),
+        None => Value::Error(ErrKind::Na),
+    }
+}
+
+/// `LARGE(array, k)` — the `k`-th LARGEST number (1-based). `k` is truncated toward zero; a `k` below
+/// `1` or above the count, or an empty array, is `#NUM!` (Excel).
+pub(crate) fn large_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    order_stat(ctx, args, true)
+}
+
+/// `SMALL(array, k)` — the `k`-th SMALLEST number (1-based); same `k`-domain and `#NUM!` rules as
+/// [`large_fn`].
+pub(crate) fn small_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    order_stat(ctx, args, false)
+}
+
+/// Shared body of `LARGE`/`SMALL`: gather the array, sort ascending, index the `k`-th from the
+/// requested end. An empty array or an out-of-domain `k` is `#NUM!`.
+fn order_stat(ctx: &mut EvalCtx, args: &[Expr], largest: bool) -> Value {
+    let mut nums = match collect_one(ctx, &args[0]) {
+        Ok(n) => n,
+        Err(k) => return Value::Error(k),
+    };
+    let k = match coerce_num(&scalarize(ctx.eval(&args[1]))) {
+        Ok(n) => n.trunc(),
+        Err(e) => return Value::Error(e),
+    };
+    let n = nums.len();
+    if n == 0 || k < 1.0 || k > n as f64 {
+        return Value::Error(ErrKind::Num);
+    }
+    nums.sort_by(f64::total_cmp);
+    let k = k as usize;
+    // ascending sorted: k-th smallest is index k-1; k-th largest is index n-k.
+    let idx = if largest { n - k } else { k - 1 };
+    finite_or_num(nums[idx])
+}
+
+/// `PERCENTILE(array, k)` — the INCLUSIVE `k`-th percentile (`PERCENTILE.INC`), `k` in `[0, 1]`. Linear
+/// interpolation between the two closest ranks: `rank = k*(n-1)`. Empty data, or `k` outside `[0, 1]`,
+/// is `#NUM!` (Excel).
+pub(crate) fn percentile_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let nums = match collect_one(ctx, &args[0]) {
+        Ok(n) => n,
+        Err(k) => return Value::Error(k),
+    };
+    let k = match coerce_num(&scalarize(ctx.eval(&args[1]))) {
+        Ok(n) => n,
+        Err(e) => return Value::Error(e),
+    };
+    percentile_inclusive(nums, k)
+}
+
+/// `QUARTILE(array, quart)` — the INCLUSIVE quartile (`QUARTILE.INC`): `quart` (truncated) maps
+/// `0→0%`, `1→25%`, `2→50%`, `3→75%`, `4→100%`. A `quart` outside `0..=4`, or empty data, is `#NUM!`.
+pub(crate) fn quartile_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let nums = match collect_one(ctx, &args[0]) {
+        Ok(n) => n,
+        Err(k) => return Value::Error(k),
+    };
+    let quart = match coerce_num(&scalarize(ctx.eval(&args[1]))) {
+        Ok(n) => n.trunc(),
+        Err(e) => return Value::Error(e),
+    };
+    if !(0.0..=4.0).contains(&quart) {
+        return Value::Error(ErrKind::Num);
+    }
+    percentile_inclusive(nums, quart / 4.0)
+}
+
+/// The inclusive percentile of `nums` at fraction `k` (`PERCENTILE.INC` / `QUARTILE.INC`): sort, then
+/// interpolate at `rank = k*(n-1)`. Empty data or `k` outside `[0, 1]` is `#NUM!`.
+fn percentile_inclusive(mut nums: Vec<f64>, k: f64) -> Value {
+    let n = nums.len();
+    if n == 0 || !(0.0..=1.0).contains(&k) {
+        return Value::Error(ErrKind::Num);
+    }
+    nums.sort_by(f64::total_cmp);
+    let rank = k * (n - 1) as f64;
+    let lo = rank.floor() as usize;
+    let frac = rank - lo as f64;
+    let val = if lo + 1 < n {
+        nums[lo] + frac * (nums[lo + 1] - nums[lo])
+    } else {
+        nums[lo]
+    };
+    finite_or_num(val)
 }

@@ -72,8 +72,8 @@ fn registry_is_self_consistent() {
             assert!(max >= f.min_args, "{}: max >= min", f.name);
         }
         assert!(
-            f.name.chars().all(|c| c.is_ascii_uppercase()),
-            "UPPERCASE name"
+            f.name.chars().all(|c| c.is_ascii_uppercase() || c == '.'),
+            "UPPERCASE name (a `.` is allowed for the dotted Excel spellings, e.g. STDEV.S)"
         );
     }
     let mut names: Vec<String> = FUNCS.iter().map(|f| f.name.to_ascii_uppercase()).collect();
