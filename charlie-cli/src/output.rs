@@ -6,7 +6,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use charlie_model::{Applicability, Diagnostic, Fix, Loc, RenderGrid, Severity};
+use charlie_model::{Applicability, Diagnostic, Fix, Loc, RenderGrid, Severity, TraceNode};
 
 use crate::ascii::{diagnostics_table, grid_table};
 
@@ -368,6 +368,60 @@ pub fn emit_import(fmt: Format, path: &str, tabs: &[String], files: usize, text_
             ));
         }
     }
+}
+
+/// Emit a dependency trace (CLI2). JSON: the nested [`TraceNode`] through the success envelope
+/// (`data` = the node object). Text: an indented tree — one line per node,
+/// `<cell>  <formula>  -> <value>  [<hash|status>]`, `(repeated)` on a shared node. Errors/diagnostics
+/// remain the caller's job; a produced trace is always a success (the walk is total, CORE2).
+pub fn emit_trace(fmt: Format, node: &TraceNode) {
+    match fmt {
+        Format::Text => {
+            let mut out = String::new();
+            trace_text(node, 0, &mut out);
+            print!("{out}");
+        }
+        Format::Json => print_success(&trace_json(node)),
+    }
+}
+
+/// Render one trace node (and its subtree) as an indented text line.
+fn trace_text(node: &TraceNode, depth: usize, out: &mut String) {
+    let indent = "  ".repeat(depth);
+    // A hash names an ordinary node; a hashless node (a cycle / depth-limit / blank) shows its status.
+    let tag = match &node.hash {
+        Some(h) => h.clone(),
+        None => node.status.as_str().to_string(),
+    };
+    let formula = match &node.formula {
+        Some(f) => format!("  {f}"),
+        None => String::new(),
+    };
+    let repeated = if node.repeated { "  (repeated)" } else { "" };
+    out.push_str(&format!(
+        "{indent}{}{formula}  -> {}  [{tag}]{repeated}\n",
+        node.cell, node.value
+    ));
+    for child in &node.children {
+        trace_text(child, depth + 1, out);
+    }
+}
+
+/// Render one trace node (and its subtree) as a nested JSON object.
+fn trace_json(node: &TraceNode) -> String {
+    let formula = node.formula.as_deref().map_or("null".to_string(), jstr);
+    let hash = node.hash.as_deref().map_or("null".to_string(), jstr);
+    let children = jarray(&node.children.iter().map(trace_json).collect::<Vec<_>>());
+    format!(
+        "{{\"cell\":{},\"formula\":{},\"value\":{},\"status\":{},\"hash\":{},\"repeated\":{},\"children\":{}}}",
+        jstr(&node.cell),
+        formula,
+        jstr(&node.value),
+        jstr(node.status.as_str()),
+        hash,
+        node.repeated,
+        children
+    )
 }
 
 /// Emit the result of writing a sample workbook. JSON: `data` = `{path,tabs:[...]}`. Text: the terse

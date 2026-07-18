@@ -33,7 +33,7 @@ pub use render::{
     viewport_cell_count,
 };
 pub use sample::sample_workbook;
-pub use workbook::{CellSource, FormulaOutcome, Workbook};
+pub use workbook::{CellSource, Direction, FormulaOutcome, TraceNode, TraceStatus, Workbook};
 
 use charlie_ast::Shape;
 

@@ -1,4 +1,4 @@
-// Concern: the two-pass engine's BEHAVIORAL pins — demand-driven chains, cycle/self-reference/cross-sheet #REF! refusals, the explicit-grid VAL1 rule, diamond/deep-DAG compute-once, memoization stability, the pull-depth and range-materialization #NUM! bounds and their order-independence (depth-tainted values/ranges never poison a shallower demand), ad-hoc `eval_formula`, batch `values_at` sharing, and the NAIVE-oracle differential test proving the graph EQUALS a per-cell evaluation (over scalar chains AND GRID5 array-formula regions — the dep_key sharing that collapses region coordinates onto one anchor node) | Non-concern: the engine's internal graph shape/node-count/traversal order (asserted nowhere — only VALUES are graded, so a future parallel-execution refactor stays free) and the formula language itself (charlie-ast owns it) | IO: in-memory (and one temp-dir) `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `FormulaOutcome`s
+// Concern: the two-pass engine's BEHAVIORAL pins — demand-driven chains, cycle/self-reference/cross-sheet #REF! refusals, the explicit-grid VAL1 rule, diamond/deep-DAG compute-once, memoization stability, the pull-depth and range-materialization #NUM! bounds and their order-independence (depth-tainted values/ranges never poison a shallower demand), ad-hoc `eval_formula`, batch `values_at` sharing, the computation-hash (ENG7) determinism/sensitivity/cycle=None/VAL1/GRID5-anchor pins, the trace (CLI2) upstream/downstream/shared-dep-repeated/cycle/depth-cap/GRID5-region + out-of-range pins, and the NAIVE-oracle differential test proving the graph EQUALS a per-cell evaluation (over scalar chains AND GRID5 array-formula regions — the dep_key sharing that collapses region coordinates onto one anchor node) | Non-concern: the engine's internal graph shape/node-count/traversal order (asserted nowhere — only VALUES are graded, so a future parallel-execution refactor stays free) and the formula language itself (charlie-ast owns it) | IO: in-memory (and one temp-dir) `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `FormulaOutcome`s
 use super::*;
 
 use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape};
@@ -1134,4 +1134,264 @@ fn differential_shape_mismatch_and_scalar_regions_agree_on_the_spill() {
             .iter()
             .any(|d| d.code == Code::DimensionMismatch)
     );
+}
+
+// ------------------------------------------------------------------------------------------
+// Computation hash (the ENG7 primitive) — determinism, sensitivity, cycle=None, VAL1, GRID5.
+// ------------------------------------------------------------------------------------------
+
+#[test]
+fn computation_hash_is_deterministic() {
+    // Two identical workbooks (and repeated calls) yield the SAME opaque digest — a deterministic,
+    // content-only function (ENG7). A clean cell has a hash.
+    let build = || load_one_tab("Sheet1", &[("A1", "1"), ("B1", "=A1+1"), ("C1", "=B1*10")]);
+    let a = build();
+    let b = build();
+    assert!(a.computation_hash(0, 2, 0).is_some()); // C1 has a hash
+    assert_eq!(a.computation_hash(0, 2, 0), b.computation_hash(0, 2, 0)); // across workbooks
+    assert_eq!(a.computation_hash(0, 2, 0), a.computation_hash(0, 2, 0)); // repeated call, stable
+}
+
+#[test]
+fn computation_hash_is_sensitive_upstream_and_isolates_the_unrelated() {
+    // Editing an UPSTREAM cell changes the dependent's hash; an UNRELATED cell's hash is unchanged.
+    let wb1 = load_one_tab("Sheet1", &[("A1", "1"), ("B1", "=A1+1"), ("Z1", "99")]);
+    let wb2 = load_one_tab("Sheet1", &[("A1", "2"), ("B1", "=A1+1"), ("Z1", "99")]);
+    // The literal A1 itself changed.
+    assert_ne!(wb1.computation_hash(0, 0, 0), wb2.computation_hash(0, 0, 0));
+    // B1 depends on A1 -> its hash changes even though B1's own text is identical.
+    assert_ne!(wb1.computation_hash(0, 1, 0), wb2.computation_hash(0, 1, 0));
+    // Z1 is unrelated -> unchanged.
+    assert_eq!(
+        wb1.computation_hash(0, 25, 0),
+        wb2.computation_hash(0, 25, 0)
+    );
+}
+
+#[test]
+fn a_cyclic_cell_has_no_computation_hash() {
+    // A cell on a reference cycle has NO computation hash (ENG7), mirroring the plan's Cycle terminal;
+    // a clean literal alongside still hashes.
+    let wb = load_one_tab("Sheet1", &[("A1", "=B1"), ("B1", "=A1"), ("C1", "7")]);
+    assert_eq!(wb.computation_hash(0, 0, 0), None); // A1 (on the cycle)
+    assert_eq!(wb.computation_hash(0, 1, 0), None); // B1 (on the cycle)
+    assert!(wb.computation_hash(0, 2, 0).is_some()); // C1 (clean literal)
+}
+
+#[test]
+fn same_formula_over_same_refs_hashes_the_same_regardless_of_position() {
+    // VAL1: the hash is over CONTENT, never the cell's own address. `=A1+A2` in B5 and in Z9 read the
+    // SAME refs, so they share one digest.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[("A1", "3"), ("A2", "4"), ("B5", "=A1+A2"), ("Z9", "=A1+A2")],
+    );
+    let hb = wb.computation_hash(0, 1, 4); // B5 (col B=1, row 5 -> zero-based 4)
+    let hz = wb.computation_hash(0, 25, 8); // Z9 (col Z=25, row 9 -> zero-based 8)
+    assert!(hb.is_some());
+    assert_eq!(hb, hz);
+}
+
+#[test]
+fn a_region_members_hash_is_its_anchors() {
+    // GRID5: a region member's hash is its anchor's (ONE computation, VAL1/ENG3).
+    let wb = load_one_tab("Sheet1", &[("A1:A3", "3\n1\n2"), ("C1:C3", "=SORT(A1:A3)")]);
+    let anchor = wb.computation_hash(0, 2, 0); // C1 (anchor)
+    assert!(anchor.is_some());
+    assert_eq!(wb.computation_hash(0, 2, 1), anchor); // C2 (member)
+    assert_eq!(wb.computation_hash(0, 2, 2), anchor); // C3 (member)
+}
+
+#[test]
+fn a_cell_downstream_of_a_cycle_has_no_computation_hash() {
+    // A `None` propagates upward (ENG7): a clean formula D1 = C1 whose dependency C1 is on a reference
+    // cycle (A1=B1, B1=A1, C1=A1) inherits the cycle's missing digest -> `None`, even though D1's own
+    // text is a plain reference. An unrelated literal alongside still hashes.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1", "=B1"),
+            ("B1", "=A1"),
+            ("C1", "=A1"), // reads a cycle member -> no digest
+            ("D1", "=C1"), // transitively downstream of the cycle -> no digest either
+            ("E1", "42"),
+        ],
+    );
+    assert_eq!(wb.computation_hash(0, 2, 0), None); // C1
+    assert_eq!(wb.computation_hash(0, 3, 0), None); // D1 (downstream of the cycle)
+    assert!(wb.computation_hash(0, 4, 0).is_some()); // E1 (unrelated literal)
+}
+
+#[test]
+fn a_depth_tainted_cell_has_no_computation_hash() {
+    // A chain deeper than [`MAX_PULL_DEPTH`] is depth-tainted: the digest walk hits the pull-depth
+    // bound and yields `None`, which propagates up to the requested top cell (ENG7, mirroring the
+    // plan's DepthRefused terminal). The bottom literal, reached far shallower, still hashes.
+    let len = (MAX_PULL_DEPTH as usize) + 64;
+    let owned = chain_files(len);
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+    assert_eq!(wb.computation_hash(0, 0, 0), None); // A1 (top of an over-deep chain)
+    assert!(wb.computation_hash(0, 0, (len - 1) as u32).is_some()); // A{len} (the bottom literal)
+}
+
+// ------------------------------------------------------------------------------------------
+// trace (CLI2) — upstream/downstream, shared-dep (repeated), cycle, depth cap, GRID5 region.
+// ------------------------------------------------------------------------------------------
+
+#[test]
+fn trace_upstream_shows_a_shared_dependency_once_as_repeated() {
+    // A diamond: D1 reads B1 and C1, both read A1. A1 appears fully once and `repeated` once (ENG3
+    // sharing; no diamond blow-up).
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1", "2"),
+            ("B1", "=A1+1"),
+            ("C1", "=A1+1"),
+            ("D1", "=B1+C1"),
+        ],
+    );
+    let root = wb.trace(0, 3, 0, Direction::Upstream, None).unwrap();
+    assert_eq!(root.cell, "Sheet1!D1");
+    assert_eq!(root.status, TraceStatus::Ok);
+    assert!(root.hash.is_some());
+    // Children B1, C1 (sorted by key), each with one A1 child.
+    assert_eq!(root.children.len(), 2);
+    for c in &root.children {
+        assert_eq!(c.children[0].cell, "Sheet1!A1");
+    }
+    // Exactly one of the two A1 nodes is the repeated (shared) one.
+    let repeated = root
+        .children
+        .iter()
+        .filter(|c| c.children[0].repeated)
+        .count();
+    assert_eq!(repeated, 1);
+}
+
+#[test]
+fn trace_upstream_reports_a_cycle_without_looping() {
+    // A1 = B1, B1 = A1. The walk reports the cycle (status Cycle, no hash), never loops (ENG2).
+    let wb = load_one_tab("Sheet1", &[("A1", "=B1"), ("B1", "=A1")]);
+    let root = wb.trace(0, 0, 0, Direction::Upstream, None).unwrap();
+    assert_eq!(root.cell, "Sheet1!A1");
+    assert_eq!(root.status, TraceStatus::Cycle);
+    assert_eq!(root.hash, None);
+    let b1 = &root.children[0];
+    assert_eq!(b1.cell, "Sheet1!B1");
+    assert_eq!(b1.status, TraceStatus::Cycle);
+    let back = &b1.children[0];
+    assert_eq!(back.cell, "Sheet1!A1");
+    assert_eq!(back.status, TraceStatus::Cycle);
+    assert!(back.children.is_empty()); // the back-edge is not re-descended
+}
+
+#[test]
+fn trace_downstream_is_the_relation_transposed() {
+    // A1 is read by B1 and C1; B1 is read by D1. Downstream from A1 is the transposed dependency map.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1", "2"),
+            ("B1", "=A1+1"),
+            ("C1", "=A1*3"),
+            ("D1", "=B1+1"),
+        ],
+    );
+    let root = wb.trace(0, 0, 0, Direction::Downstream, None).unwrap();
+    assert_eq!(root.cell, "Sheet1!A1");
+    assert_eq!(root.status, TraceStatus::Literal);
+    let consumers: Vec<&str> = root.children.iter().map(|c| c.cell.as_str()).collect();
+    assert_eq!(consumers, vec!["Sheet1!B1", "Sheet1!C1"]);
+    // B1's consumer is D1; C1 has none.
+    assert_eq!(root.children[0].children[0].cell, "Sheet1!D1");
+    assert!(root.children[1].children.is_empty());
+}
+
+#[test]
+fn trace_respects_a_depth_cap() {
+    // A chain C1 -> B1 -> A1 capped at depth 1: C1 (depth 0), B1 (depth 1, not descended).
+    let wb = load_one_tab("Sheet1", &[("A1", "1"), ("B1", "=A1+1"), ("C1", "=B1+1")]);
+    let root = wb.trace(0, 2, 0, Direction::Upstream, Some(1)).unwrap();
+    assert_eq!(root.cell, "Sheet1!C1");
+    assert_eq!(root.children.len(), 1);
+    assert_eq!(root.children[0].cell, "Sheet1!B1");
+    assert!(root.children[0].children.is_empty());
+}
+
+#[test]
+fn trace_into_and_out_of_a_grid5_region() {
+    // C1:C3 = SORT(A1:A3) = {1;2;3}; D1 = C1+C3 references two region coordinates that COLLAPSE onto
+    // the single anchor node (dep_key). Upstream from D1 reaches the region anchor once, then A1:A3;
+    // downstream from A1 reaches the region then D1.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "3\n1\n2"),
+            ("C1:C3", "=SORT(A1:A3)"),
+            ("D1", "=C1+C3"),
+        ],
+    );
+    let up = wb.trace(0, 3, 0, Direction::Upstream, None).unwrap();
+    assert_eq!(up.cell, "Sheet1!D1");
+    assert_eq!(up.value, "4"); // C1 + C3 = 1 + 3
+    assert_eq!(up.children.len(), 1); // both C-coordinates collapse to the one anchor
+    let region = &up.children[0];
+    assert_eq!(region.cell, "Sheet1!C1");
+    assert_eq!(region.formula.as_deref(), Some("=SORT(A1:A3)"));
+    let deps: Vec<&str> = region.children.iter().map(|c| c.cell.as_str()).collect();
+    assert_eq!(deps, vec!["Sheet1!A1", "Sheet1!A2", "Sheet1!A3"]);
+
+    let down = wb.trace(0, 0, 0, Direction::Downstream, None).unwrap();
+    let consumers: Vec<&str> = down.children.iter().map(|c| c.cell.as_str()).collect();
+    assert_eq!(consumers, vec!["Sheet1!C1"]); // the region consumes A1
+    assert_eq!(down.children[0].children[0].cell, "Sheet1!D1"); // and D1 consumes the region
+}
+
+#[test]
+fn trace_classifies_an_error_valued_formula_as_error() {
+    // A formula that computes to a spreadsheet error value (`=1/0` -> `#DIV/0!`) is `TraceStatus::Error`
+    // (not `Ok`), and — being a clean, computable value (no cycle, no depth taint) — still carries a hash.
+    let wb = load_one_tab("Sheet1", &[("A1", "=1/0")]);
+    let root = wb.trace(0, 0, 0, Direction::Upstream, None).unwrap();
+    assert_eq!(root.cell, "Sheet1!A1");
+    assert_eq!(root.status, TraceStatus::Error);
+    assert_eq!(root.value, "#DIV/0!");
+    assert!(root.hash.is_some());
+}
+
+/// Does any node in the trace tree carry `status`? (Recursive search for a status coverage pin.)
+fn tree_has_status(node: &TraceNode, status: TraceStatus) -> bool {
+    node.status == status || node.children.iter().any(|c| tree_has_status(c, status))
+}
+
+#[test]
+fn trace_classifies_a_depth_limit_terminal() {
+    // A chain deeper than [`MAX_PULL_DEPTH`] traced with no user cap: the walk descends to the
+    // engine's pull-depth bound and stops there, classifying that terminal `TraceStatus::DepthLimit`
+    // (never a stack overflow — CORE2). The bound is reached at a formula node deep in the chain.
+    let len = (MAX_PULL_DEPTH as usize) + 8;
+    let owned = chain_files(len);
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+    let root = wb.trace(0, 0, 0, Direction::Upstream, None).unwrap();
+    assert!(
+        tree_has_status(&root, TraceStatus::DepthLimit),
+        "an over-deep chain must produce a depth-limit terminal"
+    );
+}
+
+#[test]
+fn trace_of_an_out_of_range_tab_is_a_located_refusal() {
+    // CORE2: a bad tab index is a located refusal, never a panic.
+    let wb = load_one_tab("Sheet1", &[("A1", "1")]);
+    let err = wb.trace(5, 0, 0, Direction::Upstream, None).unwrap_err();
+    assert_eq!(err.code, Code::CellOutOfRange);
 }

@@ -10,10 +10,12 @@
 //! off-request cell never computes).
 
 mod evaluate;
+mod hash;
 mod plan;
 mod resolver;
 #[cfg(test)]
 mod tests;
+mod trace;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -30,6 +32,8 @@ use crate::{ParsedFile, parse_file};
 
 use plan::DepGraph;
 use resolver::Arena;
+
+pub use trace::{Direction, TraceNode, TraceStatus};
 
 /// The maximum cross-cell dependency depth the PLAN pass will descend before it refuses. Each link in
 /// a `=formula` dependency chain (`A1=A2`, `A2=A3`, ...) is one level deeper in the plan's dependency
@@ -490,6 +494,21 @@ impl Workbook {
             .map(|(i, f)| ((sheet, i), f))
     }
 
+    /// The single grid [`Cell`](GridCell) covering `(sheet,col,row)`, or `None` for a gap. For a GRID5
+    /// array-formula region the covering file holds ONE grid cell (its `=formula` at grid `(0,0)`) that
+    /// every coordinate maps to; a plain file's cell is at the region-relative offset. Single-homes the
+    /// "read the covering cell, branching on `array_formula`" rule the hash (`comp_hash`) and trace
+    /// (`upstream_deps`/`cell_kind`) surfaces share, so the GRID5 branch has one place to stay correct.
+    fn grid_cell_at(&self, sheet: u32, col: u32, row: u32) -> Option<&GridCell> {
+        let (_, file) = self.covering(sheet, col, row)?;
+        Some(if file.array_formula {
+            file.grid.cell_at(0, 0)
+        } else {
+            file.grid
+                .cell_at(row - file.region.min_row, col - file.region.min_col)
+        })
+    }
+
     /// The tab (sheet) name for a sheet index, for a sheet-qualified [`Loc::tab_file`] anchor.
     /// Falls back to the numeric index for an out-of-range sheet (never panics).
     fn tab_name(&self, sheet: u32) -> String {
@@ -525,4 +544,14 @@ impl Workbook {
 /// epoch->serial mapping ([`unix_secs_to_serial`]) — so no clock/epoch boilerplate is re-derived.
 fn system_now_serial() -> f64 {
     unix_secs_to_serial(system_now_secs())
+}
+
+/// Sort + dedup a list of dependency [`CellKey`]s into the deterministic dependency-key order the
+/// computation-hash fold (`comp_hash`) and the trace walk (`upstream_deps`/downstream `neighbors`)
+/// both rely on. Single-homes that ordering guarantee so a hash and a trace over the same cell agree
+/// on the shape of its dependency set.
+fn sort_dedup(mut keys: Vec<CellKey>) -> Vec<CellKey> {
+    keys.sort_unstable();
+    keys.dedup();
+    keys
 }

@@ -14,11 +14,11 @@ mod output;
 use std::path::Path;
 use std::process::ExitCode;
 
-use charlie_model::{FormulaOutcome, RenderMode, Workbook, parse_viewport, render};
+use charlie_model::{Direction, FormulaOutcome, RenderMode, Workbook, parse_viewport, render};
 
 use crate::output::{
     ErrorCode, Format, emit_error, emit_eval_error_value, emit_eval_value, emit_grid, emit_import,
-    emit_sample, emit_validation_diagnostics, emit_version,
+    emit_sample, emit_trace, emit_validation_diagnostics, emit_version,
 };
 
 fn main() -> ExitCode {
@@ -46,10 +46,12 @@ fn run(args: &[String]) -> u8 {
     // shape, and exit codes (cli-interface-standards Part 4: help is per-command). No `-h` short form:
     // the standard permits only `-V` and `--help` (Part 1 "Version Flag"), never other short flags.
     if args.iter().any(|a| a == "--help") {
-        let cmd = args
-            .iter()
-            .map(String::as_str)
-            .find(|a| matches!(*a, "render" | "check" | "eval" | "sample" | "import"));
+        let cmd = args.iter().map(String::as_str).find(|a| {
+            matches!(
+                *a,
+                "render" | "check" | "eval" | "trace" | "sample" | "import"
+            )
+        });
         print_help(cmd);
         return 0;
     }
@@ -69,6 +71,7 @@ fn run(args: &[String]) -> u8 {
         "render" => cmd_render(fmt, &rest[1..]),
         "check" => cmd_check(fmt, &rest[1..]),
         "eval" => cmd_eval(fmt, &rest[1..]),
+        "trace" => cmd_trace(fmt, &rest[1..]),
         "sample" => cmd_sample(fmt, &rest[1..]),
         "import" => cmd_import(fmt, &rest[1..]),
         other => {
@@ -346,6 +349,111 @@ fn cmd_eval(fmt: Format, rest: &[String]) -> u8 {
     }
 }
 
+/// `charlie-cli trace <path> --tab <name> --cell <A1> [--dependents] [--depth N]` — report a cell's
+/// upstream dependencies (default) or downstream consumers (`--dependents`), as an indented tree
+/// (`text`) or a nested `TraceNode` (`json`). The `--cell` may be sheet-qualified (`Tab!A1`), which
+/// overrides `--tab`. Read-only. A bad cell/tab/depth is a located refusal (CORE2), never a panic.
+fn cmd_trace(fmt: Format, rest: &[String]) -> u8 {
+    let mut path: Option<String> = None;
+    let mut tab: Option<String> = None;
+    let mut cell: Option<String> = None;
+    let mut dependents = false;
+    let mut depth: Option<u32> = None;
+
+    let mut it = rest.iter();
+    while let Some(arg) = it.next() {
+        let (flag, inline) = split_flag(arg);
+        match flag {
+            "--tab" => match take_value(inline, &mut it) {
+                Some(v) => tab = Some(v),
+                None => return bad_arg(fmt, "--tab needs a tab name"),
+            },
+            "--cell" => match take_value(inline, &mut it) {
+                Some(v) => cell = Some(v),
+                None => return bad_arg(fmt, "--cell needs a cell address like C3 (or Tab!C3)"),
+            },
+            "--depth" => match take_value(inline, &mut it) {
+                Some(v) => match v.parse::<u32>() {
+                    Ok(n) => depth = Some(n),
+                    Err(_) => return bad_arg(fmt, &format!("--depth needs a number, not {v:?}")),
+                },
+                None => return bad_arg(fmt, "--depth needs a number, e.g. --depth 3"),
+            },
+            "--dependents" => dependents = true,
+            f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
+            _ => {
+                if path.replace(arg.clone()).is_some() {
+                    return bad_arg(fmt, "trace takes exactly one <path>");
+                }
+            }
+        }
+    }
+
+    let Some(path) = path else {
+        return bad_arg(fmt, "trace needs a <path> to a workbook directory");
+    };
+    let Some(cell) = cell else {
+        return bad_arg(
+            fmt,
+            "trace needs --cell, e.g. charlie-cli trace ./budget --tab Sheet1 --cell C3",
+        );
+    };
+
+    // A sheet-qualified `Tab!A1` names its own tab (overriding --tab); a bare address uses --tab.
+    let (tab, cell_addr) = match cell.split_once('!') {
+        Some((t, c)) => (Some(t.to_string()), c.to_string()),
+        None => (tab, cell),
+    };
+
+    let wb = match load(fmt, Path::new(&path)) {
+        Ok(wb) => wb,
+        Err(code) => return code,
+    };
+    if wb.sheet_names().is_empty() {
+        let msg = format!("{path:?} has no tabs (a tab is a sub-folder of cell/range files)");
+        return fail(fmt, ErrorCode::Validation, &msg);
+    }
+
+    // Resolve the tab: an explicit (or `Tab!`-qualified) name, else the first tab.
+    let sheet = match &tab {
+        Some(name) => match wb.tab_index(name) {
+            Some(i) => i,
+            None => {
+                let msg = format!(
+                    "no tab named {name:?} in {path:?} (tabs: {:?})",
+                    wb.sheet_names()
+                );
+                return fail(fmt, ErrorCode::NotFound, &msg);
+            }
+        },
+        None => 0,
+    };
+
+    // Parse the cell address as a single canonical A1 cell (a range is refused).
+    let rect = match parse_viewport(&cell_addr) {
+        Ok(r) => r,
+        Err(msg) => return bad_arg(fmt, &msg),
+    };
+    if rect.min_col != rect.max_col || rect.min_row != rect.max_row {
+        let msg = format!("--cell takes a single cell like C3, not a range ({cell_addr:?})");
+        return bad_arg(fmt, &msg);
+    }
+
+    let dir = if dependents {
+        Direction::Downstream
+    } else {
+        Direction::Upstream
+    };
+
+    match wb.trace(sheet, rect.min_col, rect.min_row, dir, depth) {
+        Ok(node) => {
+            emit_trace(fmt, &node);
+            0
+        }
+        Err(diag) => emit_validation_diagnostics(fmt, std::slice::from_ref(&diag)),
+    }
+}
+
 /// `charlie-cli sample <dir>` — write the model's canonical tutorial workbook
 /// (`charlie_model::sample_workbook`) into `<dir>`, creating a sub-folder per tab, then emit a terse
 /// result. REFUSES (never clobbers) if `<dir>` already exists and is non-empty. This is the one command
@@ -555,6 +663,7 @@ fn print_help(cmd: Option<&str>) {
         Some("render") => RENDER_HELP,
         Some("check") => CHECK_HELP,
         Some("eval") => EVAL_HELP,
+        Some("trace") => TRACE_HELP,
         Some("sample") => SAMPLE_HELP,
         Some("import") => IMPORT_HELP,
         _ => GLOBAL_HELP,
@@ -568,6 +677,7 @@ USAGE:
   charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions]
   charlie-cli check  <path>
   charlie-cli eval   <path> --formula '=<formula>' [--tab <name>]
+  charlie-cli trace  <path> --cell <A1> [--tab <name>] [--dependents] [--depth <N>]
   charlie-cli sample <dir>
   charlie-cli import <src> <dest-workbook-dir>       # <src> is a .ods or .xlsx file
   charlie-cli --version | --help | --guide
@@ -586,6 +696,8 @@ COMMANDS:
            table pointing at the offending file(s). JSON: a diagnostics[] array. Exits non-zero if
            any error-severity diagnostic.
   eval     Evaluate an ad-hoc --formula against the loaded workbook and emit its value. Read-only.
+  trace    Report a cell's upstream dependencies (or downstream consumers with --dependents) as a
+           tree; each node carries its value and computation hash. Read-only.
   sample   Write a live tutorial workbook into <dir>, then report. Refuses to overwrite a non-empty
            directory.
   import   Convert a real spreadsheet file (.ods or .xlsx) into a charlie workbook the engine reads.
@@ -735,6 +847,49 @@ SEE ALSO:
   charlie-cli render     Draw a workbook
   charlie-cli --guide    Terse guide to the on-disk model
 "##;
+
+const TRACE_HELP: &str = r#"charlie-cli trace — inspect a cell's dependency tree
+
+USAGE:
+  charlie-cli trace <path> --cell <A1> [--tab <name>] [--dependents] [--depth <N>] [--format <text|json>]
+
+DESCRIPTION:
+  Report a cell's UPSTREAM dependencies (the cells it reads, transitively) or, with --dependents, its
+  DOWNSTREAM consumers (the cells that read it) — the same engine dependency relation, transposed.
+  The walk is cycle-safe (a cycle is reported, not looped) and shows a shared cell once (marked
+  repeated). Each node carries its value and, unless it lies on a cycle, its computation hash.
+
+ARGUMENTS:
+  <path>            (required) The workbook directory.
+  --cell <A1>       (required) The cell to trace. May be sheet-qualified (Tab!A1), overriding --tab.
+  --tab <name>      (optional) Which tab the cell is on. Default: the first tab.
+  --dependents      (optional) Trace downstream consumers instead of upstream dependencies.
+  --depth <N>       (optional) Cap the tree depth. Default: unbounded (still bounded by the engine).
+  --format <fmt>    (optional) text (default, indented tree) or json (a nested TraceNode envelope).
+
+EXAMPLES:
+  charlie-cli trace ./budget --tab Sheet1 --cell D1
+  charlie-cli trace ./budget --cell Sheet1!A1 --dependents
+  charlie-cli trace ./budget --cell D1 --depth 2 --format json
+
+OUTPUT (--format json):
+  {
+    "status": "success",
+    "data": { "cell": "Sheet1!D1", "formula": "=C1+C3", "value": "4", "status": "ok",
+              "hash": "…", "repeated": false, "children": [ … ] }
+  }
+
+EXIT CODES:
+  0   Success (tree reported)
+  1   I/O failure
+  2   Invalid arguments (missing/duplicate --cell, a range, or a bad --depth)
+  3   Validation error (the workbook would not load, or an out-of-range trace target)
+  24  Not found (no such workbook directory, or no such tab)
+
+SEE ALSO:
+  charlie-cli eval       Evaluate an ad-hoc formula
+  charlie-cli --guide    Terse guide to the on-disk model
+"#;
 
 const SAMPLE_HELP: &str = r#"charlie-cli sample — write a live tutorial workbook to disk
 

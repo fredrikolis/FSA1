@@ -56,6 +56,9 @@ pub enum Code {
     /// to a syntactically-valid but pathologically-large range (`A2:ZZ100000`) so it refuses with a
     /// located diagnostic rather than materializing every cell into an OOM abort.
     RangeTooLarge,
+    /// A trace (CLI2) target names a tab index outside the workbook's sheets — a located refusal
+    /// (CORE2) rather than a panic. Structural (no cell value), so it cites no `ErrKind` class.
+    CellOutOfRange,
 }
 
 impl Code {
@@ -75,6 +78,7 @@ impl Code {
         Code::FormulaSyntax,
         Code::DepthLimit,
         Code::RangeTooLarge,
+        Code::CellOutOfRange,
     ];
 
     /// The stable kebab-case code string a consumer switches on and a diagnostic renders as
@@ -95,6 +99,7 @@ impl Code {
             Code::FormulaSyntax => "formula-syntax",
             Code::DepthLimit => "depth-limit",
             Code::RangeTooLarge => "range-too-large",
+            Code::CellOutOfRange => "cell-out-of-range",
         }
     }
 
@@ -115,6 +120,7 @@ impl Code {
             Code::FormulaSyntax => "a formula body must parse into a charlie-ast expression",
             Code::DepthLimit => "a formula dependency chain must not exceed the pull-depth bound",
             Code::RangeTooLarge => "a referenced range must not exceed the materialization bound",
+            Code::CellOutOfRange => "a traced tab index must be within the workbook's sheets",
         }
     }
 
@@ -165,6 +171,9 @@ impl Code {
             }
             Code::RangeTooLarge => {
                 "reference a smaller rectangle; the range exceeds the model's materialization bound"
+            }
+            Code::CellOutOfRange => {
+                "trace a cell in an existing tab: pick a tab index within the workbook's sheet list"
             }
         }
     }
@@ -371,7 +380,7 @@ mod tests {
     #[test]
     fn registry_is_self_consistent() {
         // Every variant appears in ALL exactly once, and code strings are unique.
-        assert_eq!(Code::ALL.len(), 14);
+        assert_eq!(Code::ALL.len(), 15);
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();
         codes.sort_unstable();
         let before = codes.len();
