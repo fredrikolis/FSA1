@@ -1,0 +1,6 @@
+[
+  { "name": "left_right", "category": "text", "inputs": {}, "formula": "=LEFT(\"hello\",3)&RIGHT(\"world\",2)" },
+  { "name": "concat_fn", "category": "text", "inputs": {}, "formula": "=CONCAT(\"a\",\"b\",\"c\")" },
+  { "name": "substitute_fn", "category": "text", "inputs": {}, "formula": "=SUBSTITUTE(\"banana\",\"a\",\"o\")" },
+  { "name": "text_fixed", "category": "text", "inputs": {}, "formula": "=TEXT(1234.5,\"0.00\")" }
+]

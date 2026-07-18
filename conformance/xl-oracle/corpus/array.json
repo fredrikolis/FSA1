@@ -1,0 +1,4 @@
+[
+  { "name": "sumproduct_pair", "category": "array", "inputs": {"A1":1,"A2":2,"A3":3,"B1":10,"B2":20,"B3":30}, "formula": "=SUMPRODUCT(A1:A3,B1:B3)" },
+  { "name": "array_literal_sum", "category": "array", "inputs": {}, "formula": "=SUM({1,2,3,4})" }
+]

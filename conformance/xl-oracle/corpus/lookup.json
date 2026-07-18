@@ -1,0 +1,5 @@
+[
+  { "name": "vlookup_exact", "category": "lookup", "inputs": {"A1":1,"B1":10,"A2":2,"B2":20,"A3":3,"B3":30}, "formula": "=VLOOKUP(2,A1:B3,2,FALSE)" },
+  { "name": "index_match", "category": "lookup", "inputs": {"A1":1,"B1":10,"A2":2,"B2":20,"A3":3,"B3":30}, "formula": "=INDEX(B1:B3,MATCH(3,A1:A3,0))" },
+  { "name": "hlookup_exact", "category": "lookup", "inputs": {"A1":1,"B1":2,"C1":3,"A2":10,"B2":20,"C2":30}, "formula": "=HLOOKUP(2,A1:C2,2,FALSE)" }
+]

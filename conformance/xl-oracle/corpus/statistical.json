@@ -1,0 +1,6 @@
+[
+  { "name": "stdev_sample", "category": "statistical", "inputs": {"A1":3,"A2":1,"A3":4,"A4":1,"A5":5}, "formula": "=STDEV(A1:A5)", "tol": 1e-9 },
+  { "name": "median_odd", "category": "statistical", "inputs": {"A1":3,"A2":1,"A3":4,"A4":1,"A5":5}, "formula": "=MEDIAN(A1:A5)" },
+  { "name": "large_second", "category": "statistical", "inputs": {"A1":3,"A2":1,"A3":4,"A4":1,"A5":5}, "formula": "=LARGE(A1:A5,2)" },
+  { "name": "percentile_median", "category": "statistical", "inputs": {"A1":3,"A2":1,"A3":4,"A4":1,"A5":5}, "formula": "=PERCENTILE(A1:A5,0.5)" }
+]

@@ -1,0 +1,4 @@
+[
+  { "name": "err_div0", "category": "errors", "inputs": {}, "formula": "=1/0" },
+  { "name": "err_na_vlookup", "category": "errors", "inputs": {"A1":1,"B1":10,"A2":2,"B2":20,"A3":3,"B3":30}, "formula": "=VLOOKUP(99,A1:B3,2,FALSE)" }
+]

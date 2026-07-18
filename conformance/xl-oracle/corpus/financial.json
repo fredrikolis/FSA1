@@ -1,0 +1,7 @@
+[
+  { "name": "pmt_loan", "category": "financial", "inputs": {}, "formula": "=PMT(0.05/12,60,-20000)", "tol": 1e-6 },
+  { "name": "npv_stream", "category": "financial", "inputs": {"A1":100,"A2":200,"A3":300}, "formula": "=NPV(0.1,A1:A3)", "tol": 1e-6 },
+  { "name": "irr_stream", "category": "financial", "inputs": {"A1":-1000,"A2":500,"A3":600}, "formula": "=IRR(A1:A3)", "tol": 1e-6 },
+  { "name": "xirr_dated", "category": "financial", "inputs": {"A1":-1000,"A2":500,"A3":600,"B1":43831,"B2":44013,"B3":44197}, "formula": "=XIRR(A1:A3,B1:B3)", "tol": 1e-5 },
+  { "name": "fv_savings", "category": "financial", "inputs": {}, "formula": "=FV(0.05/12,60,-200)", "tol": 1e-6 }
+]

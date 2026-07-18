@@ -1,0 +1,6 @@
+[
+  { "name": "date_serial", "category": "date", "inputs": {}, "formula": "=DATE(2020,6,15)" },
+  { "name": "eomonth_next", "category": "date", "inputs": {}, "formula": "=EOMONTH(DATE(2020,1,15),1)" },
+  { "name": "weekday_default", "category": "date", "inputs": {}, "formula": "=WEEKDAY(DATE(2020,1,1))" },
+  { "name": "yearfrac_year", "category": "date", "inputs": {}, "formula": "=YEARFRAC(DATE(2020,1,1),DATE(2021,1,1))" }
+]
