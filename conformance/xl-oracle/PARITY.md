@@ -1,10 +1,16 @@
-<!-- Concern: the standing ENG6 parity result — the match/total over the current corpus, the one excluded lib-gap, and the last-run date — as the human-readable snapshot of `run.sh`'s output | Non-concern: how parity is computed (oracle.py) and why the excluded case is a lib-gap (KNOWN-LIB-GAPS.md) | IO: none (documentation snapshot; regenerate by running ./run.sh) -->
+<!-- Concern: the standing ENG6 parity result — the match/total over BOTH the per-formula corpus and the whole-workbook real-file corpus, the excluded lib-gaps, and the last-run date — as the human-readable snapshot of `run.sh`'s output | Non-concern: how parity is computed (oracle.py / workbook_oracle.py) and why the excluded cases are lib-gaps (KNOWN-LIB-GAPS.md) | IO: none (documentation snapshot; regenerate by running ./run.sh and ./run.sh --workbook) -->
 # PARITY.md — ENG6 differential parity result
 
-**Result: 41 / 41 graded cases MATCH. 0 charlie-defect divergences. 1 case EXCLUDED (lib-gap).**
+**Per-formula result: 41 / 41 graded cases MATCH. 0 charlie-defect divergences. 1 case EXCLUDED (lib-gap).**
 Corpus total: 42 cases. Reference oracle: `formulas` v1.3.4 (+ openpyxl). Last run: 2026-07-17.
 
 `./run.sh` exit code: **0** (no charlie-defect divergence).
+
+**Whole-workbook result (real .xlsx files, DoD milestone 3): 58 / 58 graded formula cells MATCH across
+3 workbooks. 0 charlie-defect divergences. 1 cell EXCLUDED (lib-gap).**
+`./run.sh --workbook` exit code: **0**. This is the true `import -> compute -> diff vs reference`
+fitness: each workbook is `charlie-cli import`ed, then every formula cell is `charlie-cli eval`'d and
+diffed cell-for-cell against the `formulas` reference (see `workbook_oracle.py`).
 
 ## By category
 
@@ -22,7 +28,19 @@ Corpus total: 42 cases. Reference oracle: `formulas` v1.3.4 (+ openpyxl). Last r
 | edge        | 7      | 7     | 1        | `^` left-assoc, MOD(-7,3)=2, ROUND half-away, `"3"+2`, INT(-2.5); excluded: `SUMPRODUCT(--(range>x))` |
 | **total**   | **41** | **41**| **1**    | |
 
-## The one exclusion
+## Whole-workbook corpus (real .xlsx)
+
+| workbook            | graded | match | excluded | shape |
+|---------------------|-------:|------:|---------:|-------|
+| `pnl.xlsx`          | 16     | 16    | 0        | mini P&L: SUM, subtraction, margin %, ROUND tax, cross-sheet Summary |
+| `amortization.xlsx` | 27     | 27    | 1        | loan schedule: PMT + per-period interest/principal/balance chain, PPMT; excluded: IPMT lib-gap |
+| `lookup.xlsx`       | 15     | 15    | 0        | price table: VLOOKUP, INDEX/MATCH, HLOOKUP, IF tiers, SUMIF rollup |
+| **total**           | **58** | **58**| **1**    | |
+
+The excluded `amortization.xlsx!Loan!B15` (IPMT) is a `formulas`-library defect — see
+KNOWN-LIB-GAPS.md §2. Declared in `corpus_workbooks/lib_gaps.json`.
+
+## The per-formula exclusion
 
 `edge/sumproduct_bool_coerce` — `=SUMPRODUCT(--(A1:A3>1))` — charlie returns `2` (correct Excel);
 `formulas` v1.3.4 returns `0`. This is a **reference-library defect**, not a charlie defect: the lib

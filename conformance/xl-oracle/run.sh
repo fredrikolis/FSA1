@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Concern: the one-command entrypoint for the ENG6 differential oracle — ensure charlie-cli is built, activate the local venv (creating it + pip-installing the PINNED reference stack from requirements.txt on first run), and run oracle.py, forwarding its exit code | Non-concern: WHAT the oracle grades (oracle.py owns the differential harness), the corpus content (corpus/*.json), and WHICH versions pin the reference (requirements.txt owns that) | IO: (in: the repo, requirements.txt, network on first-run pip install) -> builds target/debug/charlie-cli if absent, prints the oracle parity table, exits with oracle.py's code
+# Concern: the one-command entrypoint for the ENG6 differential oracle(s) — ensure charlie-cli is built, activate the local venv (creating it + pip-installing the PINNED reference stack from requirements.txt on first run), and run EITHER the per-formula oracle.py (default) OR the whole-workbook workbook_oracle.py (`--workbook`), forwarding its exit code | Non-concern: WHAT the oracles grade (oracle.py / workbook_oracle.py own the harnesses), the corpus content (corpus/*.json, corpus_workbooks/*.xlsx), and WHICH versions pin the reference (requirements.txt owns that) | IO: (in: the repo, requirements.txt, network on first-run pip install; args: `--workbook` selects the whole-workbook oracle) -> builds target/debug/charlie-cli if absent, prints the parity table, exits with the selected oracle's code
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,4 +20,10 @@ if [[ ! -x "$VENV/bin/python" ]]; then
   "$VENV/bin/pip" install --quiet -r "$HERE/requirements.txt"
 fi
 
+# Select the oracle: `--workbook` runs the whole-workbook harness (real .xlsx files); default is the
+# per-formula corpus. Both share the venv, the reference stack, and oracle.py's comparison logic.
+if [[ "${1:-}" == "--workbook" ]]; then
+  shift
+  exec "$VENV/bin/python" "$HERE/workbook_oracle.py" "$@"
+fi
 exec "$VENV/bin/python" "$HERE/oracle.py" "$@"

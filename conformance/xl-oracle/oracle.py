@@ -114,14 +114,16 @@ def _grid_literal(literal):
     return str(literal)
 
 
-def charlie_value(cli, wb_dir, formula):
+def charlie_value(cli, wb_dir, formula, tab=TAB):
     """Run ``charlie-cli eval`` and return ``(value_str_or_None, exit_code, note)``.
 
     ``value_str`` is the string in the JSON envelope's ``data.value`` (present for both a plain value
     and an error-valued result like ``#DIV/0!``); ``None`` means a parse refusal (only diagnostics).
+    ``tab`` selects the sheet unqualified refs bind to — the per-formula oracle uses the single ``S``
+    tab; the whole-workbook oracle passes each cell's own sheet.
     """
     proc = subprocess.run(
-        [str(cli), "eval", str(wb_dir), "--tab", TAB, "--formula", formula, "--format", "json"],
+        [str(cli), "eval", str(wb_dir), "--tab", tab, "--formula", formula, "--format", "json"],
         capture_output=True,
         text=True,
     )

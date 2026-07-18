@@ -1,0 +1,8 @@
+[
+  {
+    "workbook": "amortization",
+    "sheet": "Loan",
+    "cell": "B15",
+    "reason": "formulas v1.3.4 IPMT returns #NUM! (PPMT works); charlie & Excel give 100. See KNOWN-LIB-GAPS.md #2"
+  }
+]

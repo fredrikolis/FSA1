@@ -1,10 +1,16 @@
-// Concern: the FORMAT FIREWALL — the ONE module that touches calamine — reading a real `.ods` workbook into the format-neutral `SourceBook`: open the file, and for each sheet fuse calamine's cached VALUE range (`worksheet_range`) with its FORMULA range (`worksheet_formula`) into an A1-anchored, row-major rectangle of `SourceCell`s (a formula cell keeps its raw OpenFormula text for `translate`; a value cell maps calamine's `Data` onto charlie's VAL3 value model, a date/time cell becoming an Excel serial via `dates`); every failure (unopenable file, unreadable sheet, unrepresentable error kind, unparseable date, an oversized used range) is a located `IngestError` (CORE2), never a panic | Non-concern: translating the formula grammar (translate.rs), spelling a cell to TSV (serialize.rs), and writing files (lib.rs); calamine/zip/xml stay behind this seam so charlie-model/ast never see them | IO: (a `.ods` path) -> `Result<SourceBook, IngestError>`
-//! The calamine-backed ODS reader: [`read_ods`]. calamine is confined here (HARD firewall) — the rest of
-//! the crate, and all of charlie-model/ast, work only on the neutral [`SourceBook`].
+// Concern: the FORMAT FIREWALL — the ONE module that touches calamine — reading a real `.ods` OR `.xlsx` workbook into the format-neutral `SourceBook`: DISPATCH by extension (a `.ods`/`.xlsx` opened via calamine's `open_workbook_auto` behind ONE code path; any other extension is a located CORE2 refusal), and for each sheet fuse calamine's cached VALUE range (`worksheet_range`) with its FORMULA range (`worksheet_formula`) into an A1-anchored, row-major rectangle of `SourceCell`s — a formula cell keeps its raw source-dialect text for `translate` (ODS `of:=[.A1]`, or xlsx's already-Excel-A1 `A1`), a value cell maps calamine's `Data` onto charlie's VAL3 value model, a date/time cell becoming an Excel serial via `dates`; every failure (unsupported extension, unopenable file, unreadable sheet, unrepresentable error kind, unparseable date, an oversized used range) is a located `IngestError` (CORE2), never a panic | Non-concern: translating the formula grammar (translate.rs — one translator serves BOTH dialects, so the reader is format-specific only in its OPENER), spelling a cell to TSV (serialize.rs), and writing files (lib.rs); calamine/zip/xml stay behind this seam so charlie-model/ast never see them | IO: (a `.ods`/`.xlsx` path) -> `Result<SourceBook, IngestError>`
+//! The calamine-backed reader: [`read_file`], opening `.ods` and `.xlsx` behind one code path
+//! (`open_workbook_auto`). calamine is confined here (HARD firewall) — the rest of the crate, and all
+//! of charlie-model/ast, work only on the neutral [`SourceBook`]. The reader is format-specific ONLY in
+//! its opener + extension gate; sheet-fusing, value-mapping, and formula-carrying are format-blind, and
+//! `translate` rewrites both dialects (an xlsx formula is already Excel-A1, so translation is a noop
+//! beyond prepending `=`; an ODS formula is rewritten from OpenFormula).
 
+use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 
-use calamine::{CellErrorType, Data, Ods, Reader};
+use calamine::{CellErrorType, Data, Reader, Sheets, open_workbook_auto};
 use charlie_ast::ErrKind;
 
 use crate::dates::{iso_datetime_to_serial, iso_duration_to_serial};
@@ -15,23 +21,42 @@ use crate::source::{SheetSource, SourceBook, SourceCell};
 /// used range is far below this; a pathological one becomes a located refusal, never an OOM abort.
 const MAX_SHEET_CELLS: u64 = 4_000_000;
 
-/// Read a `.ods` file into the neutral [`SourceBook`]. A missing/unreadable file or an unreadable sheet
-/// is a located [`IngestError`]; a structurally-fine cell that cannot map to charlie's model (an
-/// unknown error kind, an unparseable date) is likewise located at its `sheet!A1`.
-pub fn read_ods(path: &Path) -> Result<SourceBook, IngestError> {
+/// Read a `.ods` or `.xlsx` file into the neutral [`SourceBook`], dispatching by extension. An
+/// unsupported extension, a missing/unreadable file, or an unreadable sheet is a located
+/// [`IngestError`]; a structurally-fine cell that cannot map to charlie's model (an unknown error kind,
+/// an unparseable date) is likewise located at its `sheet!A1`.
+pub fn read_file(path: &Path) -> Result<SourceBook, IngestError> {
+    // Dispatch by extension: only `.ods`/`.xlsx` are supported. An unknown extension is a located
+    // CORE2 refusal here rather than letting `open_workbook_auto` format-sniff (which would try every
+    // format and mislabel the failure); the message names the offending path + extension.
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext.as_deref() {
+        Some("ods") | Some("xlsx") => {}
+        _ => {
+            return Err(IngestError::io(
+                ErrorKind::Invalid,
+                format!(
+                    "cannot import {:?}: unsupported source format (expected a .ods or .xlsx file)",
+                    path.display()
+                ),
+            ));
+        }
+    }
     if !path.exists() {
         return Err(IngestError::io(
             ErrorKind::SourceNotFound,
             format!("no such file {:?}", path.display()),
         ));
     }
-    let mut wb: Ods<_> = calamine::open_workbook(path).map_err(|e| {
+    // ONE opener for both formats: `open_workbook_auto` picks Ods/Xlsx by extension and hands back a
+    // `Sheets` that implements the same `Reader` trait, so every step below is format-blind.
+    let mut wb = open_workbook_auto(path).map_err(|e| {
         IngestError::io(
             ErrorKind::SourceIo,
-            format!(
-                "cannot open {:?} as an OpenDocument spreadsheet: {e}",
-                path.display()
-            ),
+            format!("cannot open {:?} as a spreadsheet: {e}", path.display()),
         )
     })?;
 
@@ -43,11 +68,9 @@ pub fn read_ods(path: &Path) -> Result<SourceBook, IngestError> {
     Ok(SourceBook { sheets })
 }
 
-/// Read one sheet: fuse its value and formula ranges into an A1-anchored rectangle.
-fn read_sheet(
-    wb: &mut Ods<impl std::io::Read + std::io::Seek>,
-    name: &str,
-) -> Result<SheetSource, IngestError> {
+/// Read one sheet: fuse its value and formula ranges into an A1-anchored rectangle. Format-blind — it
+/// works through the `Reader` trait, so the same code serves ODS and xlsx (and any calamine format).
+fn read_sheet(wb: &mut Sheets<BufReader<File>>, name: &str) -> Result<SheetSource, IngestError> {
     let values = wb
         .worksheet_range(name)
         .map_err(|e| IngestError::at_sheet(name, format!("cannot read sheet values: {e}")))?;
@@ -200,5 +223,18 @@ mod tests {
         assert_eq!(err.kind, crate::error::ErrorKind::Invalid);
         assert_eq!(err.sheet.as_deref(), Some("Data"));
         assert_eq!(err.cell.as_deref(), Some("D2")); // col 3, row 1 -> D2
+    }
+
+    #[test]
+    fn an_unsupported_extension_is_a_located_refusal_not_a_format_sniff() {
+        // The extension gate fires before any file open, so it does not depend on the file existing.
+        let err = read_file(std::path::Path::new("book.csv")).unwrap_err();
+        assert_eq!(err.kind, crate::error::ErrorKind::Invalid);
+        assert!(err.message.contains(".ods or .xlsx"), "{}", err.message);
+        // A file with no extension is likewise refused (never format-sniffed).
+        assert_eq!(
+            read_file(std::path::Path::new("noext")).unwrap_err().kind,
+            crate::error::ErrorKind::Invalid
+        );
     }
 }

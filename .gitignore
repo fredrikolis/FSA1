@@ -3,7 +3,8 @@
 **/*.rs.bk
 Cargo.lock.orig
 
-# The python venv used to AUTHOR the .ods fixtures is disposable — the generated fixtures
-# (charlie-ingest/tests/fixtures/*.ods) ARE committed, so the Rust tests need no python/odfpy.
+# The python venv used to AUTHOR the ingest fixtures is disposable — the generated fixtures
+# (charlie-ingest/tests/fixtures/*.{ods,xlsx}) ARE committed, so the Rust tests need no
+# python/odfpy/openpyxl.
 charlie-ingest/.fixture-venv/
 **/__pycache__/

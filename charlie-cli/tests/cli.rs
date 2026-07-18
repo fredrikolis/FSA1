@@ -1,4 +1,4 @@
-// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, BOTH output forms selected by `--format` (the human ASCII table / scalar on stdout in text mode, and the `{status,data|error}` JSON envelope on stdout in json mode — success data, the diagnostics[] array, the eval value, and error/not-found/validation envelopes), the on-disk `sample` workbook + its never-clobber refusal, the `import` of a real `.ods` into a renderable workbook (+ its conflict/not-found refusals), the `--guide` text, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/import/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval · 4 sample/import target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT), the ODS conversion LOGIC (charlie-ingest's own tests own it), the envelope serialization (main.rs `output` owns it), and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, reads a committed `.ods` fixture, asserts on stdout + exit status
+// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, BOTH output forms selected by `--format` (the human ASCII table / scalar on stdout in text mode, and the `{status,data|error}` JSON envelope on stdout in json mode — success data, the diagnostics[] array, the eval value, and error/not-found/validation envelopes), the on-disk `sample` workbook + its never-clobber refusal, the `import` of a real `.ods`/`.xlsx` into a renderable workbook (+ its unsupported-extension/conflict/not-found refusals), the `--guide` text, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/import/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval or an unsupported import format · 4 sample/import target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT), the ODS/xlsx conversion LOGIC (charlie-ingest's own tests own it), the envelope serialization (main.rs `output` owns it), and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, reads committed `.ods`/`.xlsx` fixtures, asserts on stdout + exit status
 //! End-to-end tests of the `charlie-cli` binary: exit codes and stdout for `render`, `check`, `eval`,
 //! `sample`, `--guide`, `--version`, and misuse. The spreadsheet logic is tested in `charlie-model`;
 //! this locks the thin shell's own contract.
@@ -633,5 +633,69 @@ fn import_a_missing_source_is_not_found() {
     assert!(
         out.contains("\"code\":\"not_found\""),
         "not_found code:\n{out}"
+    );
+}
+
+#[test]
+fn import_xlsx_then_eval_the_converted_workbook() {
+    // The CLI import path is format-agnostic (it dispatches to charlie-ingest by extension), so an
+    // .xlsx flows through the binary exactly as the .ods does — same converted values.
+    let fx = Fixture::new("import-xlsx");
+    let dest = fx.path().join("wb");
+    let src = ingest_fixture("smoke.xlsx");
+    let (code, out) = run(&[
+        "import",
+        src.to_str().unwrap(),
+        dest.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 0, "xlsx import should succeed:\n{out}");
+    assert!(
+        out.contains("\"files\":2"),
+        "two range files written:\n{out}"
+    );
+
+    let a3 = run(&[
+        "eval",
+        dest.to_str().unwrap(),
+        "--tab",
+        "Sheet1",
+        "--formula",
+        "=A3",
+    ]);
+    assert_eq!((a3.0, a3.1.trim()), (0, "30"));
+    let cross = run(&[
+        "eval",
+        dest.to_str().unwrap(),
+        "--tab",
+        "Sheet2",
+        "--formula",
+        "=A1",
+    ]);
+    assert_eq!((cross.0, cross.1.trim()), (0, "30"));
+}
+
+#[test]
+fn import_an_unsupported_extension_is_a_validation_refusal() {
+    // A .csv (or any non-.ods/.xlsx) is a located CORE2 refusal (exit 3), never format-sniffed.
+    let fx = Fixture::new("import-badext");
+    let src = fx.path().join("data.csv");
+    std::fs::write(&src, "a,b\n1,2\n").unwrap();
+    let dest = fx.path().join("wb");
+    let (code, out) = run(&[
+        "import",
+        src.to_str().unwrap(),
+        dest.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        code, 3,
+        "an unsupported extension is a validation error (exit 3):\n{out}"
+    );
+    assert!(
+        out.contains("\"code\":\"validation_error\"") && out.contains("unsupported source format"),
+        "validation refusal naming the format:\n{out}"
     );
 }

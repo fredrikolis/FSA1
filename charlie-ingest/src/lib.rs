@@ -1,10 +1,12 @@
-// Concern: charlie-ingest — CONVERT a real spreadsheet FILE into a charlie workbook on disk, so the existing format-blind engine then renders/evaluates it (GRID2/GRID3: a new format is a new deserializer; the engine is untouched). The crate is the FORMAT FIREWALL — calamine (+ its zip/xml) lives ONLY here (reader.rs), and charlie-model/ast stay calamine-free. `import_ods` orchestrates the pipeline: read the `.ods` into a format-neutral `SourceBook` (reader) → for each sheet spell the used rectangle as charlie grid file(s) (serialize, which drives translate for formulas) → write a tab folder of grid-only TSV files, refusing to clobber a non-empty destination; every failure a located `IngestError` (CORE2) | Non-concern: the CLI surface (charlie-cli owns argv/exit codes/`import` subcommand), the formula LANGUAGE (charlie-ast), and the on-disk grammar it targets (charlie-model owns filename/grid/overlap) | IO: (a `.ods` path, a destination workbook dir) -> a written tab-of-range-files tree + an `ImportReport`, or a located `IngestError`
-//! # charlie-ingest — spreadsheet ingest (ODS first)
+// Concern: charlie-ingest — CONVERT a real spreadsheet FILE (`.ods` or `.xlsx`) into a charlie workbook on disk, so the existing format-blind engine then renders/evaluates it (GRID2/GRID3: a new format is a new deserializer; the engine is untouched). The crate is the FORMAT FIREWALL — calamine (+ its zip/xml) lives ONLY here (reader.rs), and charlie-model/ast stay calamine-free. `import_file` orchestrates the pipeline: read the source (`.ods`/`.xlsx`, dispatched by extension) into a format-neutral `SourceBook` (reader) → for each sheet spell the used rectangle as charlie grid file(s) (serialize, which drives translate for formulas) → write a tab folder of grid-only TSV files, refusing to clobber a non-empty destination; every failure a located `IngestError` (CORE2) | Non-concern: the CLI surface (charlie-cli owns argv/exit codes/`import` subcommand), the formula LANGUAGE (charlie-ast), and the on-disk grammar it targets (charlie-model owns filename/grid/overlap) | IO: (a `.ods`/`.xlsx` path, a destination workbook dir) -> a written tab-of-range-files tree + an `ImportReport`, or a located `IngestError`
+//! # charlie-ingest — spreadsheet ingest (ODS + xlsx)
 //!
-//! [`import_ods`] converts a real `.ods` file into a charlie workbook directory the format-blind engine
-//! reads unchanged. The pipeline is four small concerns behind one seam ([`source::SourceBook`]): the
-//! calamine-confined [`reader`], the OpenFormula→Excel-A1 [`translate`], the value/grid [`serialize`],
-//! and this orchestration. A second format (xlsx) reuses everything but [`reader`].
+//! [`import_file`] converts a real `.ods` or `.xlsx` file into a charlie workbook directory the
+//! format-blind engine reads unchanged. The pipeline is four small concerns behind one seam
+//! ([`source::SourceBook`]): the calamine-confined [`reader`] (the ONLY format-specific step — it
+//! dispatches the opener by extension), the source-dialect→Excel-A1 [`translate`] (one translator for
+//! both dialects), the value/grid [`serialize`], and this orchestration. The second format (xlsx)
+//! reuses everything but the [`reader`]'s opener — the seam Batch 5 designed for.
 
 mod dates;
 pub mod error;
@@ -27,12 +29,12 @@ pub struct ImportReport {
     pub files: usize,
 }
 
-/// Import a `.ods` spreadsheet into a charlie workbook directory `dest`. Each sheet becomes a tab folder
-/// holding one range file (`A1:<lastcol><lastrow>`, or `A1` for a 1×1 sheet) whose grid-only TSV fills
-/// the used rectangle exactly (GRID4). Refuses (never clobbers) a `dest` that already exists and is
-/// non-empty. Every failure is a located [`IngestError`] (CORE2).
-pub fn import_ods(src: &Path, dest: &Path) -> Result<ImportReport, IngestError> {
-    let book = reader::read_ods(src)?;
+/// Import a `.ods` or `.xlsx` spreadsheet (dispatched by extension) into a charlie workbook directory
+/// `dest`. Each sheet becomes a tab folder holding one range file (`A1:<lastcol><lastrow>`, or `A1` for
+/// a 1×1 sheet) whose grid-only TSV fills the used rectangle exactly (GRID4). Refuses (never clobbers) a
+/// `dest` that already exists and is non-empty. Every failure is a located [`IngestError`] (CORE2).
+pub fn import_file(src: &Path, dest: &Path) -> Result<ImportReport, IngestError> {
+    let book = reader::read_file(src)?;
 
     // Never clobber: refuse a destination that already exists and is non-empty (an empty or absent dir
     // is fine — the writes create it). Mirrors `charlie-cli sample`'s never-clobber guarantee.

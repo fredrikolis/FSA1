@@ -1,8 +1,10 @@
-<!-- Concern: orient a reader to the ENG6 differential oracle — what it grades (charlie vs the `formulas` Excel lib, per formula), how to run it, the corpus shape, and the lib-gap triage rule | Non-concern: the harness internals (oracle.py's annotation owns those) and charlie's own semantics (SPEC.md ENG6 + charlie-model own those) | IO: none (documentation) -->
+<!-- Concern: orient a reader to the ENG6 differential oracle(s) — what they grade (charlie vs the `formulas` Excel lib, per formula AND whole real .xlsx workbooks), how to run them, the corpus shapes, and the lib-gap triage rule | Non-concern: the harness internals (oracle.py / workbook_oracle.py annotations own those) and charlie's own semantics (SPEC.md ENG6 + charlie-model own those) | IO: none (documentation) -->
 # xl-oracle — the ENG6 differential conformance oracle
 
 **What it is.** A per-formula differential harness that grades charlie *cell-for-cell against an
-external Excel reference*, exactly as SPEC.md **ENG6** requires. The reference oracle is the
+external Excel reference*, exactly as SPEC.md **ENG6** requires — plus a **whole-workbook** harness
+(`workbook_oracle.py`) that runs the same diff over real, `charlie-cli import`ed `.xlsx` files. The
+reference oracle is the
 [`formulas`](https://pypi.org/project/formulas/) Python library (v1.3.4) — an independent Excel
 formula engine — building each case's workbook with `openpyxl`. LibreOffice is unavailable in this
 sandbox, so `formulas` stands in as the mainstream-spreadsheet reference.
@@ -23,15 +25,27 @@ Each case is classified **MATCH**, **DIVERGE** (a charlie defect — the harness
 ## Run it
 
 ```sh
-./run.sh
+./run.sh              # per-formula corpus (corpus/*.json)
+./run.sh --workbook   # whole-workbook corpus (corpus_workbooks/*.xlsx)
 ```
 
 `run.sh` builds `charlie-cli` if needed, creates the local `.venv` and installs the **pinned**
 reference stack from [`requirements.txt`](./requirements.txt) on first run (the `.venv` is
-gitignored), then runs `oracle.py`. The versions are locked (`formulas==1.3.4`, `openpyxl==3.1.5`,
-and the full transitive closure) so the documented reference is the *enforced* reference — a rerun
-cannot silently pull a newer `formulas` whose semantics flip a MATCH/DIVERGE verdict. Exit code is
-`0` iff no graded case diverges. Set `CHARLIE_CLI=/path/to/charlie-cli` to grade a different binary.
+gitignored), then runs `oracle.py` (or `workbook_oracle.py` with `--workbook`). The versions are
+locked (`formulas==1.3.4`, `openpyxl==3.1.5`, and the full transitive closure) so the documented
+reference is the *enforced* reference — a rerun cannot silently pull a newer `formulas` whose
+semantics flip a MATCH/DIVERGE verdict. Exit code is `0` iff no graded case diverges. Set
+`CHARLIE_CLI=/path/to/charlie-cli` to grade a different binary.
+
+## The whole-workbook corpus (`corpus_workbooks/*.xlsx`)
+
+The real-file fitness (DoD milestone 3). A few realistic multi-formula workbooks — a mini P&L, a loan
+amortization schedule, and a price lookup table — authored by `make_workbooks.py` (committed; the
+`.xlsx` are committed too). `workbook_oracle.py` computes each with `formulas`, collects every formula
+cell's value, `charlie-cli import`s the file into a temp workbook, `charlie-cli eval`s each formula
+cell, and diffs cell-for-cell reusing this module's `compare`/`classify_ref` logic. Per-cell lib-gaps
+are declared in `corpus_workbooks/lib_gaps.json` (the whole-workbook analogue of the per-formula
+`lib_gap` flag).
 
 ## The corpus (`corpus/*.json`)
 

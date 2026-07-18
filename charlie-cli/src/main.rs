@@ -1,4 +1,4 @@
-// Concern: charlie-cli — the THIN binary shell (`charlie-cli render` / `check` / `eval` / `sample` / `import` / `--guide`): parse argv (including the global `--format text|json` selector), drive `charlie-model` (load a workbook, ask for a render grid, a lint report, or an ad-hoc `=formula`'s value; or WRITE the model's tutorial workbook to disk for `sample`) or `charlie-ingest` (CONVERT an `.ods` into a workbook for `import`), and hand the structured outcome to the `output` envelope layer — which dual-renders it as EITHER a human ASCII table / scalar / prose (`--format text`, the default) OR a `{status,data|error}` JSON envelope on stdout (`--format json`, the machine surface) — then set the exit code an agent branches on (0 clean · 1 I/O failure · 2 bad args · 3 error-severity diagnostics or error-valued eval or an untranslatable import · 4 target-dir conflict · 24 path not found); it holds NO spreadsheet logic — the demand-driven eval, value spelling, diagnostics, and the sample CONTENT all live in the model, the ODS conversion in `charlie-ingest`, the guide text in `guide`, comfy-table drawing in `ascii`, and the envelope/JSON in `output` | Non-concern: WHAT a cell computes to or WHY a diagnostic fires (charlie-model owns the render model + lint + ad-hoc formula eval + sample content, charlie-ingest owns the ODS import), the formula language (charlie-ast), xlsx serde, and the envelope serialization itself (`output` owns the JSON + the dual-render) | IO: (argv incl. `--format`, a workbook directory on disk, an `.ods` source) -> a render grid / lint report / scalar value / sample-write / imported workbook, dual-rendered by `output` to stdout (text or JSON envelope) + an exit code; a freshly-written sample or imported workbook tree on disk; text-mode operational errors to stderr
+// Concern: charlie-cli — the THIN binary shell (`charlie-cli render` / `check` / `eval` / `sample` / `import` / `--guide`): parse argv (including the global `--format text|json` selector), drive `charlie-model` (load a workbook, ask for a render grid, a lint report, or an ad-hoc `=formula`'s value; or WRITE the model's tutorial workbook to disk for `sample`) or `charlie-ingest` (CONVERT an `.ods`/`.xlsx` into a workbook for `import`), and hand the structured outcome to the `output` envelope layer — which dual-renders it as EITHER a human ASCII table / scalar / prose (`--format text`, the default) OR a `{status,data|error}` JSON envelope on stdout (`--format json`, the machine surface) — then set the exit code an agent branches on (0 clean · 1 I/O failure · 2 bad args · 3 error-severity diagnostics or error-valued eval or an untranslatable import · 4 target-dir conflict · 24 path not found); it holds NO spreadsheet logic — the demand-driven eval, value spelling, diagnostics, and the sample CONTENT all live in the model, the ODS/xlsx conversion in `charlie-ingest`, the guide text in `guide`, comfy-table drawing in `ascii`, and the envelope/JSON in `output` | Non-concern: WHAT a cell computes to or WHY a diagnostic fires (charlie-model owns the render model + lint + ad-hoc formula eval + sample content, charlie-ingest owns the ODS/xlsx import + the format firewall), the formula language (charlie-ast), and the envelope serialization itself (`output` owns the JSON + the dual-render) | IO: (argv incl. `--format`, a workbook directory on disk, a `.ods`/`.xlsx` source) -> a render grid / lint report / scalar value / sample-write / imported workbook, dual-rendered by `output` to stdout (text or JSON envelope) + an exit code; a freshly-written sample or imported workbook tree on disk; text-mode operational errors to stderr
 //! `charlie-cli` — render and lint a filesystem spreadsheet. The binary is a thin consumer of
 //! `charlie-model`: it parses arguments, calls the model's `render`/`lint`/`eval` surface, and hands
 //! the returned plain-data outcome to the [`output`] envelope layer, which dual-renders it as a human
@@ -433,10 +433,11 @@ fn cmd_sample(fmt: Format, rest: &[String]) -> u8 {
     0
 }
 
-/// `charlie-cli import <src.ods> <dest-dir>` — convert a real spreadsheet file into a charlie workbook
-/// the format-blind engine then renders/evaluates. Delegates the whole conversion to `charlie-ingest`
-/// (the format firewall); the CLI only parses argv, maps a located `IngestError` onto the envelope's
-/// exit code (CORE2), and reports the written tabs. Refuses (never clobbers) a non-empty destination.
+/// `charlie-cli import <src> <dest-dir>` — convert a real spreadsheet file (`.ods` or `.xlsx`,
+/// dispatched by extension) into a charlie workbook the format-blind engine then renders/evaluates.
+/// Delegates the whole conversion to `charlie-ingest` (the format firewall); the CLI only parses argv,
+/// maps a located `IngestError` onto the envelope's exit code (CORE2), and reports the written tabs.
+/// Refuses (never clobbers) a non-empty destination.
 fn cmd_import(fmt: Format, rest: &[String]) -> u8 {
     let mut positionals: Vec<String> = Vec::new();
     for arg in rest {
@@ -451,19 +452,19 @@ fn cmd_import(fmt: Format, rest: &[String]) -> u8 {
         [_] => {
             return bad_arg(
                 fmt,
-                "import needs a <dest-workbook-dir> after the <src.ods>",
+                "import needs a <dest-workbook-dir> after the <src> (.ods or .xlsx)",
             );
         }
         [] => {
             return bad_arg(
                 fmt,
-                "import needs a <src.ods> and a <dest-workbook-dir>, e.g. charlie-cli import book.ods ./book",
+                "import needs a <src> (.ods or .xlsx) and a <dest-workbook-dir>, e.g. charlie-cli import book.xlsx ./book",
             );
         }
-        _ => return bad_arg(fmt, "import takes exactly <src.ods> <dest-workbook-dir>"),
+        _ => return bad_arg(fmt, "import takes exactly <src> <dest-workbook-dir>"),
     };
 
-    match charlie_ingest::import_ods(Path::new(&src), Path::new(&dest)) {
+    match charlie_ingest::import_file(Path::new(&src), Path::new(&dest)) {
         Ok(report) => {
             let text_lines = format!(
                 "imported {src} -> {dest} ({} tab(s), {} range file(s) written)\n\
@@ -568,7 +569,7 @@ USAGE:
   charlie-cli check  <path>
   charlie-cli eval   <path> --formula '=<formula>' [--tab <name>]
   charlie-cli sample <dir>
-  charlie-cli import <src.ods> <dest-workbook-dir>
+  charlie-cli import <src> <dest-workbook-dir>       # <src> is a .ods or .xlsx file
   charlie-cli --version | --help | --guide
 
   Per-command help (its own args, JSON OUTPUT shape, and exit codes): charlie-cli <command> --help
@@ -587,12 +588,12 @@ COMMANDS:
   eval     Evaluate an ad-hoc --formula against the loaded workbook and emit its value. Read-only.
   sample   Write a live tutorial workbook into <dir>, then report. Refuses to overwrite a non-empty
            directory.
-  import   Convert a real spreadsheet file (.ods) into a charlie workbook the engine reads. Each
-           sheet becomes a tab folder of grid-only range file(s). Refuses a non-empty destination.
+  import   Convert a real spreadsheet file (.ods or .xlsx) into a charlie workbook the engine reads.
+           Each sheet becomes a tab folder of grid-only range file(s). Refuses a non-empty destination.
 
 EXAMPLES:
   charlie-cli sample ./demo && charlie-cli render ./demo
-  charlie-cli import book.ods ./book && charlie-cli render ./book
+  charlie-cli import book.xlsx ./book && charlie-cli render ./book
   charlie-cli render ./budget --tab Summary
   charlie-cli check  ./budget --format json
   charlie-cli eval   ./budget --tab Orders --formula '=SUMPRODUCT(--(C2:C11>5))'
@@ -769,23 +770,26 @@ SEE ALSO:
 const IMPORT_HELP: &str = r#"charlie-cli import — convert a real spreadsheet file into a charlie workbook
 
 USAGE:
-  charlie-cli import <src.ods> <dest-workbook-dir> [--format <text|json>]
+  charlie-cli import <src> <dest-workbook-dir> [--format <text|json>]
 
 DESCRIPTION:
-  Convert an OpenDocument spreadsheet (.ods) into a charlie workbook the format-blind engine renders
-  and evaluates. Each sheet becomes a tab folder; the sheet's used rectangle becomes one grid-only
-  range file (A1:<lastcol><lastrow>). Cell values map to charlie's value model (a date-typed cell
-  becomes its Excel serial); formulas are translated to charlie's Excel-A1 grammar. Refuses to
-  overwrite a non-empty destination (never clobbers). Every failure is a located diagnostic
-  (sheet!cell) — an untranslatable formula or unrepresentable value is refused, never silently wrong.
+  Convert a real spreadsheet file — an OpenDocument (.ods) or an Excel (.xlsx) workbook, dispatched by
+  extension — into a charlie workbook the format-blind engine renders and evaluates. Each sheet becomes
+  a tab folder; the sheet's used rectangle becomes one grid-only range file (A1:<lastcol><lastrow>).
+  Cell values map to charlie's value model (a date-typed cell becomes its Excel serial); formulas are
+  translated to charlie's Excel-A1 grammar (an xlsx formula is already Excel-A1). Refuses to overwrite a
+  non-empty destination (never clobbers). Every failure is a located diagnostic (sheet!cell) — an
+  untranslatable formula, an unrepresentable value, or an unsupported source format is refused, never
+  silently wrong.
 
 ARGUMENTS:
-  <src.ods>              (required) The source OpenDocument spreadsheet to read.
+  <src>                  (required) The source spreadsheet to read — a .ods or .xlsx file.
   <dest-workbook-dir>    (required) The workbook directory to write (created; must be empty if it exists).
   --format <fmt>         (optional) text (default, next-steps prose) or json (the machine envelope).
 
 EXAMPLES:
-  charlie-cli import book.ods ./book && charlie-cli render ./book
+  charlie-cli import book.xlsx ./book && charlie-cli render ./book
+  charlie-cli import book.ods  ./book && charlie-cli render ./book
 
 OUTPUT (--format json):
   {"status":"success","data":{"path":"./book","tabs":["Sheet1","Sheet2"],"files":2}}
@@ -794,7 +798,7 @@ EXIT CODES:
   0   Success (workbook written)
   1   I/O failure (source unreadable, or a destination write failed)
   2   Invalid arguments
-  3   Validation error (an untranslatable formula, an unrepresentable value, a bad date, a bad sheet name)
+  3   Validation error (an untranslatable formula, unrepresentable value, bad date/sheet name, or an unsupported source format)
   4   Conflict (<dest> exists and is non-empty — refused, nothing written)
   24  Not found (no such source file)
 
