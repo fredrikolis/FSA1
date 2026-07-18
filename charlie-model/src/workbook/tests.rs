@@ -1,0 +1,731 @@
+// Concern: the two-pass engine's BEHAVIORAL pins — demand-driven chains, cycle/self-reference/cross-sheet #REF! refusals, the explicit-grid VAL1 rule, diamond/deep-DAG compute-once, memoization stability, the pull-depth and range-materialization #NUM! bounds and their order-independence (depth-tainted values/ranges never poison a shallower demand), ad-hoc `eval_formula`, batch `values_at` sharing, and the NAIVE-oracle differential test proving the graph EQUALS a per-cell evaluation | Non-concern: the engine's internal graph shape/node-count/traversal order (asserted nowhere — only VALUES are graded, so a future parallel-execution refactor stays free) and the formula language itself (charlie-ast owns it) | IO: in-memory (and one temp-dir) `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `FormulaOutcome`s
+use super::*;
+
+use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape, scalarize};
+
+/// A file's content is exactly its grid (GRID1) — no annotation line. This helper owns the body
+/// string so the `&file("…")` call sites hand an owned contents to the loader.
+fn file(body: &str) -> String {
+    body.to_string()
+}
+
+/// Load a single-tab workbook from `(filename, body)` pairs, asserting a clean load.
+fn load_one_tab(tab: &str, files: &[(&str, &str)]) -> Workbook {
+    let owned: Vec<(String, String)> = files
+        .iter()
+        .map(|(n, b)| ((*n).to_string(), file(b)))
+        .collect();
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, c)| (n.as_str(), c.as_str()))
+        .collect();
+    Workbook::from_tabs(&[(tab, &refs)])
+        .unwrap_or_else(|d| panic!("workbook should load clean: {d:?}"))
+}
+
+#[test]
+fn chain_a_to_b_to_c_pulls_through_the_model() {
+    // A1 = 1 (literal); B1 = A1 + 1 (formula); C1 = B1 * 10 (formula). Requesting C1 pulls B1,
+    // which pulls A1 — the demand-driven chain.
+    let wb = load_one_tab("Sheet1", &[("A1", "1"), ("B1", "=A1+1"), ("C1", "=B1*10")]);
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(20.0)); // C1
+    assert_eq!(wb.value_at(0, 1, 0), Value::Number(2.0)); // B1
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn a_direct_cycle_is_a_ref_refusal_not_a_hang() {
+    // A1 = B1; B1 = A1 — a two-cell cycle. Must refuse with #REF!, never overflow the stack.
+    let wb = load_one_tab("Sheet1", &[("A1", "=B1"), ("B1", "=A1")]);
+    assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Ref)); // A1
+    let diags = wb.eval_diagnostics();
+    assert!(diags.iter().any(|d| d.code == Code::Cycle), "{diags:?}");
+}
+
+#[test]
+fn a_self_reference_is_a_cycle() {
+    // A1 = A1 + 1 references its own cell.
+    let wb = load_one_tab("Sheet1", &[("A1", "=A1+1")]);
+    assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Ref));
+    assert!(wb.eval_diagnostics().iter().any(|d| d.code == Code::Cycle));
+}
+
+#[test]
+fn cross_sheet_reference_resolves_the_named_tab() {
+    // Inputs!A1 = 10; Summary!A1 = Inputs!A1 * 2 -> 20. Also proves an UNQUALIFIED ref inside a
+    // Summary formula resolves against Summary, not tab 0.
+    let wb = Workbook::from_tabs(&[
+        ("Inputs", &[("A1", &file("10"))]),
+        (
+            "Summary",
+            &[
+                ("A1", &file("=Inputs!A1*2")),
+                ("A2", &file("100")),
+                ("A3", &file("=A2+1")), // unqualified A2 must mean Summary!A2
+            ],
+        ),
+    ])
+    .expect("loads clean");
+    assert_eq!(wb.value_at(1, 0, 0), Value::Number(20.0)); // Summary!A1
+    assert_eq!(wb.value_at(1, 0, 2), Value::Number(101.0)); // Summary!A3 = Summary!A2 + 1
+}
+
+#[test]
+fn an_explicit_grid_gives_each_cell_its_own_formula() {
+    // VAL1: a range file's content is the EXPLICIT grid — no drag-fill. A1:A3 is a literal column
+    // vector 1,2,3. B1:B3 is a 3x1 grid of THREE explicit formulas `=A1`, `=A2`, `=A3` (one per
+    // cell, written out), so B1=A1=1, B2=A2=2, B3=A3=3. D1 = SUM(A1:A3) pulls the whole range.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "1\n2\n3"),
+            ("D1", "=SUM(A1:A3)"),
+            ("B1:B3", "=A1\n=A2\n=A3"),
+        ],
+    );
+    assert_eq!(wb.value_at(0, 3, 0), Value::Number(6.0)); // D1
+    assert_eq!(wb.value_at(0, 1, 0), Value::Number(1.0)); // B1 = A1
+    assert_eq!(wb.value_at(0, 1, 1), Value::Number(2.0)); // B2 = A2
+    assert_eq!(wb.value_at(0, 1, 2), Value::Number(3.0)); // B3 = A3
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn an_explicit_grid_evaluates_absolute_and_relative_refs_as_written() {
+    // The explicit-grid replacement for the old drag-fill: C2:C4 is a 3x1 grid whose three cells
+    // are written out `=A2*B$1`, `=A3*B$1`, `=A4*B$1`. A is 1,2,3 down; B1 (the `$`-pinned row) is
+    // 10. Each cell evaluates its OWN formula as written: C2=A2*B1=10, C3=A3*B1=20, C4=A4*B1=30.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A2:A4", "1\n2\n3"),
+            ("B1", "10"),
+            ("C2:C4", "=A2*B$1\n=A3*B$1\n=A4*B$1"),
+        ],
+    );
+    assert_eq!(wb.value_at(0, 2, 1), Value::Number(10.0)); // C2
+    assert_eq!(wb.value_at(0, 2, 2), Value::Number(20.0)); // C3
+    assert_eq!(wb.value_at(0, 2, 3), Value::Number(30.0)); // C4
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn a_bare_range_formula_in_a_scalar_cell_is_a_value_error() {
+    // A formula that evaluates to a genuinely multi-cell array (`=A1:A3`) written into a single
+    // scalar cell has no scalar meaning — `scalarize` collapses it to `#VALUE!`.
+    let wb = load_one_tab("Sheet1", &[("A1:A3", "1\n2\n3"), ("C1", "=A1:A3")]);
+    assert_eq!(wb.value_at(0, 2, 0), Value::Error(ErrKind::Value)); // C1
+}
+
+#[test]
+fn a_diamond_dag_evaluates_each_cell_once_never_exponentially() {
+    // A diamond that, WITHOUT single-node sharing, re-evaluates the shared base exponentially:
+    // each level references the one below TWICE, so a naive re-eval is 2^depth. The two-pass graph
+    // merges the shared node so it is linear and returns instantly. A1=1; each A{n}=A{n+1}+A{n+1}
+    // down a long column, so A1 = 2^(len-1). Reaching the assert at all proves no exponential hang.
+    let len = 40usize; // 2^39 ~ 5.5e11 re-evals if exponential; instant if shared
+    let owned: Vec<(String, String)> = (0..len)
+        .map(|i| {
+            let name = format!("A{}", i + 1);
+            let body = if i + 1 < len {
+                format!("=A{n}+A{n}", n = i + 2)
+            } else {
+                "1".to_string()
+            };
+            (name, body)
+        })
+        .collect();
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+    assert_eq!(
+        wb.value_at(0, 0, 0),
+        Value::Number(2f64.powi((len - 1) as i32)) // A1 = 2^(len-1), computed linearly
+    );
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn memoization_gives_a_stable_answer_on_repeated_pulls() {
+    // Re-requesting the same formula cell (and its dependents) yields the same value — the memo
+    // does not corrupt state across pulls.
+    let wb = load_one_tab("Sheet1", &[("A1", "5"), ("B1", "=A1*A1")]);
+    assert_eq!(wb.value_at(0, 1, 0), Value::Number(25.0));
+    assert_eq!(wb.value_at(0, 1, 0), Value::Number(25.0));
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn a_gap_cell_reads_blank() {
+    let wb = load_one_tab("Sheet1", &[("A1", "1")]);
+    // Z9 is claimed by no file.
+    assert_eq!(wb.value_at(0, 25, 8), Value::Blank);
+}
+
+#[test]
+fn load_surfaces_overlap_and_bad_files() {
+    // Two files claiming intersecting cells -> a load-time overlap refusal. A1:C3 declares 3x3, so
+    // its body is a full 3x3 grid; B2 is a single cell inside it.
+    let err = Workbook::from_tabs(&[(
+        "Sheet1",
+        &[
+            ("A1:C3", &file("1\t2\t3\n4\t5\t6\n7\t8\t9")),
+            ("B2", &file("x")),
+        ],
+    )])
+    .unwrap_err();
+    assert!(err.iter().any(|d| d.code == Code::Overlap), "{err:?}");
+}
+
+#[test]
+fn an_unparseable_formula_is_a_load_time_refusal_not_a_panic() {
+    // A formula is parsed at load (the grid holds a parsed `Expr`), so an unparseable formula is a
+    // located load-time refusal, never a panic.
+    let err = Workbook::from_tabs(&[("Sheet1", &[("A1", &file("=SUM("))])]).unwrap_err();
+    assert!(err.iter().any(|d| d.code == Code::FormulaSyntax), "{err:?}");
+}
+
+#[test]
+fn load_dir_reads_folders_as_tabs() {
+    // Round-trip through the filesystem loader: two tabs, a cross-sheet pull.
+    let base = std::env::temp_dir().join(format!(
+        "charlie-wb-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let inputs = base.join("Inputs");
+    let summary = base.join("Summary");
+    std::fs::create_dir_all(&inputs).unwrap();
+    std::fs::create_dir_all(&summary).unwrap();
+    std::fs::write(inputs.join("A1"), file("7")).unwrap();
+    std::fs::write(summary.join("A1"), file("=Inputs!A1*6")).unwrap();
+
+    let wb = Workbook::load_dir(&base)
+        .expect("fs read ok")
+        .expect("loads clean");
+    assert_eq!(wb.sheet_names(), vec!["Inputs", "Summary"]);
+    // Summary is tab index 1 (sorted: Inputs, Summary).
+    assert_eq!(wb.value_at(1, 0, 0), Value::Number(42.0));
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// Build a single-column chain `A1=A2(+1), A2=A3(+1), ..., A{len-1}=A{len}(+1)` with the bottom
+/// cell `A{len}` a literal `0`. Each `+1` makes the top cell's value the chain length minus one
+/// when it fully evaluates, so a computed answer proves the whole chain was walked.
+fn chain_files(len: usize) -> Vec<(String, String)> {
+    (0..len)
+        .map(|i| {
+            let name = format!("A{}", i + 1);
+            let body = if i + 1 < len {
+                format!("=A{}+1", i + 2)
+            } else {
+                "0".to_string()
+            };
+            (name, body)
+        })
+        .collect()
+}
+
+#[test]
+fn a_legal_deep_chain_under_the_bound_computes_fully() {
+    // A chain well within [`MAX_PULL_DEPTH`] evaluates end-to-end: the depth guard never fires on
+    // a legal sheet, only on a pathologically deep one.
+    let len = (MAX_PULL_DEPTH / 2) as usize; // comfortably under the bound
+    let owned = chain_files(len);
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+    assert_eq!(wb.value_at(0, 0, 0), Value::Number((len - 1) as f64)); // A1
+    assert!(
+        wb.eval_diagnostics().is_empty(),
+        "{:?}",
+        wb.eval_diagnostics()
+    );
+}
+
+#[test]
+fn a_deep_acyclic_chain_refuses_instead_of_overflowing_the_stack() {
+    // A finite, entirely acyclic chain deeper than the bound. The cycle detector never trips
+    // (nothing is re-entered), so ONLY the pull-depth guard stands between the plan DFS and a
+    // native stack overflow: reaching the assertions at all proves no SIGABRT. The deepest link is
+    // a located #NUM!-class refusal that propagates up to the requested top cell.
+    let len = (MAX_PULL_DEPTH as usize) + 64;
+    let owned = chain_files(len);
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+    assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Num)); // A1
+    let diags = wb.eval_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == Code::DepthLimit),
+        "{diags:?}"
+    );
+    // Never misclassified as a cycle: this chain has no cycle.
+    assert!(!diags.iter().any(|d| d.code == Code::Cycle), "{diags:?}");
+}
+
+#[test]
+fn check_over_a_workbook_containing_a_deep_chain_does_not_crash() {
+    // `lint` drives EVERY cell, so a workbook that merely CONTAINS an over-deep chain must lint to
+    // a located refusal rather than aborting the process.
+    let len = (MAX_PULL_DEPTH as usize) + 8;
+    let owned = chain_files(len);
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+    let diags = wb.lint();
+    assert!(
+        diags.iter().any(|d| d.code == Code::DepthLimit),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn a_depth_refused_pull_does_not_poison_a_later_shallower_pull() {
+    // Order-independence (never falsely reject a computable cell). One chain A1->A2->...->A320.
+    // Pulling A1 FIRST refuses at depth 256 and propagates #NUM! up through A1..A256 -- but those
+    // ancestor outcomes are depth-tainted and must NOT be memoized, so a LATER direct pull of A256
+    // (whose own chain A256..A320 is only 65 links deep, legally computable) returns its real
+    // value, not a cached #NUM!.
+    let len = (MAX_PULL_DEPTH as usize) + 64; // 320
+    let owned = chain_files(len);
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+
+    // Pull the deep top first: it refuses (its chain is 320 links).
+    assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Num)); // A1
+
+    // A256's own chain is short enough to compute: A256 = A257+1 = ... = A320(0) + 64 = 64.
+    let a256 = wb.value_at(0, 0, 255); // A256 is column A (0), zero-based row 255
+    assert_eq!(
+        a256,
+        Value::Number((len - 256) as f64),
+        "call order poisoned a computable cell -- a depth-tainted outcome was memoized"
+    );
+}
+
+#[test]
+fn a_depth_tainted_range_is_not_frozen_into_the_arena() {
+    // Order-independence for RANGE materialization -- the arena analogue of the per-cell memo
+    // depth guard. An H-chain H1->..->H99->0 forwards to 0 and is read by `SUM(H1:H1)`. That range
+    // is FIRST demanded from the bottom of a 200-deep A-chain (A1->..->A200 = `=SUM(H1:H1)`):
+    // pulling A1 descends ~200 links, so materializing H1:H1 there pushes past MAX_PULL_DEPTH (256)
+    // and would freeze a depth-tainted #NUM! into the H1:H1 rectangle. A LATER shallow
+    // `B1 = SUM(H1:H1)` (H1:H1 reached only 99 links deep, legally computable) must recompute to 0.
+    let mut owned: Vec<(String, String)> = Vec::new();
+    let h_len = 99usize; // H-chain: forwarding, bottom literal 0 => H1 == 0, reached 99 links deep.
+    for i in 0..h_len {
+        let name = format!("H{}", i + 1);
+        let body = if i + 1 < h_len {
+            format!("=H{}", i + 2)
+        } else {
+            "0".to_string()
+        };
+        owned.push((name, body));
+    }
+    let a_len = 200usize; // A-chain: forwarding, bottom cell reads SUM(H1:H1) at ~200 links deep.
+    for i in 0..a_len {
+        let name = format!("A{}", i + 1);
+        let body = if i + 1 < a_len {
+            format!("=A{}", i + 2)
+        } else {
+            "=SUM(H1:H1)".to_string()
+        };
+        owned.push((name, body));
+    }
+    owned.push(("B1".to_string(), "=SUM(H1:H1)".to_string())); // the later SHALLOW demand.
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+
+    // Pull the DEEP A-chain first: H1:H1 is reached past the depth bound, tainting the range.
+    assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Num)); // A1 (deep -> #NUM!)
+
+    // The later SHALLOW pull: H1:H1 is only 99 links deep here, so SUM(H1:H1) computes to 0.
+    assert_eq!(
+        wb.value_at(0, 1, 0), // B1 = col 1, row 0
+        Value::Number(0.0),
+        "a depth-tainted range buffer was frozen into the arena and poisoned a shallow demand"
+    );
+}
+
+#[test]
+fn an_inverted_range_yields_the_same_rectangle() {
+    // Corner order is not observable: a reversed spelling (`B2:A1`) resolves to the SAME rectangle
+    // as its canonical form (`A1:B2`). This is the public contract (`RangeRef::normalized` owns the
+    // corner-order rule); how the arena dedups the two keys is an internal the test does not pin.
+    let wb = load_one_tab("Sheet1", &[("A1", "1")]);
+    let normalized = RangeRef {
+        start: CellRef {
+            col: 0,
+            row: 0,
+            sheet: None,
+        },
+        end: CellRef {
+            col: 1,
+            row: 1,
+            sheet: None,
+        },
+    };
+    let inverted = RangeRef {
+        start: CellRef {
+            col: 1,
+            row: 1,
+            sheet: None,
+        },
+        end: CellRef {
+            col: 0,
+            row: 0,
+            sheet: None,
+        },
+    };
+    let normalized_cells = wb.range(normalized).cells.to_vec();
+    // Same rectangle regardless of corner order.
+    assert_eq!(wb.range(inverted).cells, normalized_cells.as_slice());
+}
+
+#[test]
+fn a_reference_to_a_pathologically_large_range_refuses_instead_of_oom() {
+    // =SUM(A2:ZZ100000) references ~70M empty cells. Materializing a Value per cell would drive an
+    // OOM abort; the model caps the range, so the reference resolves to a located #NUM! rather
+    // than allocating.
+    let wb = load_one_tab("Sheet1", &[("A1", "=SUM(A2:ZZ100000)")]);
+    assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Num)); // A1
+    let diags = wb.eval_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == Code::RangeTooLarge),
+        "{diags:?}"
+    );
+    // The refusal is sheet-qualified to the offending formula file.
+    assert!(
+        diags.iter().any(|d| matches!(
+            &d.loc,
+            Loc::TabFile { tab, name } if tab == "Sheet1" && name == "A1"
+        )),
+        "range-too-large refusal must anchor on Sheet1/A1: {diags:?}"
+    );
+}
+
+#[test]
+fn a_range_at_the_materialization_bound_still_computes() {
+    // A merely-large but valid range materializes: A1:A5 holds 1..5; =SUM(A1:A5) over 5 cells is
+    // well under the bound -> 15.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[("A1:A5", "1\n2\n3\n4\n5"), ("C1", "=SUM(A1:A5)")],
+    );
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(15.0)); // C1
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn a_cross_sheet_cycle_is_located_to_the_sheet_qualified_file() {
+    // Sheet1!A1 = Sheet2!A1 and Sheet2!A1 = Sheet1!A1 -- a cross-sheet cycle. The refusal must
+    // name the TAB, not a bare `A1` (which exists on BOTH sheets and is otherwise untraceable).
+    let wb = Workbook::from_tabs(&[
+        ("Sheet1", &[("A1", &file("=Sheet2!A1"))]),
+        ("Sheet2", &[("A1", &file("=Sheet1!A1"))]),
+    ])
+    .expect("loads clean");
+    assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Ref)); // Sheet1!A1
+    let diags = wb.eval_diagnostics();
+    let cyc = diags
+        .iter()
+        .find(|d| d.code == Code::Cycle)
+        .expect("a cycle diagnostic must fire");
+    match &cyc.loc {
+        Loc::TabFile { tab, name } => {
+            assert!(tab == "Sheet1" || tab == "Sheet2", "unexpected tab {tab:?}");
+            assert_eq!(name, "A1");
+        }
+        other => panic!("cross-sheet cycle must be sheet-qualified, got {other:?}"),
+    }
+}
+
+#[test]
+fn eval_formula_evaluates_an_ad_hoc_string_against_the_workbook() {
+    // The `charlie-cli eval` entry: an ad-hoc formula string evaluates against the loaded workbook,
+    // referencing stored cells. A clean value is `Value`; a spreadsheet error value is `Error`.
+    let wb = load_one_tab("Sheet1", &[("A1", "6"), ("A2", "7")]);
+    assert_eq!(
+        wb.eval_formula(0, "A1*A2").unwrap(),
+        FormulaOutcome::Value("42".to_string())
+    );
+    assert_eq!(
+        wb.eval_formula(0, "1/0").unwrap(),
+        FormulaOutcome::Error("#DIV/0!".to_string())
+    );
+    // A parse failure is a located refusal.
+    assert!(wb.eval_formula(0, "SUM(").is_err());
+}
+
+#[test]
+fn a_shared_dependency_computes_once_across_a_batch_render() {
+    // ENG3 sharing: a viewport demanded via `values_at` builds ONE merged graph, so a dependency
+    // referenced by several viewport cells is computed once. A1=2 (shared base); B1=A1+1, C1=A1+1
+    // (both read A1); the batch returns all three from one pass.
+    let wb = load_one_tab("Sheet1", &[("A1", "2"), ("B1", "=A1+1"), ("C1", "=A1+1")]);
+    let vals = wb.values_at(&[(0, 0, 0), (0, 1, 0), (0, 2, 0)]);
+    assert_eq!(
+        vals,
+        vec![Value::Number(2.0), Value::Number(3.0), Value::Number(3.0)]
+    );
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+// ------------------------------------------------------------------------------------------
+// NAIVE reference oracle + the ENG3 differential test (the graph EQUALS a naive per-cell eval).
+// ------------------------------------------------------------------------------------------
+
+/// An independent, dead-simple per-cell evaluator — the TEST-ONLY reference the differential test
+/// grades the two-pass engine against. It evaluates a demanded cell straight from the grids by
+/// native recursion through `charlie_ast::eval`, with a `visiting` set for basic cycle protection
+/// and a tiny memo so a shared/diamond ancestor does not re-evaluate exponentially. It shares NONE
+/// of the two-pass algorithm (no `DepGraph`, no plan, no `topo_order`) — only the workbook's
+/// structural cell-location plumbing (`covering`) and the `Arena`/`scalarize` resolver helpers,
+/// which are not evaluation logic. Its verdict is VALUES; the differential test asserts nothing
+/// about how either side reaches them.
+///
+/// NAMED COVERAGE BOUNDARY: this oracle has no pull-depth guard and unconditionally memoizes every
+/// result, so it structurally cannot model the two-pass path's depth-tainted `#NUM!` — that value is
+/// deliberately NOT memoized and is root-relative/order-dependent (see `MAX_PULL_DEPTH`,
+/// `finish_pass`, and the range-materialization `#NUM!` bound). The differential cases here therefore
+/// exercise only CLEAN-value shapes (diamond, deep-but-under-bound chain, cross-tab, shared range).
+/// The memo/taint interactions the oracle can't represent are frozen separately by single-path
+/// `assert_eq` tests (`a_legal_deep_chain…`, the `#NUM!` depth tests, the range-too-large test) —
+/// they are not graded against this oracle.
+struct NaiveOracle<'w> {
+    wb: &'w Workbook,
+    cur: Cell<u32>,
+    memo: RefCell<HashMap<CellKey, Value>>,
+    visiting: RefCell<HashSet<CellKey>>,
+    arena: Arena,
+}
+
+impl<'w> NaiveOracle<'w> {
+    fn new(wb: &'w Workbook) -> NaiveOracle<'w> {
+        NaiveOracle {
+            wb,
+            cur: Cell::new(0),
+            memo: RefCell::new(HashMap::new()),
+            visiting: RefCell::new(HashSet::new()),
+            arena: Arena::default(),
+        }
+    }
+
+    fn eval_cell(&self, sheet: u32, col: u32, row: u32) -> Value {
+        self.value(CellRef {
+            col,
+            row,
+            sheet: Some(SheetId(sheet)),
+        })
+    }
+}
+
+impl Resolver for NaiveOracle<'_> {
+    fn value(&self, cell: CellRef) -> Value {
+        let sheet = cell.sheet.map_or_else(|| self.cur.get(), |SheetId(i)| i);
+        let key = (sheet, cell.col, cell.row);
+        if let Some(v) = self.memo.borrow().get(&key) {
+            return v.clone();
+        }
+        if self.visiting.borrow().contains(&key) {
+            return Value::Error(ErrKind::Ref); // basic cycle protection
+        }
+        let Some((id, file)) = self.wb.covering(sheet, cell.col, cell.row) else {
+            return Value::Blank;
+        };
+        let dr = cell.row - file.region.min_row;
+        let dc = cell.col - file.region.min_col;
+        let v = match file.grid.cell_at(dr, dc) {
+            GridCell::Value(v) => v.clone(),
+            GridCell::Formula { expr, .. } => {
+                self.visiting.borrow_mut().insert(key);
+                let prev = self.cur.replace(id.0);
+                let r = scalarize(eval(expr, self));
+                self.cur.set(prev);
+                self.visiting.borrow_mut().remove(&key);
+                r
+            }
+        };
+        self.memo.borrow_mut().insert(key, v.clone());
+        v
+    }
+
+    fn range(&self, range: RangeRef) -> ArrayView<'_> {
+        let eff = SheetId(cell_sheet(range.start.sheet, self.cur.get()));
+        let norm = range.normalized();
+        let (c0, c1) = (norm.start.col, norm.end.col);
+        let (r0, r1) = (norm.start.row, norm.end.row);
+        let (rows, cols) = (r1 - r0 + 1, c1 - c0 + 1);
+        let key = RangeRef {
+            start: CellRef {
+                col: c0,
+                row: r0,
+                sheet: Some(eff),
+            },
+            end: CellRef {
+                col: c1,
+                row: r1,
+                sheet: Some(eff),
+            },
+        };
+        if let Some(view) = self.arena.get(key) {
+            return view;
+        }
+        let mut buf = Vec::with_capacity((rows as usize) * (cols as usize));
+        for r in r0..=r1 {
+            for c in c0..=c1 {
+                buf.push(self.value(CellRef {
+                    col: c,
+                    row: r,
+                    sheet: Some(eff),
+                }));
+            }
+        }
+        self.arena.insert(key, Shape { rows, cols }, buf)
+    }
+
+    fn sheet_id(&self, name: &str) -> Option<SheetId> {
+        self.wb.sheet_id(name)
+    }
+
+    fn now_serial(&self) -> f64 {
+        self.wb.now
+    }
+}
+
+fn cell_sheet(sheet: Option<SheetId>, home: u32) -> u32 {
+    sheet.map_or(home, |SheetId(i)| i)
+}
+
+/// Assert the naive oracle and the two-pass engine agree on the VALUE of every demanded cell —
+/// values only, never the graph's shape/node-count/traversal order (asserting internals would
+/// freeze "how" and block a future parallel-execution refactor).
+fn assert_agrees(wb: &Workbook, cells: &[(u32, u32, u32)]) {
+    let oracle = NaiveOracle::new(wb);
+    // Interleave demands so the two-pass memo/arena is exercised across cells, and evaluate the
+    // batch through the merged-graph path too.
+    let batch = wb.values_at(cells);
+    for (&(s, c, r), two_pass) in cells.iter().zip(batch) {
+        let naive = oracle.eval_cell(s, c, r);
+        assert_eq!(
+            naive, two_pass,
+            "naive vs two-pass diverge at (sheet {s}, col {c}, row {r}): \
+             naive={naive:?} two_pass={two_pass:?}"
+        );
+    }
+}
+
+#[test]
+fn differential_diamond_shared_ancestor() {
+    // A diamond: one shared base A1 reached by many cells and by a two-path top. B1,C1 both read
+    // A1; D1 reads B1 and C1 (A1 via two paths); wide fan-out E1,F1 also read A1.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1", "3"),
+            ("B1", "=A1+1"),
+            ("C1", "=A1*2"),
+            ("D1", "=B1+C1"),
+            ("E1", "=A1*10"),
+            ("F1", "=A1-1+E1"),
+        ],
+    );
+    assert_agrees(
+        &wb,
+        &[
+            (0, 0, 0),
+            (0, 1, 0),
+            (0, 2, 0),
+            (0, 3, 0),
+            (0, 4, 0),
+            (0, 5, 0),
+        ],
+    );
+}
+
+#[test]
+fn differential_deep_linear_chain() {
+    // A deep (but under-bound) linear chain shared by a top demand and interior demands.
+    let len = 60usize;
+    let owned = chain_files(len); // A1=A2+1, ..., A60=0
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_str()))
+        .collect();
+    let wb = load_one_tab("Sheet1", &refs);
+    assert_agrees(&wb, &[(0, 0, 0), (0, 0, 29), (0, 0, 59), (0, 0, 10)]);
+}
+
+#[test]
+fn differential_cross_tab_shared_ancestor() {
+    // A cross-tab shared ancestor: Base!A1 feeds several formulas on two other tabs, and a cell
+    // that combines both tabs (a cross-tab diamond bottoming out at Base!A1).
+    let wb = Workbook::from_tabs(&[
+        ("Base", &[("A1", &file("100"))]),
+        (
+            "R1",
+            &[("A1", &file("=Base!A1*2")), ("A2", &file("=Base!A1+A1"))],
+        ),
+        (
+            "R2",
+            &[
+                ("A1", &file("=Base!A1-10")),
+                ("A2", &file("=R1!A1+R2!A1+Base!A1")),
+            ],
+        ),
+    ])
+    .expect("loads clean");
+    assert_agrees(
+        &wb,
+        &[
+            (0, 0, 0), // Base!A1
+            (1, 0, 0), // R1!A1
+            (1, 0, 1), // R1!A2
+            (2, 0, 0), // R2!A1
+            (2, 0, 1), // R2!A2 (combines both tabs + Base)
+        ],
+    );
+}
+
+#[test]
+fn differential_one_large_range_aggregated_by_several_cells() {
+    // One large shared range (a 100-cell column) aggregated by several cells: SUM, an offset SUM,
+    // and a formula that reads two aggregates. Every aggregate shares the SAME 100 ancestor cells.
+    let column: String = (1..=100)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A100", column.as_str()),
+            ("C1", "=SUM(A1:A100)"),
+            ("C2", "=SUM(A1:A100)+1"),
+            ("C3", "=C1+C2"),
+            ("C4", "=AVERAGE(A1:A100)"),
+        ],
+    );
+    assert_agrees(
+        &wb,
+        &[(0, 2, 0), (0, 2, 1), (0, 2, 2), (0, 2, 3), (0, 0, 49)],
+    );
+}
