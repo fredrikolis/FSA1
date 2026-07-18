@@ -7,7 +7,7 @@ use charlie_ast::{ErrKind, Expr, Shape, Value, func};
 
 use crate::grid::Cell as GridCell;
 
-use super::hash::HashMemo;
+use super::hash::{Fnv, HashMemo};
 use super::{CellKey, Workbook};
 
 /// The on-disk, content-addressed result store living under `<workbook>/.cache/` (FS3). One file per
@@ -249,21 +249,16 @@ fn expr_has_volatile(expr: &Expr) -> bool {
 // ----------------------------------------------------------------------------------------------
 
 /// FNV-1a 64-bit over a byte slice — the cache file's PAYLOAD-INTEGRITY checksum (a corruption detector
-/// prepended to each entry and verified on read). Deliberately the codec's OWN one-shot digest, kept
-/// separate from the computation-hash primitive (the `hash` sibling's engine-private incremental
-/// `Fnv`/`CompHash`): that fold CONTENT-ADDRESSES a cell (ENG7 keying), this one only guards a stored
-/// file's bytes against corruption — two independent concerns that must not couple across the codec
-/// boundary (cf. `err_code`, which likewise owns its own round-trippable mapping rather than sharing the
-/// hash sibling's one-way tag).
+/// prepended to each entry and verified on read). It reuses the engine's ONE FNV-1a fold — the `hash`
+/// sibling's engine-private incremental [`Fnv`] (DRY: a single offset/prime and folding rule) — read out
+/// as its raw 64-bit digest. The two USES stay distinct concerns even though they share the primitive:
+/// the hash walk CONTENT-ADDRESSES a cell into an opaque [`CompHash`] (ENG7 keying), whereas this only
+/// guards a stored file's bytes against corruption (cf. `err_code`, which — because it must INVERT —
+/// keeps its own round-trippable mapping rather than sharing the hash sibling's one-way tag).
 fn fnv1a(bytes: &[u8]) -> u64 {
-    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01b3;
-    let mut h = OFFSET;
-    for &b in bytes {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(PRIME);
-    }
-    h
+    let mut h = Fnv::new();
+    h.write(bytes);
+    h.digest()
 }
 
 /// Serialize one [`Value`] to a cache file: `[8-byte payload checksum][payload]` (the payload is the

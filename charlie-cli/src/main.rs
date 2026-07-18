@@ -371,6 +371,7 @@ fn cmd_trace(fmt: Format, rest: &[String]) -> u8 {
     let mut cell: Option<String> = None;
     let mut dependents = false;
     let mut depth: Option<u32> = None;
+    let mut no_cache = false;
 
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
@@ -392,6 +393,7 @@ fn cmd_trace(fmt: Format, rest: &[String]) -> u8 {
                 None => return bad_arg(fmt, "--depth needs a number, e.g. --depth 3"),
             },
             "--dependents" => dependents = true,
+            "--no-cache" => no_cache = true,
             f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
             _ => {
                 if path.replace(arg.clone()).is_some() {
@@ -417,7 +419,7 @@ fn cmd_trace(fmt: Format, rest: &[String]) -> u8 {
         None => (tab, cell),
     };
 
-    let wb = match load(fmt, Path::new(&path), false) {
+    let wb = match load(fmt, Path::new(&path), no_cache) {
         Ok(wb) => wb,
         Err(code) => return code,
     };
@@ -881,7 +883,7 @@ SEE ALSO:
 const TRACE_HELP: &str = r#"charlie-cli trace — inspect a cell's dependency tree
 
 USAGE:
-  charlie-cli trace <path> --cell <A1> [--tab <name>] [--dependents] [--depth <N>] [--format <text|json>]
+  charlie-cli trace <path> --cell <A1> [--tab <name>] [--dependents] [--depth <N>] [--no-cache] [--format <text|json>]
 
 DESCRIPTION:
   Report a cell's UPSTREAM dependencies (the cells it reads, transitively) or, with --dependents, its
@@ -895,6 +897,8 @@ ARGUMENTS:
   --tab <name>      (optional) Which tab the cell is on. Default: the first tab.
   --dependents      (optional) Trace downstream consumers instead of upstream dependencies.
   --depth <N>       (optional) Cap the tree depth. Default: unbounded (still bounded by the engine).
+  --no-cache        (optional) Bypass the persistent result cache (.cache/) for this run — no reads or
+                    writes; each traced node's value is recomputed. Values are identical either way.
   --format <fmt>    (optional) text (default, indented tree) or json (a nested TraceNode envelope).
 
 EXAMPLES:

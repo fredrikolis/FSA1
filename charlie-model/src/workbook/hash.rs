@@ -34,19 +34,29 @@ impl CompHash {
 }
 
 /// A tiny incremental FNV-1a hasher — enough to fold tag bytes, a formula's text, a literal's value,
-/// and dependency keys + digests in a deterministic order.
-struct Fnv(u64);
+/// and dependency keys + digests in a deterministic order. This is the engine's SINGLE FNV-1a fold
+/// (DRY): the computation-hash walk here folds content into a [`CompHash`] via [`Fnv::finish`], while
+/// the cache sibling's payload-integrity checksum folds a byte slice through the very same primitive
+/// and reads out the raw digest via [`Fnv::digest`]. `pub(super)` keeps it engine-private (ENG3): it
+/// is visible only within the `workbook` module tree, never re-exported to `charlie-cli`/`charlie-ast`.
+pub(super) struct Fnv(u64);
 
 impl Fnv {
-    fn new() -> Fnv {
+    pub(super) fn new() -> Fnv {
         Fnv(FNV_OFFSET)
     }
 
-    fn write(&mut self, bytes: &[u8]) {
+    pub(super) fn write(&mut self, bytes: &[u8]) {
         for &b in bytes {
             self.0 ^= u64::from(b);
             self.0 = self.0.wrapping_mul(FNV_PRIME);
         }
+    }
+
+    /// The raw 64-bit digest — the cache sibling's checksum codec reads its fold out here (the
+    /// computation-hash walk instead wraps the same bits in an opaque [`CompHash`] via [`finish`]).
+    pub(super) fn digest(self) -> u64 {
+        self.0
     }
 
     fn finish(self) -> CompHash {
