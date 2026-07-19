@@ -135,3 +135,124 @@ fn elementwise_operator_over_a_range_still_reduces() {
     assert_eq!(run("=SUM(A1:A3*2)", &g), Value::Number(12.0));
     assert_eq!(run("=SUMPRODUCT(A1:A3,A1:A3)", &g), Value::Number(14.0));
 }
+
+// --- Array-broadcast batch: scalar TEXT functions map over an array argument; IF maps over an
+//     array condition; reducers collapse the mapped array. ---
+
+#[test]
+fn a_scalar_text_function_maps_over_an_array_argument() {
+    // LEN broadcasts its (sole) scalar position: LEN({"a","bb","ccc"}) -> {1,2,3} (a 1×3 array).
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(
+        run("=LEN({\"a\",\"bb\",\"ccc\"})", &g),
+        Value::Array(Shape { rows: 1, cols: 3 }, vec![n(1.0), n(2.0), n(3.0)])
+    );
+    // A reducer collapses it: SUMPRODUCT(LEN({"ab","cde"})) = 2 + 3 = 5.
+    assert_eq!(
+        run("=SUMPRODUCT(LEN({\"ab\",\"cde\"}))", &g),
+        Value::Number(5.0)
+    );
+}
+
+#[test]
+fn text_functions_broadcast_a_range_argument_element_wise() {
+    // A real range in the text position maps element-wise; scalar positions (the count) broadcast.
+    // A1:A3 = "hello","world","!" -> LEFT(A1:A3,2) = {"he","wo","!"} -> CONCAT flattens to "hewo!".
+    let g = Grid::new(1, vec![t("hello"), t("world"), t("!")]);
+    assert_eq!(
+        run("=LEFT(A1:A3,2)", &g),
+        Value::Array(Shape { rows: 3, cols: 1 }, vec![t("he"), t("wo"), t("!")])
+    );
+    assert_eq!(
+        run("=CONCAT(LEFT(A1:A3,2))", &g),
+        Value::Text("hewo!".into())
+    );
+}
+
+#[test]
+fn the_trim_right_substitute_value_extraction_idiom() {
+    // The classic "last token after the space" extractor over a column, summed:
+    //   SUBSTITUTE pads each space to 100 spaces, RIGHT(…,100) keeps the tail (spaces + number),
+    //   TRIM strips the spaces, VALUE parses the number, IFERROR guards, SUMPRODUCT collapses.
+    // {"London 20";"Bristol 50";"Brighton 30"} -> {20;50;30} -> 100. Before the fix the inner chain
+    // was a scalar #VALUE! that IFERROR silently turned into 0 (SUMPRODUCT=0) — the dangerous case.
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(
+        run(
+            "=SUMPRODUCT(IFERROR(VALUE(TRIM(RIGHT(SUBSTITUTE({\"London 20\";\"Bristol 50\";\"Brighton 30\"},\" \",REPT(\" \",100)),100))),0))",
+            &g
+        ),
+        Value::Number(100.0)
+    );
+}
+
+#[test]
+fn if_maps_over_an_array_condition_and_broadcasts_scalar_branches() {
+    // IF({1;0;1},{"a";"b";"c"},"") -> {"a";"";"c"} (element-wise pick; "" broadcasts to false cells).
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(
+        run("=IF({1;0;1},{\"a\";\"b\";\"c\"},\"\")", &g),
+        Value::Array(Shape { rows: 3, cols: 1 }, vec![t("a"), t(""), t("c")])
+    );
+    // The TEXTJOIN idiom that drops the empty false cells: "a, c".
+    assert_eq!(
+        run(
+            "=TEXTJOIN(\", \",TRUE,IF({1;0;1},{\"a\";\"b\";\"c\"},\"\"))",
+            &g
+        ),
+        Value::Text("a, c".into())
+    );
+    // A scalar branch broadcasts on both sides: IF({1,0,1},10,0) -> {10,0,10}, summing to 20.
+    assert_eq!(run("=SUM(IF({1,0,1},10,0))", &g), Value::Number(20.0));
+}
+
+#[test]
+fn if_with_a_scalar_condition_is_unchanged_and_lazy() {
+    // A scalar (or 1×1) condition keeps the lazy scalar path: the unselected branch is never
+    // evaluated, so IF(TRUE,1,1/0) is 1, and the whole then-branch (an array) passes through whole
+    // (NOT mapped) — Excel `IF(TRUE,{1,2,3},0)` is the array {1,2,3}.
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(run("=IF(TRUE,1,1/0)", &g), Value::Number(1.0));
+    assert_eq!(run("=SUM(IF(1=1,{1,2,3},0))", &g), Value::Number(6.0));
+}
+
+#[test]
+fn if_array_branch_of_a_mismatched_shape_is_a_value_error() {
+    // A branch that is a genuinely multi-cell array of a DIFFERENT shape than the condition is a
+    // static #VALUE! (the same shape-conformance stance the operators/SUMPRODUCT take).
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(
+        run("=IF({1;0},{1;2;3},0)", &g),
+        Value::Error(ErrKind::Value)
+    );
+}
+
+#[test]
+fn if_array_condition_propagates_a_per_cell_error() {
+    // An error CELL inside the condition array is that element's error (per-cell totality), while the
+    // ok cells still select: IF({1;#DIV/0!;0},{10;20;30},99) -> {10;#DIV/0!;99}, and a reducer that
+    // hits the error propagates it.
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(
+        run("=IF({1;#DIV/0!;0},{10;20;30},99)", &g),
+        Value::Array(
+            Shape { rows: 3, cols: 1 },
+            vec![n(10.0), Value::Error(ErrKind::Div0), n(99.0)]
+        )
+    );
+}
+
+#[test]
+fn the_operator_broadcast_that_feeds_the_lookup_idiom_builds_the_array() {
+    // The `1/(cond)` half of the LOOKUP "last TRUE" idiom is pure operator broadcasting and already
+    // works: 1/({1,0,3}<>0) = 1/{TRUE,FALSE,TRUE} = {1,#DIV/0!,1}. (The LOOKUP-over-errors search
+    // that consumes this array is a SEPARATE lookup-family concern, out of this array batch.)
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(
+        run("=1/({1,0,3}<>0)", &g),
+        Value::Array(
+            Shape { rows: 1, cols: 3 },
+            vec![n(1.0), Value::Error(ErrKind::Div0), n(1.0)]
+        )
+    );
+}

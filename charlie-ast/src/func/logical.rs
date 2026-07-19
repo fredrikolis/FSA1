@@ -1,10 +1,25 @@
 // Concern: the LOGICAL worksheet functions (IF IFERROR AND OR · IFS NOT IFNA SWITCH) — the lazy/short-circuiting control-flow built-ins, evaluating only the branch/arm a value actually reaches (an unreached `1/0` never surfaces) and pinning each function's error-catching contract (IFERROR catches every error, IFNA only `#N/A`) | Non-concern: the registry table + dispatch (func/mod.rs) and the boolean coercion machinery (eval.rs owns `coerce_bool`) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
-/// `IF(cond, then [, else])` — lazily evaluates only the selected branch (so `IF(TRUE, 1, 1/0)` is
-/// `1`, never `#DIV/0!`). A two-arg false yields `FALSE` (Excel).
+/// `IF(cond, then [, else])` — lazily evaluates only the selected branch for a SCALAR condition (so
+/// `IF(TRUE, 1, 1/0)` is `1`, never `#DIV/0!`); a two-arg false yields `FALSE` (Excel). When `cond` is
+/// a genuinely multi-cell ARRAY, `IF` maps element-wise (the CSE array idiom
+/// `IF({1;0;1},{"a";"b";"c"},"")` -> `{"a";"";"c"}`): both branches are evaluated (array `IF` is not
+/// lazy) and each cell picks its `then`/`else` element via `array::map_if`, scalar branches
+/// broadcasting. A 1×1 condition collapses to its scalar and keeps the lazy path.
 pub(crate) fn if_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
-    let cond = ctx.eval(&args[0]);
+    let cond = collapse_1x1(ctx.eval(&args[0]));
+    if let Value::Array(shape, cells) = cond {
+        // Array condition: evaluate BOTH branches (a false element needs the else value; a two-arg
+        // false element is `FALSE`, as Excel yields) and select element-wise in `array::map_if`.
+        let then_v = ctx.eval(&args[1]);
+        let else_v = if args.len() == 3 {
+            ctx.eval(&args[2])
+        } else {
+            Value::Bool(false)
+        };
+        return array::map_if(shape, &cells, &then_v, &else_v);
+    }
     match coerce_bool(&cond) {
         Err(k) => Value::Error(k),
         Ok(true) => ctx.eval(&args[1]),

@@ -14,7 +14,7 @@
 pub(crate) use crate::criteria::{Criterion, parse_criterion, wildcard_match};
 pub(crate) use crate::diag::{Diag, DiagCode, Span};
 pub(crate) use crate::eval::{
-    EvalCtx, coerce_bool, coerce_num, pow, scalarize, to_text, value_cmp, value_eq,
+    EvalCtx, coerce_bool, coerce_num, collapse_1x1, pow, scalarize, to_text, value_cmp, value_eq,
 };
 pub(crate) use crate::expr::{Expr, FuncId};
 pub(crate) use crate::value::{ErrKind, Shape, Value};
@@ -88,11 +88,19 @@ pub struct FuncDef {
     /// `array` handed to one of these maps the call element-wise (`func::array` owns the mapping
     /// LOGIC), while every other argument (a range/value-range a reducer or lookup consumes whole)
     /// is broadcast whole. An empty slice means "no broadcasting" — the function is dispatched
-    /// unchanged. The single-criterion criteria-aggregation forms are the v1 broadcasters: their
-    /// CRITERION is arg 1 (`COUNTIF(range, criteria)`, `SUMIF(range, criteria, [sum_range])`,
+    /// unchanged. Two families broadcast in v1: (a) the single-criterion criteria-aggregation forms,
+    /// whose CRITERION is arg 1 (`COUNTIF(range, criteria)`, `SUMIF(range, criteria, [sum_range])`,
     /// `AVERAGEIF(range, criteria, [avg_range])`), so an array criterion (the distinct-count idiom
-    /// `SUMPRODUCT(1/COUNTIF(A1:A6,A1:A6))`) maps to an array of per-criterion results; the multi-
-    /// criteria `*IFS` forms (several criteria positions) are a separate, later batch. Recorded as
+    /// `SUMPRODUCT(1/COUNTIF(A1:A6,A1:A6))`) maps to an array of per-criterion results; and (b) the
+    /// SCALAR TEXT functions (`LEFT`/`RIGHT`/`MID`/`LEN`/`FIND`/`SEARCH`/`SUBSTITUTE`/`TRIM`/`UPPER`/
+    /// `LOWER`/`TEXT`/`VALUE`/`REPT`), each broadcasting ALL its scalar-typed positions so a
+    /// range/array argument maps the call element-wise (the CSE-array idioms real sheets use, e.g.
+    /// `SUMPRODUCT(LEN(A1:A3))` or `SUMPRODUCT(--(VALUE(TRIM(range))>0))`) — a genuinely multi-cell
+    /// array in ANY marked position drives the map, every scalar broadcasts, and the reducer wrapping
+    /// it collapses the result. `IF`'s array condition is NOT expressed here (it is lazy — arg 1/2 are
+    /// evaluated only when the condition is an array — so `logical::if_fn` decides scalar-vs-array and
+    /// delegates the map to `array::map_if`); the multi-criteria `*IFS` forms are a later batch.
+    /// Recorded as
     /// registry DATA — like `validate`/`volatile` — so which functions broadcast which positions is
     /// single-sourced with the rest of the row and keyed by [`FuncId`], not a hand-forked name-match
     /// in `func::array`, keeping the "function is a row" invariant.
@@ -633,7 +641,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: left_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "RIGHT",
@@ -642,7 +650,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: right_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "MID",
@@ -651,7 +659,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: mid_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "LEN",
@@ -660,7 +668,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: len_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "FIND",
@@ -669,7 +677,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: find_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "SEARCH",
@@ -678,7 +686,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: search_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "SUBSTITUTE",
@@ -687,7 +695,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: substitute_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2, 3],
     },
     FuncDef {
         name: "REPLACE",
@@ -705,7 +713,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: trim_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "UPPER",
@@ -714,7 +722,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: upper_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "LOWER",
@@ -723,7 +731,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: lower_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "TEXT",
@@ -732,7 +740,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: text_fn,
         validate: Some(validate_text_format),
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     // --- Date/time batch v1: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW. The Excel 1900 date-serial
     //     system (with the leap-year bug replicated — see `serial_to_ymd`/`serial_from_ymd`); TODAY/NOW
@@ -1112,7 +1120,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: rept_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "PROPER",
@@ -1139,7 +1147,7 @@ pub static FUNCS: &[FuncDef] = &[
         eval: value_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "CHAR",

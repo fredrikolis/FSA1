@@ -1,0 +1,86 @@
+# Array-broadcast batch: the CSE-array idioms where a scalar TEXT function maps element-wise over a
+# range/array argument, and IF maps over an ARRAY condition, with a reducer collapsing the result.
+#
+# EXPECTED values are derived INDEPENDENTLY of charlie — computed by hand from Excel's array semantics
+# (a scalar function handed an array maps element-wise; IF over an array condition picks per element,
+# scalar branches broadcasting; SUM/SUMPRODUCT/CONCAT/TEXTJOIN collapse the mapped array) and
+# cross-checked against Excel's published behavior — NEVER by running charlie (see PROVENANCE.md).
+#
+# Excel reference (authoring run):
+#   SUMPRODUCT(LEN({"ab","cde"}))=5          ·  LEN({"a","bb","ccc"})={1,2,3}
+#   CONCAT(LEFT({"hello","world","!"},2))="hewo!"  ·  CONCAT(MID({"hello","world"},2,3))="ellorl"
+#   CONCAT(UPPER({"a","b"}))="AB"            ·  SUM(VALUE({"1","2","3"}))=6
+#   CONCAT(TEXT({1,2},"0.0"))="1.02.0"       ·  SUM(FIND("a",{"cat","bat"}))=4
+#   CONCAT(SUBSTITUTE({"a-b","c-d"},"-","+"))="a+bc+d"
+#   TEXTJOIN(", ",TRUE,IF({1;0;1},{"a";"b";"c"},""))="a, c"
+#   SUM(IF({1,0,1},{10,20,30},0))=40         ·  SUM(IF(1=1,{1,2,3},0))=6  (scalar cond: whole branch)
+#   SUMPRODUCT(IFERROR(VALUE(TRIM(RIGHT(SUBSTITUTE({"London 20";"Bristol 50";"Brighton 30"}," ",
+#     REPT(" ",100)),100))),0))=100  (last-token-after-space extractor over a column)
+
+[len-over-array-reduces]
+funcs: LEN SUMPRODUCT
+formula: =SUMPRODUCT(LEN({"ab","cde"}))
+expect: 5
+
+[len-over-array-is-an-array]
+funcs: LEN
+formula: =LEN({"a","bb","ccc"})
+expect: {1,2,3}
+
+[left-over-range-then-concat]
+funcs: LEFT CONCAT
+cell A1: "hello"
+cell A2: "world"
+cell A3: "!"
+formula: =CONCAT(LEFT(A1:A3,2))
+expect: "hewo!"
+
+[mid-over-array-then-concat]
+funcs: MID CONCAT
+formula: =CONCAT(MID({"hello","world"},2,3))
+expect: "ellorl"
+
+[upper-over-array-then-concat]
+funcs: UPPER CONCAT
+formula: =CONCAT(UPPER({"a","b"}))
+expect: "AB"
+
+[value-over-array-reduces]
+funcs: VALUE SUM
+formula: =SUM(VALUE({"1","2","3"}))
+expect: 6
+
+[text-over-array-then-concat]
+funcs: TEXT CONCAT
+formula: =CONCAT(TEXT({1,2},"0.0"))
+expect: "1.02.0"
+
+[find-over-array-reduces]
+funcs: FIND SUM
+formula: =SUM(FIND("a",{"cat","bat"}))
+expect: 4
+
+[substitute-over-array-then-concat]
+funcs: SUBSTITUTE CONCAT
+formula: =CONCAT(SUBSTITUTE({"a-b","c-d"},"-","+"))
+expect: "a+bc+d"
+
+[if-array-condition-textjoin-drops-empty]
+funcs: IF TEXTJOIN
+formula: =TEXTJOIN(", ",TRUE,IF({1;0;1},{"a";"b";"c"},""))
+expect: "a, c"
+
+[if-array-condition-scalar-branches-broadcast]
+funcs: IF SUM
+formula: =SUM(IF({1,0,1},{10,20,30},0))
+expect: 40
+
+[if-scalar-condition-passes-whole-branch]
+funcs: IF SUM
+formula: =SUM(IF(1=1,{1,2,3},0))
+expect: 6
+
+[trim-right-substitute-value-extractor]
+funcs: SUBSTITUTE RIGHT TRIM VALUE REPT IFERROR SUMPRODUCT
+formula: =SUMPRODUCT(IFERROR(VALUE(TRIM(RIGHT(SUBSTITUTE({"London 20";"Bristol 50";"Brighton 30"}," ",REPT(" ",100)),100))),0))
+expect: 100

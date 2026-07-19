@@ -1,4 +1,4 @@
-// Concern: IMPLICIT ARRAY EVALUATION for function calls — the ONE home for the LOGIC of Excel's rule that an `array` handed to a function's SCALAR-expecting argument maps the call element-wise and yields an `array` (`COUNTIF(range, A1:A6)` -> an array of per-element counts), broadcasting every other argument whole; it reads each broadcasting function's scalar positions from its registry row (`FuncDef::broadcast`, the single source of that DATA), shares one shape across the mapped positions (a mismatch is a static `#VALUE!`), short-circuits a scalar-error argument to that scalar error (Excel error propagation, never a tiled array of it), and re-dispatches the row's `eval` once per cell — so the mapping lives here, not smeared across the individual built-ins or dispatch | Non-concern: the registry table + dispatch entry + the `broadcast` position DATA itself (func/mod.rs owns `FUNCS`/`dispatch`/the row column), the per-function bodies (the family submodules own them), REDUCERS that already collapse arrays (SUM/SUMPRODUCT keep their own loops), and element-wise OPERATOR broadcasting (eval.rs owns `binary_broadcast`/`unop_scalar`) | IO: (`&FuncDef`, `EvalCtx`, the call's arg `Expr`s) -> `Value`
+// Concern: IMPLICIT ARRAY EVALUATION for function calls — the ONE home for the LOGIC of Excel's rule that an `array` handed to a function's SCALAR-expecting argument maps the call element-wise and yields an `array` (`COUNTIF(range, A1:A6)` -> an array of per-element counts; `LEN(A1:A3)` -> an array of per-cell lengths), broadcasting every other argument whole; it reads each broadcasting function's scalar positions from its registry row (`FuncDef::broadcast`, the single source of that DATA), shares one shape across the mapped positions (a mismatch is a static `#VALUE!`), short-circuits a scalar-error argument to that scalar error (Excel error propagation, never a tiled array of it), and re-dispatches the row's `eval` once per cell — plus `map_if`, the element-wise selection for `IF` over an ARRAY condition (each cell picks its `then`/`else` element, scalar branches broadcast), which lazy `logical::if_fn` calls only once it sees an array condition — so the mapping lives here, not smeared across the individual built-ins or dispatch | Non-concern: the registry table + dispatch entry + the `broadcast` position DATA itself (func/mod.rs owns `FUNCS`/`dispatch`/the row column), the per-function bodies (the family submodules own them), the scalar-vs-array DECISION for `IF` (logical.rs decides, then delegates the map here), REDUCERS that already collapse arrays (SUM/SUMPRODUCT keep their own loops), and element-wise OPERATOR broadcasting (eval.rs owns `binary_broadcast`/`unop_scalar`) | IO: (`&FuncDef`, `EvalCtx`, the call's arg `Expr`s) -> `Value`
 //! Implicit array evaluation ([`eval_call`]): the single home for mapping a function element-wise
 //! over an array supplied to a scalar-expecting argument (ast-standards PART 6, "accept under
 //! uncertainty" — a scalar there still yields a scalar; only a genuine multi-cell array broadcasts).
@@ -92,6 +92,52 @@ fn element_at(v: &Value, is_scalar_pos: bool, i: usize) -> Value {
         && !(s.rows == 1 && s.cols == 1)
     {
         return cells.get(i).cloned().unwrap_or(Value::Blank);
+    }
+    v.clone()
+}
+
+/// Element-wise `IF` over an ARRAY condition (Excel array `IF`): for each cell of `cond`, coerce it to
+/// a boolean and take the matching element of `then_v` (TRUE) or `else_v` (FALSE). A scalar (or 1×1)
+/// branch broadcasts whole; a branch that is a matching-shape array contributes its i-th cell. A branch
+/// that is a genuinely multi-cell array of a DIFFERENT shape makes the whole result `#VALUE!` — the
+/// same shape-conformance stance `binary_broadcast`/`SUMPRODUCT` take. A condition cell that cannot
+/// coerce to a boolean (an error cell, or non-logical text) is THAT element's error (per-cell totality,
+/// CORE2), never a panic. `logical::if_fn` owns the lazy scalar path and only calls this once it has
+/// seen a genuinely multi-cell condition — so array `IF` reuses this array home rather than growing a
+/// parallel loop in `logical`.
+pub(crate) fn map_if(shape: Shape, cond: &[Value], then_v: &Value, else_v: &Value) -> Value {
+    // A branch that is a genuinely multi-cell array must conform to the condition's shape (a scalar or
+    // 1×1 broadcasts and is exempt); a mismatch is a static `#VALUE!` before any per-cell work.
+    for branch in [then_v, else_v] {
+        if let Value::Array(s, _) = branch
+            && !(s.rows == 1 && s.cols == 1)
+            && *s != shape
+        {
+            return Value::Error(ErrKind::Value);
+        }
+    }
+    let count = (shape.rows as usize) * (shape.cols as usize);
+    let mut out = Vec::with_capacity(count);
+    for (i, c) in cond.iter().enumerate().take(count) {
+        out.push(match coerce_bool(c) {
+            Err(k) => Value::Error(k),
+            Ok(true) => branch_cell(then_v, i),
+            Ok(false) => branch_cell(else_v, i),
+        });
+    }
+    Value::Array(shape, out)
+}
+
+/// The value a branch contributes to the i-th [`map_if`] cell: the i-th cell of a matching-shape array
+/// branch (a 1×1 array collapses to its single cell and broadcasts), or the whole scalar branch. An
+/// out-of-range index (only reachable on a shape skew already screened by [`map_if`]) is a defensive
+/// `#N/A`, never a panic (totality).
+fn branch_cell(v: &Value, i: usize) -> Value {
+    if let Value::Array(s, cells) = v {
+        if s.rows == 1 && s.cols == 1 {
+            return cells.first().cloned().unwrap_or(Value::Blank);
+        }
+        return cells.get(i).cloned().unwrap_or(Value::Error(ErrKind::Na));
     }
     v.clone()
 }
