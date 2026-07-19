@@ -1,4 +1,4 @@
-// Concern: the LOOKUP & REFERENCE worksheet functions (XLOOKUP INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH CHOOSE ROW COLUMN ROWS COLUMNS, + the reserved INDIRECT/OFFSET refusal) — the search family agreeing on ONE cross-type ordering (`eval::value_cmp`) and ONE wildcard engine (`criteria::wildcard_match`), with a guaranteed-terminating approximate `binary_search_approx`, XLOOKUP/XMATCH's modern exact-by-default, and the shape queries ROWS/COLUMNS | Non-concern: the registry table + dispatch (func/mod.rs), the ordering/wildcard primitives (eval.rs owns `value_cmp`, criteria.rs owns `wildcard_match`), and the shared `block` helper (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the LOOKUP & REFERENCE worksheet functions (XLOOKUP INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH CHOOSE ROW COLUMN ROWS COLUMNS ADDRESS, + the reserved INDIRECT/OFFSET refusal) — the search family agreeing on ONE cross-type ordering (`eval::value_cmp`) and ONE wildcard engine (`criteria::wildcard_match`), all IGNORING error cells in the lookup vector via `drop_error_cells` (Excel skips them), with a guaranteed-terminating approximate `binary_search_approx`, XLOOKUP/XMATCH's modern exact-by-default + forward/reverse `search_mode`, ROW/COLUMN yielding the range's coordinate ARRAY, and ADDRESS building an A1/R1C1 address as text | Non-concern: the registry table + dispatch (func/mod.rs), the ordering/wildcard primitives (eval.rs owns `value_cmp`, criteria.rs owns `wildcard_match`), the A1 column-letter renderer (a1.rs owns `format_column`), and the shared `block` helper (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
 // Lookup & reference batch v1: XLOOKUP INDEX MATCH VLOOKUP CHOOSE ROW COLUMN (+ reserved INDIRECT /
@@ -132,6 +132,24 @@ fn linear_exact(col: &[Value], needle: &Value, wildcard: bool) -> Option<usize> 
         .position(|c| cell_matches_exact(needle, c, wildcard))
 }
 
+/// Drop the ERROR cells from a search vector, returning `(survivors, original_indices)`. Excel
+/// IGNORES an error cell in the lookup vector/column/row (MATCH, VLOOKUP, HLOOKUP, LOOKUP): it never
+/// participates in the exact scan or in the sorted-order comparison a `binary_search_approx` reads —
+/// an error left in place would both spuriously fail an exact `=` and corrupt the ordering the
+/// approximate search assumes. A hit's reported position is still its position in the ORIGINAL vector,
+/// recovered through the returned index map (`original_indices[found] == the real row/col/position`).
+fn drop_error_cells(cells: &[Value]) -> (Vec<Value>, Vec<usize>) {
+    let mut survivors = Vec::with_capacity(cells.len());
+    let mut original_indices = Vec::with_capacity(cells.len());
+    for (i, c) in cells.iter().enumerate() {
+        if !matches!(c, Value::Error(_)) {
+            survivors.push(c.clone());
+            original_indices.push(i);
+        }
+    }
+    (survivors, original_indices)
+}
+
 /// `MATCH(lookup_value, lookup_array, [match_type])` — the position (1-based) of `lookup_value` in a
 /// 1-D `lookup_array`. `match_type` 1 (default) approximates ASCENDING (largest value `<=` needle),
 /// -1 approximates DESCENDING (smallest `>=` needle), 0 is an exact first-hit with wildcards on a text
@@ -156,13 +174,16 @@ pub(crate) fn match_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
             Ok(n) => n.trunc() as i64,
         },
     };
+    // Excel ignores error cells in the lookup array; search the error-free survivors and map a hit
+    // back to its ORIGINAL 1-based position.
+    let (search, original) = drop_error_cells(&cells);
     let pos = if match_type == 0 {
-        linear_exact(&cells, &needle, true)
+        linear_exact(&search, &needle, true)
     } else {
-        binary_search_approx(&cells, &needle, match_type > 0)
+        binary_search_approx(&search, &needle, match_type > 0)
     };
     match pos {
-        Some(i) => Value::Number((i + 1) as f64),
+        Some(i) => Value::Number((original[i] + 1) as f64),
         None => Value::Error(ErrKind::Na),
     }
 }
@@ -254,18 +275,23 @@ pub(crate) fn vlookup(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
             Ok(b) => b,
         },
     };
-    // The first column, materialized as a vector for the search.
+    // The first column, materialized as a vector for the search. Excel ignores error cells in the
+    // lookup column, so search the error-free survivors and map a hit back to its ORIGINAL row.
     let first_col: Vec<Value> = (0..rows)
         .map(|r| cells[(r * cols) as usize].clone())
         .collect();
+    let (search, original) = drop_error_cells(&first_col);
     let hit = if approximate {
-        binary_search_approx(&first_col, &needle, true)
+        binary_search_approx(&search, &needle, true)
     } else {
-        linear_exact(&first_col, &needle, true)
+        linear_exact(&search, &needle, true)
     };
     match hit {
         None => Value::Error(ErrKind::Na),
-        Some(r) => matched_scalar(&cells[(r as u32 * cols + (col_index as u32 - 1)) as usize]),
+        Some(i) => {
+            let r = original[i] as u32;
+            matched_scalar(&cells[(r * cols + (col_index as u32 - 1)) as usize])
+        }
     }
 }
 
@@ -403,7 +429,22 @@ pub(crate) fn choose(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
 pub(crate) fn row_fn(_ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     match &args[0] {
         Expr::Ref(r) => Value::Number((r.row + 1) as f64),
-        Expr::Range(rn) => Value::Number((rn.start_row.min(rn.end_row) + 1) as f64),
+        Expr::Range(rn) => {
+            // Excel `ROW(A1:A3)` is the VERTICAL array `{1;2;3}` — one row number per row the range
+            // spans, needed by array idioms (`SUM(ROW(..))`, `INDEX(..,ROW(..))`). A single-row range
+            // (`ROW(A1:C1)`) is the scalar top row (its array would be 1×1, which collapses anyway).
+            let top = rn.start_row.min(rn.end_row);
+            let bot = rn.start_row.max(rn.end_row);
+            let n = bot - top + 1;
+            if n == 1 {
+                Value::Number((top + 1) as f64)
+            } else {
+                Value::Array(
+                    Shape { rows: n, cols: 1 },
+                    (top..=bot).map(|r| Value::Number((r + 1) as f64)).collect(),
+                )
+            }
+        }
         _ => Value::Error(ErrKind::Value),
     }
 }
@@ -413,7 +454,24 @@ pub(crate) fn row_fn(_ctx: &mut EvalCtx, args: &[Expr]) -> Value {
 pub(crate) fn column_fn(_ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     match &args[0] {
         Expr::Ref(r) => Value::Number((r.col + 1) as f64),
-        Expr::Range(rn) => Value::Number((rn.start_col.min(rn.end_col) + 1) as f64),
+        Expr::Range(rn) => {
+            // Excel `COLUMN(A1:C1)` is the HORIZONTAL array `{1,2,3}` — one column number per column
+            // the range spans (the column dual of `row_fn`). A single-column range is the scalar left
+            // column (its 1×1 array would collapse anyway).
+            let left = rn.start_col.min(rn.end_col);
+            let right = rn.start_col.max(rn.end_col);
+            let n = right - left + 1;
+            if n == 1 {
+                Value::Number((left + 1) as f64)
+            } else {
+                Value::Array(
+                    Shape { rows: 1, cols: n },
+                    (left..=right)
+                        .map(|c| Value::Number((c + 1) as f64))
+                        .collect(),
+                )
+            }
+        }
         _ => Value::Error(ErrKind::Value),
     }
 }
@@ -449,16 +507,21 @@ pub(crate) fn hlookup(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
             Ok(b) => b,
         },
     };
-    // The first row, materialized as a vector for the search.
+    // The first row, materialized as a vector for the search. Excel ignores error cells in the lookup
+    // row, so search the error-free survivors and map a hit back to its ORIGINAL column.
     let first_row: Vec<Value> = (0..cols).map(|c| cells[c as usize].clone()).collect();
+    let (search, original) = drop_error_cells(&first_row);
     let hit = if approximate {
-        binary_search_approx(&first_row, &needle, true)
+        binary_search_approx(&search, &needle, true)
     } else {
-        linear_exact(&first_row, &needle, true)
+        linear_exact(&search, &needle, true)
     };
     match hit {
         None => Value::Error(ErrKind::Na),
-        Some(c) => matched_scalar(&cells[((row_index as u32 - 1) * cols + c as u32) as usize]),
+        Some(i) => {
+            let c = original[i] as u32;
+            matched_scalar(&cells[((row_index as u32 - 1) * cols + c) as usize])
+        }
     }
 }
 
@@ -487,7 +550,10 @@ pub(crate) fn lookup_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     let Some(result_e) = args.get(2) else {
         return lookup_array_form(&needle, rows, cols, &cells);
     };
-    let pos = match binary_search_approx(&cells, &needle, true) {
+    // Excel ignores error cells in the search vector; approximate-search the error-free survivors and
+    // map the hit back to its ORIGINAL position for the aligned result cell.
+    let (search, original) = drop_error_cells(&cells);
+    let pos = match binary_search_approx(&search, &needle, true) {
         None => return Value::Error(ErrKind::Na),
         Some(p) => p,
     };
@@ -495,7 +561,7 @@ pub(crate) fn lookup_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
         Err(k) => return Value::Error(k),
         Ok(t) => t,
     };
-    match result_vec.get(pos) {
+    match result_vec.get(original[pos]) {
         Some(v) => matched_scalar(v),
         None => Value::Error(ErrKind::Na),
     }
@@ -523,6 +589,13 @@ fn lookup_array_form(needle: &Value, rows: u32, cols: u32, cells: &[Value]) -> V
             (0..rows).map(|r| at(r, last)).collect(),
         )
     };
+    // Excel ignores error cells in the search line; filter the (search, result) pairs together so a
+    // dropped error takes its aligned result cell with it and the surviving alignment is preserved.
+    let (search, result): (Vec<Value>, Vec<Value>) = search
+        .into_iter()
+        .zip(result)
+        .filter(|(s, _)| !matches!(s, Value::Error(_)))
+        .unzip();
     match binary_search_approx(&search, needle, true) {
         None => Value::Error(ErrKind::Na),
         Some(pos) => matched_scalar(&result[pos]),
@@ -549,18 +622,16 @@ pub(crate) fn columns_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     }
 }
 
-/// `XMATCH(lookup_value, lookup_array, [match_mode])` — the modern [`match_fn`]: return the 1-based
-/// position of `lookup_value` in a 1-D `lookup_array`. `match_mode` `0` (default) is exact, `-1`
-/// exact-or-next-SMALLER, `1` exact-or-next-LARGER, `2` exact with wildcards; any other mode is
-/// `#VALUE!`. Unlike MATCH the approximate modes do NOT assume sorted data (a linear closest-scan,
-/// shared with XLOOKUP via [`xlookup_find`]). A 2-D array, or no match, is `#N/A`.
-///
-/// DEFERRED (v1 gap): Excel's full signature has a 4th `[search_mode]` argument
-/// (`XMATCH(lookup_value, lookup_array, [match_mode], [search_mode])`) for forward/reverse and binary
-/// search order. v1 registers `max_args: Some(3)` and always searches first-to-last, so a
-/// last-to-first tie-break (`search_mode -1`) is not yet expressible — it lands as a `BadArity`
-/// refusal, never a silently-wrong position. XLOOKUP already carries the `search_mode` seam; XMATCH
-/// gains it in the same batch that widens this row.
+/// `XMATCH(lookup_value, lookup_array, [match_mode], [search_mode])` — the modern [`match_fn`]:
+/// return the 1-based position of `lookup_value` in a 1-D `lookup_array`. `match_mode` `0` (default)
+/// is exact, `-1` exact-or-next-SMALLER, `1` exact-or-next-LARGER, `2` exact with wildcards; any other
+/// mode is `#VALUE!`. `search_mode` `1` (default) scans first-to-last, `-1` last-to-first (so a
+/// duplicate returns the LAST hit), `2`/`-2` request a binary search on data ASSUMED sorted
+/// ascending/descending — collapsed here to the equivalent directional linear scan (identical on the
+/// sorted input they assume; only the sign, forward vs reverse, drives it, mirroring XLOOKUP); a
+/// `search_mode` outside {1,-1,2,-2} is `#VALUE!`. Unlike MATCH the approximate modes do NOT assume
+/// sorted data (a linear closest-scan, shared with XLOOKUP via [`xlookup_find`]). A 2-D array, or no
+/// match, is `#N/A`.
 pub(crate) fn xmatch(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     let needle = scalarize(ctx.eval(&args[0]));
     if let Value::Error(k) = needle {
@@ -585,9 +656,127 @@ pub(crate) fn xmatch(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     if !matches!(match_mode, -1..=2) {
         return Value::Error(ErrKind::Value);
     }
-    match xlookup_find(&needle, &cells, match_mode, false) {
+    let search_mode = match args.get(3) {
+        None => 1,
+        Some(e) => match coerce_num(&scalarize(ctx.eval(e))) {
+            Err(k) => return Value::Error(k),
+            Ok(n) => n.trunc() as i64,
+        },
+    };
+    // Excel rejects a search_mode outside {1, -1, 2, -2} with #VALUE! (mirrors XLOOKUP). The binary
+    // modes (±2) assume sorted data and collapse to the equivalent directional linear scan; only the
+    // sign — forward vs reverse — drives the search.
+    if !matches!(search_mode, 1 | -1 | 2 | -2) {
+        return Value::Error(ErrKind::Value);
+    }
+    match xlookup_find(&needle, &cells, match_mode, search_mode < 0) {
         Some(i) => Value::Number((i + 1) as f64),
         None => Value::Error(ErrKind::Na),
+    }
+}
+
+/// `ADDRESS(row_num, column_num, [abs_num], [a1], [sheet_text])` — build a cell address as TEXT (not a
+/// live reference, so it forges no dependency — unlike the reserved INDIRECT). `abs_num` `1` (default)
+/// is fully absolute `$C$2`, `2` absolute-row `C$2`, `3` absolute-column `$C2`, `4` relative `C2`; any
+/// other is `#VALUE!`. `a1` `TRUE` (default) is A1 style, `FALSE` is R1C1 (`R2C3`, with a relative
+/// part bracketed as an offset `R[2]C[3]`). `sheet_text`, when given, is prefixed `Sheet!…` (quoted
+/// `'a b'!…` when the name is not a bare identifier). `row_num`/`column_num` must be a positive
+/// 1-based coordinate (`< 1` → `#VALUE!`) in EVERY display style — ADDRESS is a pure address-text
+/// builder with NO upper grid bound, so `=ADDRESS(1048577,1)` is `$A$1048577` and the same
+/// coordinate agrees across A1 and R1C1 (pinned vs formulas-lib); a non-coercible or error argument
+/// propagates. CORE2: a located error value, never a panic.
+pub(crate) fn address_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let row = match one_num(ctx, &args[0]) {
+        Ok(n) => n.trunc() as i64,
+        Err(k) => return Value::Error(k),
+    };
+    let col = match one_num(ctx, &args[1]) {
+        Ok(n) => n.trunc() as i64,
+        Err(k) => return Value::Error(k),
+    };
+    let abs_num = match opt_num(ctx, args, 2, 1.0) {
+        Ok(n) => n.trunc() as i64,
+        Err(k) => return Value::Error(k),
+    };
+    if !(1..=4).contains(&abs_num) {
+        return Value::Error(ErrKind::Value);
+    }
+    let a1 = match opt_bool(ctx, args, 3, true) {
+        Ok(b) => b,
+        Err(k) => return Value::Error(k),
+    };
+    let sheet = match args.get(4) {
+        Some(e) => match arg_text(ctx, e) {
+            Ok(s) => s,
+            Err(k) => return Value::Error(k),
+        },
+        None => String::new(),
+    };
+    // `abs_num` decodes to a per-axis absolute flag: 1 → both, 2 → row only, 3 → column only, 4 → none.
+    let row_abs = matches!(abs_num, 1 | 2);
+    let col_abs = matches!(abs_num, 1 | 3);
+    // Excel validates the COORDINATES identically for every display style: `row_num`/`column_num`
+    // must be a positive 1-based index (`< 1` → `#VALUE!`), with NO upper grid bound — so A1 and
+    // R1C1 agree on the same coordinate (`=ADDRESS(1048577,1)` → `$A$1048577`; the R1C1 form of that
+    // coordinate is likewise a value, not an error). Pinned vs formulas-lib.
+    if row < 1 || col < 1 {
+        return Value::Error(ErrKind::Value);
+    }
+    let core = if a1 {
+        // The A1 column letters need a `u32` index; a column past `u32::MAX` is astronomically beyond
+        // any sheet and has no Excel-pinned rendering, so it is a located `#VALUE!` rather than a
+        // silently wrapped (wrong) index — CORE2's located-error-never-a-panic.
+        let Ok(col0) = u32::try_from(col - 1) else {
+            return Value::Error(ErrKind::Value);
+        };
+        let mut s = String::new();
+        if col_abs {
+            s.push('$');
+        }
+        s.push_str(&crate::a1::format_column(col0));
+        if row_abs {
+            s.push('$');
+        }
+        s.push_str(&row.to_string());
+        s
+    } else {
+        // R1C1 style: an ABSOLUTE part is a positive 1-based index (`R2`/`C3`); a RELATIVE part is an
+        // offset written in brackets (`R[2]`/`C[3]`). The coordinate was already range-checked above.
+        let r = if row_abs {
+            format!("R{row}")
+        } else {
+            format!("R[{row}]")
+        };
+        let c = if col_abs {
+            format!("C{col}")
+        } else {
+            format!("C[{col}]")
+        };
+        format!("{r}{c}")
+    };
+    let out = if sheet.is_empty() {
+        core
+    } else {
+        format!("{}!{}", quote_sheet_name(&sheet), core)
+    };
+    Value::Text(out)
+}
+
+/// Quote a sheet name for an [`address_fn`] prefix as Excel does: a bare identifier (letters/digits/
+/// `_`/`.`, not starting with a digit) is used as-is; anything else is wrapped in single quotes with
+/// an internal single quote doubled (`O'Brien` → `'O''Brien'`).
+fn quote_sheet_name(name: &str) -> String {
+    let bare = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+    if bare {
+        name.to_string()
+    } else {
+        format!("'{}'", name.replace('\'', "''"))
     }
 }
 

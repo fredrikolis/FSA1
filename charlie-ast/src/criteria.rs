@@ -1,4 +1,4 @@
-// Concern: the CRITERIA MINI-LANGUAGE shared by the `*IF(S)` family — parse one already-evaluated criteria `Value` into a `Criterion` (a comparison `Op` + a typed `Comparand`: number / text / empty), honouring the leading-operator spelling (`>`, `>=`, `<`, `<=`, `<>`, `=`), Excel wildcard matching (`*` any run, `?` one char, `~` escape) for text equality/inequality, and the blank/empty-comparand rule; then test a candidate cell `Value` for a match. A criteria value carrying an error propagates (`Err(kind)`). Concatenated criteria (`">"&ref`) need no special case — the evaluator already folds the `&` before the string reaches here | Non-concern: the aggregation loops and the criteria-vs-sum-range length-conformance check (func.rs owns SUMIF/COUNTIFS/… and reuses this) and how a range materializes into cells (eval.rs) | IO: (an evaluated criteria `Value`) -> `Result<Criterion, ErrKind>`; (a `Criterion`, a cell `Value`) -> `bool`
+// Concern: the CRITERIA MINI-LANGUAGE and its TWO grammars — parse one already-evaluated criteria `Value` into a `Criterion` (a comparison `Op` + a typed `Comparand`: number / text / empty), honouring the leading-operator spelling (`>`, `>=`, `<`, `<=`, `<>`, `=`), Excel wildcard matching (`*` any run, `?` one char, `~` escape) for text equality/inequality, and the blank/empty-comparand rule; then test a candidate cell `Value` for a match. `parse_criterion` is the `*IF(S)` grammar (bare text is an EXACT wildcard equality); `parse_db_criterion` is the DATABASE / advanced-filter grammar, identical EXCEPT that a bare text comparand matches BEGINS-WITH (`App` ⇒ `App*`) unless a leading `=` forces exact — the `D*` family uses this one. A criteria value carrying an error propagates (`Err(kind)`). Concatenated criteria (`">"&ref`) need no special case — the evaluator already folds the `&` before the string reaches here | Non-concern: the aggregation loops and the criteria-vs-sum-range length-conformance check (func.rs owns SUMIF/COUNTIFS/… and reuses this) and how a range materializes into cells (eval.rs) | IO: (an evaluated criteria `Value`) -> `Result<Criterion, ErrKind>`; (a `Criterion`, a cell `Value`) -> `bool`
 //! The criteria mini-language for the `*IF(S)` reporting family ([`Criterion`], [`parse_criterion`]).
 //!
 //! Excel's criteria are a tiny DSL: a scalar that is either a bare value (equality) or a string that
@@ -60,6 +60,32 @@ pub(crate) fn parse_criterion(v: &Value) -> Result<Criterion, ErrKind> {
         Value::Text(s) => Ok(parse_text_criterion(s)),
         Value::Array(..) => Err(ErrKind::Value),
     }
+}
+
+/// Parse one already-evaluated criteria value under Excel's DATABASE / advanced-filter grammar, which
+/// differs from the `*IF(S)` grammar ([`parse_criterion`]) in exactly ONE way: a BARE text comparand
+/// (a text cell with no leading comparison operator and not spelling a number) matches BEGINS-WITH
+/// rather than exact — a criterion `App` matches `Apple`/`Applesauce` — while a leading `=` (a cell
+/// spelled `=App`, entered in Excel as `="=App"`) still forces an exact equality. Numbers, comparison
+/// operators (`>`, `<`, `<>`, …), embedded wildcards, and the blank selectors are identical to the
+/// shared grammar. The begins-with case is expressed as the equivalent `pattern*` wildcard, so the one
+/// wildcard engine still does all the matching; every other case defers verbatim to [`parse_criterion`].
+pub(crate) fn parse_db_criterion(v: &Value) -> Result<Criterion, ErrKind> {
+    if let Value::Text(s) = v {
+        // A leading `<`/`>`/`=` is a comparison operator (exact `=`, or an ordering/inequality); a
+        // spelling that parses to a finite number is a numeric criterion. Anything else is bare text.
+        let bare_text = !s.is_empty()
+            && !s.starts_with(['<', '>', '='])
+            && !s.parse::<f64>().is_ok_and(f64::is_finite);
+        if bare_text {
+            // Begins-with: append an implicit trailing `*` so the wildcard engine matches a prefix.
+            return Ok(Criterion {
+                op: Op::Eq,
+                comparand: Comparand::Text(format!("{s}*")),
+            });
+        }
+    }
+    parse_criterion(v)
 }
 
 /// Parse a criteria STRING: strip a leading comparison operator, then classify the remainder as a
@@ -380,6 +406,34 @@ mod tests {
         assert!(ne.matches(&Value::Number(5.0)) && ne.matches(&Value::Bool(false)));
         // A bare (non-numeric) text equality likewise skips a number cell.
         assert!(!crit(text("apple")).matches(&Value::Number(5.0)));
+    }
+
+    #[test]
+    fn db_grammar_bare_text_is_begins_with_but_leading_eq_is_exact() {
+        // Bare text under the DATABASE grammar matches BEGINS-WITH: `App` selects `Apple`/`Applesauce`
+        // (and `App` itself), case-insensitively, but NOT a value that merely contains it.
+        let bare = parse_db_criterion(&text("App")).unwrap();
+        assert!(bare.matches(&text("Apple")) && bare.matches(&text("applesauce")));
+        assert!(bare.matches(&text("App")) && !bare.matches(&text("Pineapple")));
+        // A leading `=` (Excel `="=App"`) forces EXACT equality — only `App` itself, not `Apple`.
+        let exact = parse_db_criterion(&text("=App")).unwrap();
+        assert!(exact.matches(&text("app")) && !exact.matches(&text("Apple")));
+        // Numbers and comparison operators are unchanged from the `*IF(S)` grammar.
+        assert!(
+            parse_db_criterion(&text(">10"))
+                .unwrap()
+                .matches(&Value::Number(15.0))
+        );
+        let five = parse_db_criterion(&text("5")).unwrap();
+        assert!(five.matches(&Value::Number(5.0)) && !five.matches(&Value::Number(50.0)));
+        // Embedded wildcards still function under begins-with, and a bare-text pattern matches text
+        // cells only (a numeric cell is never coerced to its text form).
+        assert!(
+            parse_db_criterion(&text("A*e"))
+                .unwrap()
+                .matches(&text("Apple"))
+        );
+        assert!(!parse_db_criterion(&text("1")).unwrap().matches(&text("15")));
     }
 
     #[test]

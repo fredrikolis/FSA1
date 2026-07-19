@@ -10,7 +10,7 @@
 #   VLOOKUP(2.5,tbl,2)=two  VLOOKUP(3,tbl,2,F)=three  VLOOKUP(2.5,tbl,2,F)=#N/A  VLOOKUP(2,tbl,3)=#REF!
 #   XLOOKUP(2)=b  XLOOKUP(9,,none)=none  XLOOKUP(2.5,,1)=c  XLOOKUP(2.5,,-1)=b
 #   CHOOSE(2,x,y,z)=y  CHOOSE(4,10,20)=#VALUE!
-#   ROW(B3)=3  ROW(C5:E9)=5  ROW(5)=#VALUE!  COLUMN(B3)=2  COLUMN(C5:E9)=3
+#   ROW(B3)=3  ROW(C5:E9)={5;6;7;8;9}  ROW(5)=#VALUE!  COLUMN(B3)=2  COLUMN(C5:E9)={3,4,5}
 #
 # Approximate match is the classic must-be-SORTED rule: VLOOKUP (default) and MATCH (type 1) assume
 # ascending and return the LARGEST key <= needle; MATCH type -1 assumes descending (smallest >=).
@@ -242,10 +242,11 @@ funcs: ROW
 formula: =ROW(B3)
 expect: 3
 
-[row-of-range-top-left]
+[row-of-range-is-vertical-array]
 funcs: ROW
+note: ROW of a multi-row range is the VERTICAL array of its row numbers (Excel), C5:E9 -> {5;6;7;8;9}.
 formula: =ROW(C5:E9)
-expect: 5
+expect: {5;6;7;8;9}
 
 [row-of-non-reference-is-value-error]
 funcs: ROW
@@ -258,7 +259,8 @@ funcs: COLUMN
 formula: =COLUMN(B3)
 expect: 2
 
-[column-of-range-top-left]
+[column-of-range-is-horizontal-array]
 funcs: COLUMN
+note: COLUMN of a multi-column range is the HORIZONTAL array of its column numbers, C5:E9 -> {3,4,5}.
 formula: =COLUMN(C5:E9)
-expect: 3
+expect: {3,4,5}

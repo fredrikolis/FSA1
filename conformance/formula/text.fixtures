@@ -19,6 +19,9 @@
 #   TRIM("  hello   world  ")="hello world"  ·  UPPER("MixEd")="MIXED" · LOWER("MixEd")="mixed"
 #   TEXT(3.14159,"0.00")="3.14" · TEXT(-7,"0.00")="-7.00" · TEXT(1234567,"#,##0")="1,234,567"
 #   TEXT(0.5,"0%")="50%" · TEXT(0.1234,"0.00%")="12.34%" · TEXT(5,"General")="5"
+#   TEXT("5","000")="005" · TEXT("abc","0.00")="abc" (a TEXT-VALUE arg: numeric-looking text coerces
+#     and formats; NON-coercible text passes through UNCHANGED — a numeric format applies only to
+#     numbers, so already-text is returned verbatim, NOT #VALUE! — matches Excel & the formulas ref)
 #   TEXT(44927,"yyyy-mm-dd")="2023-01-01" · TEXT(61,"yyyy-mm-dd")="1900-03-01" (1900 leap bug)
 #   TEXT(1E300,"yyyy-mm-dd")=#VALUE! · TEXT(2958466,"yyyy-mm-dd")=#VALUE! (serial outside the valid
 #     Excel date band [1, 2958465] = 1900-01-01…9999-12-31 has no real civil date → located refusal,
@@ -360,10 +363,15 @@ funcs: TEXT
 formula: =TEXT(1/0, "0.00")
 expect: #DIV/0!
 
-[text-nonnumeric-to-numeric-format-is-value]
+[text-noncoercible-to-numeric-format-passes-through]
 funcs: TEXT
 formula: =TEXT("abc", "0.00")
-expect: #VALUE!
+expect: "abc"
+
+[text-coercible-text-into-numeric-format-pads]
+funcs: TEXT
+formula: =TEXT("5", "000")
+expect: "005"
 
 [text-dynamic-format-resolves-to-supported]
 funcs: TEXT

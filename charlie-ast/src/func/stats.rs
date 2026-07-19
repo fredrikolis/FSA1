@@ -151,7 +151,7 @@ fn is_blankish(v: &Value) -> bool {
 /// Gather the numeric data of a SINGLE array/range argument under the in-range rule (non-numbers
 /// ignored, an error propagated) — the one-array front door LARGE/SMALL/PERCENTILE/QUARTILE
 /// share. (A bare scalar coerces, as `collect_numbers` does for a direct datum.)
-fn collect_one(ctx: &mut EvalCtx, e: &Expr) -> Result<Vec<f64>, ErrKind> {
+pub(crate) fn collect_one(ctx: &mut EvalCtx, e: &Expr) -> Result<Vec<f64>, ErrKind> {
     collect_numbers(ctx, std::slice::from_ref(e))
 }
 

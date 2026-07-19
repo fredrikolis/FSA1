@@ -1,4 +1,4 @@
-// Concern: UNIT-TEST pins for the text family built-ins (CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE REPT TRIM UPPER LOWER PROPER EXACT VALUE CHAR CODE TEXT) exercised through `FUNCS` dispatch — stringification/flattening, clamped substring extraction, case-sensitive FIND vs wildcard SEARCH (incl. the multi-star ReDoS regression), REPT's cap, PROPER word casing, EXACT case-sensitivity, VALUE numeric-text parsing, CHAR/CODE round-trip, and TEXT's format subset with its serial-band gate + non-literal deferral | Non-concern: the text impls (`func/text.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`col_range`/`txt`/`text`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
+// Concern: UNIT-TEST pins for the STRING-MANIPULATION text family built-ins (CONCAT CONCATENATE TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE REPT TRIM UPPER LOWER PROPER EXACT T CLEAN TEXTBEFORE TEXTAFTER TEXTSPLIT VALUE NUMBERVALUE CHAR CODE UNICHAR UNICODE) exercised through `FUNCS` dispatch — stringification/flattening, clamped substring extraction, case-sensitive FIND vs wildcard SEARCH (incl. the multi-star ReDoS regression), REPT's cap, PROPER word casing, EXACT case-sensitivity, T/CLEAN, delimiter split (TEXTBEFORE/AFTER/SPLIT), VALUE/NUMBERVALUE numeric-text parsing, and CHAR/CODE + UNICHAR/UNICODE round-trips | Non-concern: the value->text FORMATTING functions (TEXT/FIXED/DOLLAR — func/tests/text_format.rs pins those), the text impls (`func/text.rs`), and the shared test fixtures (the parent `tests` module owns `num`/`call`/`col_range`/`txt`/`text`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
 use super::*;
 
 #[test]
@@ -14,6 +14,11 @@ fn concat_and_textjoin() {
             &g
         ),
         Value::Text("a1TRUE".into())
+    );
+    // CONCATENATE is the legacy alias of CONCAT (same body).
+    assert_eq!(
+        eval(&call("CONCATENATE", vec![txt("a"), txt("b"), txt("c")]), &g),
+        Value::Text("abc".into())
     );
     // CONCAT flattens a range (in-range blank → "").
     let r = Grid::new(
@@ -237,90 +242,6 @@ fn trim_upper_lower() {
 }
 
 #[test]
-fn text_format_subset_and_error_paths() {
-    let g = Grid::new(1, vec![Value::Blank]);
-    assert_eq!(
-        text(eval(&call("TEXT", vec![num(12.5), txt("0.00")]), &g)),
-        "12.50"
-    );
-    assert_eq!(
-        text(eval(&call("TEXT", vec![num(-7.0), txt("0.00")]), &g)),
-        "-7.00"
-    );
-    assert_eq!(
-        text(eval(&call("TEXT", vec![num(1234567.0), txt("#,##0")]), &g)),
-        "1,234,567"
-    );
-    assert_eq!(
-        text(eval(&call("TEXT", vec![num(0.5), txt("0%")]), &g)),
-        "50%"
-    );
-    assert_eq!(
-        text(eval(&call("TEXT", vec![num(0.1234), txt("0.00%")]), &g)),
-        "12.34%"
-    );
-    assert_eq!(
-        text(eval(&call("TEXT", vec![num(5.0), txt("General")]), &g)),
-        "5"
-    );
-    // The 1900 date system with the leap-year bug: serial 60 is the phantom 1900-02-29,
-    // serial 61 is 1900-03-01, serial 44927 is 2023-01-01.
-    assert_eq!(
-        text(eval(
-            &call("TEXT", vec![num(44927.0), txt("yyyy-mm-dd")]),
-            &g
-        )),
-        "2023-01-01"
-    );
-    assert_eq!(
-        text(eval(&call("TEXT", vec![num(60.0), txt("yyyy-mm-dd")]), &g)),
-        "1900-02-29"
-    );
-    assert_eq!(
-        text(eval(&call("TEXT", vec![num(61.0), txt("yyyy-mm-dd")]), &g)),
-        "1900-03-01"
-    );
-    // Serial-band gate (regression: a large serial used to overflow `civil_from_days` — a panic
-    // under overflow-checks, a wrapped nonsense date in release — instead of a located refusal).
-    // The band `[1, MAX_SERIAL]` is refused as `#VALUE!` on BOTH edges plus `NaN`, never rendered.
-    assert_eq!(
-        eval(&call("TEXT", vec![num(1e300), txt("yyyy-mm-dd")]), &g),
-        Value::Error(ErrKind::Value)
-    );
-    assert_eq!(
-        eval(&call("TEXT", vec![num(2_958_466.0), txt("yyyy-mm-dd")]), &g),
-        Value::Error(ErrKind::Value)
-    );
-    assert_eq!(
-        eval(&call("TEXT", vec![num(0.0), txt("yyyy-mm-dd")]), &g),
-        Value::Error(ErrKind::Value)
-    );
-    // The exact upper edge (9999-12-31 = serial 2958465) still renders.
-    assert_eq!(
-        text(eval(
-            &call("TEXT", vec![num(2_958_465.0), txt("yyyy-mm-dd")]),
-            &g
-        )),
-        "9999-12-31"
-    );
-    // Error propagation and a non-numeric value into a numeric format.
-    assert_eq!(
-        eval(
-            &call(
-                "TEXT",
-                vec![Expr::Lit(Value::Error(ErrKind::Div0)), txt("0.00")]
-            ),
-            &g
-        ),
-        Value::Error(ErrKind::Div0)
-    );
-    assert_eq!(
-        eval(&call("TEXT", vec![txt("abc"), txt("0.00")]), &g),
-        Value::Error(ErrKind::Value)
-    );
-}
-
-#[test]
 fn rept_repeats_and_caps() {
     let g = Grid::new(1, vec![Value::Blank]);
     assert_eq!(
@@ -513,26 +434,270 @@ fn value_parses_iso_dates_and_clock_times() {
 }
 
 #[test]
-fn text_unsupported_literal_format_is_a_parse_refusal() {
-    use crate::parse;
-    // A supported literal format parses.
-    assert!(parse("=TEXT(1,\"0.00\")").is_ok());
-    // An unsupported literal format is a located `unsupported-format` refusal, not a wrong guess.
-    let d = parse("=TEXT(1,\"$#,##0.00\")").unwrap_err();
-    assert_eq!(d.code, crate::DiagCode::UnsupportedFormat);
+fn t_and_clean() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // T returns text unchanged, else "".
+    assert_eq!(text(eval(&call("T", vec![txt("hello")]), &g)), "hello");
+    assert_eq!(text(eval(&call("T", vec![num(123.0)]), &g)), "");
+    assert_eq!(
+        text(eval(&call("T", vec![Expr::Lit(Value::Bool(true))]), &g)),
+        ""
+    );
+    // T of an error propagates.
+    assert_eq!(
+        eval(&call("T", vec![Expr::Lit(Value::Error(ErrKind::Div0))]), &g),
+        Value::Error(ErrKind::Div0)
+    );
+    // CLEAN strips control characters (< 32) — here an embedded bell (0x07) and a newline.
+    assert_eq!(
+        text(eval(&call("CLEAN", vec![txt("a\u{7}b\nc")]), &g)),
+        "abc"
+    );
 }
 
 #[test]
-fn text_nonliteral_format_is_accepted_and_deferred_to_eval() {
-    use crate::parse;
-    // Accept-under-uncertainty (ast-standards PART 6): a computed format v1 cannot vet statically
-    // is NOT refused at parse — a false-reject is the cardinal sin, since it RESOLVES-to-supported
-    // at runtime (real Excel accepts and computes `=TEXT(A1, B1)`).
-    let expr = parse("=TEXT(1,A1)").expect("a non-literal format parses (deferred to eval)");
-    // A1 resolves to a SUPPORTED format → computes (the false-reject the old blanket refusal made).
-    let supported = Grid::new(1, vec![Value::Text("0.00".to_string())]);
-    assert_eq!(eval(&expr, &supported), Value::Text("1.00".to_string()));
-    // A1 resolves to an UNSUPPORTED format → the deferred `#VALUE!` (a false-NEGATIVE, allowed).
-    let unsupported = Grid::new(1, vec![Value::Text("$#,##0.00".to_string())]);
-    assert_eq!(eval(&expr, &unsupported), Value::Error(ErrKind::Value));
+fn textbefore_and_textafter() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // Default instance 1.
+    assert_eq!(
+        text(eval(&call("TEXTBEFORE", vec![txt("a-b-c"), txt("-")]), &g)),
+        "a"
+    );
+    assert_eq!(
+        text(eval(&call("TEXTAFTER", vec![txt("a-b-c"), txt("-")]), &g)),
+        "b-c"
+    );
+    // Explicit instance 2.
+    assert_eq!(
+        text(eval(
+            &call("TEXTBEFORE", vec![txt("a-b-c"), txt("-"), num(2.0)]),
+            &g
+        )),
+        "a-b"
+    );
+    assert_eq!(
+        text(eval(
+            &call("TEXTAFTER", vec![txt("a-b-c"), txt("-"), num(2.0)]),
+            &g
+        )),
+        "c"
+    );
+    // Negative instance counts from the end.
+    assert_eq!(
+        text(eval(
+            &call("TEXTBEFORE", vec![txt("a-b-c"), txt("-"), num(-1.0)]),
+            &g
+        )),
+        "a-b"
+    );
+    // Case-insensitive match_mode = 1.
+    assert_eq!(
+        text(eval(
+            &call(
+                "TEXTAFTER",
+                vec![txt("aXbxc"), txt("x"), num(1.0), num(1.0)]
+            ),
+            &g
+        )),
+        "bxc"
+    );
+    // Not found → #N/A by default, or the if_not_found fallback (arg 6).
+    assert_eq!(
+        eval(&call("TEXTBEFORE", vec![txt("abc"), txt("-")]), &g),
+        Value::Error(ErrKind::Na)
+    );
+    assert_eq!(
+        text(eval(
+            &call(
+                "TEXTAFTER",
+                vec![
+                    txt("abc"),
+                    txt("-"),
+                    num(1.0),
+                    num(0.0),
+                    num(0.0),
+                    txt("none")
+                ]
+            ),
+            &g
+        )),
+        "none"
+    );
+    // instance 0 is #VALUE!.
+    assert_eq!(
+        eval(
+            &call("TEXTBEFORE", vec![txt("a-b"), txt("-"), num(0.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Value)
+    );
+    // if_not_found is a PLAIN argument (eager): an error-valued fallback surfaces even when the
+    // delimiter IS found — TEXTBEFORE is not a lazy IFERROR-family function.
+    assert_eq!(
+        eval(
+            &call(
+                "TEXTBEFORE",
+                vec![
+                    txt("a-b"),
+                    txt("-"),
+                    num(1.0),
+                    Expr::Lit(Value::Blank),
+                    Expr::Lit(Value::Blank),
+                    Expr::Lit(Value::Error(ErrKind::Div0))
+                ]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Div0)
+    );
+    // As an argument-evaluation error it also precedes the body's instance==0 refusal.
+    assert_eq!(
+        eval(
+            &call(
+                "TEXTAFTER",
+                vec![
+                    txt("a-b"),
+                    txt("-"),
+                    num(0.0),
+                    Expr::Lit(Value::Blank),
+                    Expr::Lit(Value::Blank),
+                    Expr::Lit(Value::Error(ErrKind::Div0))
+                ]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Div0)
+    );
+}
+
+#[test]
+fn textsplit_builds_an_array() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // A single column delimiter → a 1×3 row array; a single-cell eval collapses to the top-left.
+    assert_eq!(
+        eval(&call("TEXTSPLIT", vec![txt("a,b,c"), txt(",")]), &g),
+        Value::Array(
+            crate::value::Shape { rows: 1, cols: 3 },
+            vec![t("a"), t("b"), t("c")]
+        )
+    );
+    // A row delimiter (arg 3) makes it 2D; a ragged row pads with the default #N/A.
+    assert_eq!(
+        eval(
+            &call("TEXTSPLIT", vec![txt("a,b;c"), txt(","), txt(";")]),
+            &g
+        ),
+        Value::Array(
+            crate::value::Shape { rows: 2, cols: 2 },
+            vec![t("a"), t("b"), t("c"), Value::Error(ErrKind::Na)]
+        )
+    );
+    // ignore_empty (arg 4) drops empty fields.
+    assert_eq!(
+        eval(
+            &call(
+                "TEXTSPLIT",
+                vec![
+                    txt("a,,b"),
+                    txt(","),
+                    Expr::Lit(Value::Blank),
+                    Expr::Lit(Value::Bool(true))
+                ]
+            ),
+            &g
+        ),
+        Value::Array(
+            crate::value::Shape { rows: 1, cols: 2 },
+            vec![t("a"), t("b")]
+        )
+    );
+}
+
+#[test]
+fn numbervalue_parses_with_explicit_separators() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // Default separators (. decimal, , group).
+    assert_eq!(
+        eval(&call("NUMBERVALUE", vec![txt("1,234.5")]), &g),
+        Value::Number(1234.5)
+    );
+    // A trailing % divides by 100; two trailing %% divide by 100 twice.
+    assert_eq!(
+        eval(&call("NUMBERVALUE", vec![txt("2.5%")]), &g),
+        Value::Number(0.025)
+    );
+    assert_eq!(
+        eval(&call("NUMBERVALUE", vec![txt("25%%")]), &g),
+        Value::Number(0.0025)
+    );
+    // Only TRAILING percent signs count; an embedded or leading '%' is #VALUE! (oracle-pinned).
+    assert_eq!(
+        eval(&call("NUMBERVALUE", vec![txt("2%5")]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(&call("NUMBERVALUE", vec![txt("%25")]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    // Custom European separators (, decimal, . group).
+    assert_eq!(
+        eval(
+            &call("NUMBERVALUE", vec![txt("1.234,56"), txt(","), txt(".")]),
+            &g
+        ),
+        Value::Number(1234.56)
+    );
+    // Embedded whitespace is ignored; an empty string is 0.
+    assert_eq!(
+        eval(&call("NUMBERVALUE", vec![txt(" 3 . 5 ")]), &g),
+        Value::Number(3.5)
+    );
+    assert_eq!(
+        eval(&call("NUMBERVALUE", vec![txt("")]), &g),
+        Value::Number(0.0)
+    );
+    // A group separator right of the decimal separator is #VALUE!.
+    assert_eq!(
+        eval(&call("NUMBERVALUE", vec![txt("1.2,3")]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    // Equal decimal/group separators are #VALUE!.
+    assert_eq!(
+        eval(
+            &call("NUMBERVALUE", vec![txt("1.2"), txt("."), txt(".")]),
+            &g
+        ),
+        Value::Error(ErrKind::Value)
+    );
+}
+
+#[test]
+fn unichar_and_unicode_round_trip() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(text(eval(&call("UNICHAR", vec![num(65.0)]), &g)), "A");
+    assert_eq!(
+        text(eval(&call("UNICHAR", vec![num(8364.0)]), &g)),
+        "\u{20AC}" // euro — beyond the CHAR/Win-1252 byte range
+    );
+    assert_eq!(
+        eval(&call("UNICODE", vec![txt("A")]), &g),
+        Value::Number(65.0)
+    );
+    assert_eq!(
+        eval(&call("UNICODE", vec![txt("\u{20AC}")]), &g),
+        Value::Number(8364.0)
+    );
+    // UNICHAR(0) and a code point in the surrogate range are #VALUE!; UNICODE("") is #VALUE!.
+    assert_eq!(
+        eval(&call("UNICHAR", vec![num(0.0)]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(&call("UNICHAR", vec![num(55296.0)]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(&call("UNICODE", vec![txt("")]), &g),
+        Value::Error(ErrKind::Value)
+    );
 }

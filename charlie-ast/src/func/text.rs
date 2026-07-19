@@ -1,11 +1,10 @@
-// Concern: the TEXT worksheet functions (CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE REPT TRIM UPPER LOWER PROPER EXACT VALUE CHAR CODE TEXT) — the string built-ins, coercing every text argument through eval.rs's `to_text` (so the function forms agree with the `&` operator), indexing 1-based by CHARACTER, and TEXT's supported format-code subset (single-sourced in `classify_format`, shared with the parser's `validate_text_format`) | Non-concern: the registry table + dispatch (func/mod.rs), the text-coercion primitive (eval.rs owns `to_text`), and the shared `one_num`/`arg_text` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the STRING-MANIPULATION text worksheet functions (CONCAT CONCATENATE TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE REPT TRIM UPPER LOWER PROPER EXACT T CLEAN TEXTBEFORE TEXTAFTER TEXTSPLIT) plus the text<->number/char CONVERTERS (VALUE NUMBERVALUE CHAR CODE UNICHAR UNICODE) — the built-ins coercing every text argument through eval.rs's `to_text` (so the function forms agree with the `&` operator) and indexing 1-based by CHARACTER; VALUE/NUMBERVALUE parse a numeric/date/time-text subset, CHAR/CODE use the Windows-1252 code page, UNICHAR/UNICODE the full Unicode scalar space | Non-concern: the value->text FORMATTING functions + the Excel number-format-code engine (func/text_format.rs owns TEXT/FIXED/DOLLAR and the serial<->date map), the registry table + dispatch (func/mod.rs), the text-coercion primitive (eval.rs owns `to_text`), and the shared `one_num`/`arg_text` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
-// Text batch v1: CONCAT TEXTJOIN LEFT RIGHT MID LEN FIND SEARCH SUBSTITUTE REPLACE TRIM UPPER LOWER
-// TEXT. Every function coerces a text argument through eval.rs's `to_text` (so a number takes its
-// GENERAL form, a boolean → TRUE/FALSE, a blank → "", an error PROPAGATES) — the exact rule the `&`
-// operator uses, so the function forms and the operator agree. The Excel-semantics calls pinned here,
-// each worth a reviewer's eye:
+// The string built-ins. Every function coerces a text argument through eval.rs's `to_text` (so a
+// number takes its GENERAL form, a boolean → TRUE/FALSE, a blank → "", an error PROPAGATES) — the
+// exact rule the `&` operator uses, so the function forms and the operator agree. The Excel-semantics
+// calls pinned here, each worth a reviewer's eye:
 //   * POSITIONS ARE 1-BASED and count CHARACTERS (Unicode scalar values, `char`s — not bytes); an
 //     ASCII fixture is byte==char so the distinction is invisible there, but a multi-byte string
 //     indexes by char. LEFT/RIGHT/MID CLAMP an out-of-range count to the string's edge (never panic);
@@ -21,11 +20,9 @@ use super::*;
 //     (clamping a `start_num` past the end to an append, and `num_chars` past the end to "to the end").
 //   * TRIM removes leading/trailing ASCII spaces and COLLAPSES interior runs to a single space (Excel
 //     TRIM touches only 0x20, never a tab).
-//   * TEXT renders a value through a SUPPORTED format-code subset (single-sourced in `classify_format`); an unsupported
-//     LITERAL format is refused at PARSE (`validate_text_format` → `unsupported-format`), while a
-//     NON-LITERAL (computed) format is accepted and deferred — `text_fn`'s `None` arm returns `#VALUE!`
-//     iff the RESOLVED format is unsupported (accept-under-uncertainty, never a false-reject). The
-//     1900 date system with Excel's leap-year bug is the epoch call (see `serial_to_ymd`).
+//   * TEXTBEFORE/TEXTAFTER split on the Nth (1-based, negative from the end) occurrence of a delimiter,
+//     with an optional case-insensitive mode, end-of-text-as-delimiter flag, and if-not-found fallback
+//     (default `#N/A`); TEXTSPLIT builds a 2D array by a column (and optional row) delimiter.
 /// `CONCAT(text1, …)` — concatenate the text of every datum, FLATTENING ranges row-major (a blank cell
 /// contributes `""`, a number its general text); an error at ANY position propagates. This is the
 /// function form of the `&` operator, minus the delimiter/skip logic `TEXTJOIN` adds.
@@ -628,7 +625,9 @@ fn parse_datetime_serial(s: &str) -> Option<f64> {
 /// Parse a `yyyy-mm-dd` date into its Excel serial (1900 system, leap-bug faithful via
 /// [`serial_from_ymd`]), validating the month and the day-of-month and gating the result to the valid
 /// serial band `[1, MAX_SERIAL]`. `None` for a non-`yyyy-mm-dd` shape or an out-of-range field.
-fn parse_iso_date(s: &str) -> Option<i64> {
+/// Shared with `func::date` (DATEVALUE/TIMEVALUE parse the SAME ISO date/time subset VALUE accepts,
+/// so the one text→serial reading is single-homed here rather than re-derived).
+pub(crate) fn parse_iso_date(s: &str) -> Option<i64> {
     let mut it = s.split('-');
     let (y, m, d) = (it.next()?, it.next()?, it.next()?);
     if it.next().is_some() {
@@ -645,8 +644,8 @@ fn parse_iso_date(s: &str) -> Option<i64> {
 }
 
 /// Parse an `hh:mm[:ss]` clock time into a day fraction in `[0, 1)`. `None` for a non-clock shape or an
-/// out-of-range field (`hh > 23`, `mm`/`ss` `> 59`).
-fn parse_clock(s: &str) -> Option<f64> {
+/// out-of-range field (`hh > 23`, `mm`/`ss` `> 59`). Shared with `func::date` (TIMEVALUE/DATEVALUE).
+pub(crate) fn parse_clock(s: &str) -> Option<f64> {
     let mut it = s.split(':');
     let h: i64 = it.next()?.parse().ok()?;
     let m: i64 = it.next()?.parse().ok()?;
@@ -732,250 +731,346 @@ fn char_to_win1252(c: char) -> u32 {
     }
 }
 
-// --- TEXT() and its format-code subset ------------------------------------------------------
-// The supported subset is single-sourced HERE in `classify_format`, which BOTH the parser's
-// `validate_text_format` (refuse an unsupported LITERAL format up front) and `text_fn` (render a
-// resolved format, `#VALUE!` on an unsupported one) consult — so what parses and what renders can
-// never drift.
-/// The supported TEXT format-code kinds. Anything else classifies to `None` and is refused at parse.
-#[derive(Clone, Copy)]
-enum Fmt {
-    /// `General` — the value's general text form.
-    General,
-    /// A `0`/`0.00` fixed-decimal mask: `int_min` leading-zero-padded integer digits, `decimals`
-    /// fractional places.
-    Fixed { int_min: usize, decimals: usize },
-    /// A `#,##0`/`#,##0.00` thousands-grouped mask with `decimals` fractional places.
-    Thousands { decimals: usize },
-    /// A `0%`/`0.00%` percent mask with `decimals` fractional places (value ×100, trailing `%`).
-    Percent { decimals: usize },
-    /// The `yyyy-mm-dd` date mask (1900 date system — see `serial_to_ymd`).
-    DateYmd,
+// --- Text batch P-parity: T CLEAN TEXTBEFORE TEXTAFTER TEXTSPLIT NUMBERVALUE UNICHAR UNICODE.
+//     (CONCATENATE is the legacy alias of CONCAT — its registry row points at `concat_fn`, so there
+//     is no separate body.) ---
+
+/// `T(value)` — the value if it is TEXT, else `""` (a number, boolean, or blank yields the empty
+/// string). An error propagates (Excel `T(#DIV/0!)` is `#DIV/0!`).
+pub(crate) fn t_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match scalarize(ctx.eval(&args[0])) {
+        Value::Text(s) => Value::Text(s),
+        Value::Error(k) => Value::Error(k),
+        _ => Value::Text(String::new()),
+    }
 }
 
-/// Classify a TEXT format string into the supported subset, or `None` if unsupported. The ONE source
-/// of truth for both the parse-time gate and the render path.
-fn classify_format(fmt: &str) -> Option<Fmt> {
-    if fmt.eq_ignore_ascii_case("General") {
-        return Some(Fmt::General);
-    }
-    if fmt.eq_ignore_ascii_case("yyyy-mm-dd") {
-        return Some(Fmt::DateYmd);
-    }
-    // Percent: a `0`-mask followed by a single trailing `%`.
-    if let Some(mask) = fmt.strip_suffix('%') {
-        if let Some((int_min, decimals)) = parse_zero_mask(mask) {
-            // The integer part of a percent mask is a plain `0…` run (no grouping).
-            if int_min >= 1 {
-                return Some(Fmt::Percent { decimals });
-            }
-        }
-        return None;
-    }
-    // Thousands: the literal `#,##0` integer group, optionally `.0…` fractional places.
-    if let Some(rest) = fmt.strip_prefix("#,##0") {
-        return parse_decimals(rest).map(|decimals| Fmt::Thousands { decimals });
-    }
-    // Fixed: a plain `0…`(`.0…`) mask.
-    parse_zero_mask(fmt).map(|(int_min, decimals)| Fmt::Fixed { int_min, decimals })
-}
-
-/// Parse a `0`-only mask like `0`, `00`, `0.00` into `(int_min_digits, decimals)`. The integer part
-/// must be a non-empty run of `0`; an optional `.` introduces a non-empty run of `0` decimals. Any
-/// other character (or an empty part) is unsupported (`None`).
-fn parse_zero_mask(mask: &str) -> Option<(usize, usize)> {
-    let (int_part, frac_part) = match mask.split_once('.') {
-        Some((i, f)) => (i, Some(f)),
-        None => (mask, None),
-    };
-    if int_part.is_empty() || !int_part.bytes().all(|b| b == b'0') {
-        return None;
-    }
-    let decimals = match frac_part {
-        None => 0,
-        Some(f) if !f.is_empty() && f.bytes().all(|b| b == b'0') => f.len(),
-        Some(_) => return None,
-    };
-    Some((int_part.len(), decimals))
-}
-
-/// Parse the fractional tail of a thousands mask (`""` → 0 places, or `.0…` → that many), rejecting
-/// anything else.
-fn parse_decimals(rest: &str) -> Option<usize> {
-    if rest.is_empty() {
-        return Some(0);
-    }
-    let frac = rest.strip_prefix('.')?;
-    (!frac.is_empty() && frac.bytes().all(|b| b == b'0')).then_some(frac.len())
-}
-
-/// `TEXT(value, format)` — render `value` through the supported format subset (see `classify_format`).
-/// A LITERAL format was vetted by `validate_text_format` at parse; a NON-LITERAL (computed) format
-/// reaches here unvetted, so the `None` arm is a LIVE path — an unsupported RESOLVED format (e.g.
-/// `TEXT(A1, B1)` where `B1` is a currency mask) is `#VALUE!`, never a wrong guess (accept-under-
-/// uncertainty: the parse-time gate deferred to this eval-time check). An error `value` propagates; a
-/// value that a numeric/date format cannot coerce to a number is `#VALUE!`.
-pub(crate) fn text_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
-    let value = scalarize(ctx.eval(&args[0]));
-    if let Value::Error(k) = value {
-        return Value::Error(k);
-    }
-    let fmt = match arg_text(ctx, &args[1]) {
-        Ok(s) => s,
-        Err(k) => return Value::Error(k),
-    };
-    let Some(kind) = classify_format(&fmt) else {
-        return Value::Error(ErrKind::Value);
-    };
-    match render_format(&value, kind) {
-        Ok(s) => Value::Text(s),
+/// `CLEAN(text)` — strip every non-printable character (Unicode scalar `< 32`, the ASCII control
+/// codes Excel's CLEAN removes) from the value's text form.
+pub(crate) fn clean_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match arg_text(ctx, &args[0]) {
+        Ok(s) => Value::Text(s.chars().filter(|c| (*c as u32) >= 32).collect()),
         Err(k) => Value::Error(k),
     }
 }
 
-/// Render a (non-error) scalar value through a vetted format kind.
-fn render_format(value: &Value, kind: Fmt) -> Result<String, ErrKind> {
-    match kind {
-        Fmt::General => Ok(to_text(value)?),
-        Fmt::Fixed { int_min, decimals } => {
-            Ok(format_number(coerce_num(value)?, decimals, int_min, false))
-        }
-        Fmt::Thousands { decimals } => Ok(format_number(coerce_num(value)?, decimals, 1, true)),
-        Fmt::Percent { decimals } => {
-            Ok(format_number(coerce_num(value)? * 100.0, decimals, 1, false) + "%")
-        }
-        Fmt::DateYmd => format_date_ymd(coerce_num(value)?),
-    }
+/// `TEXTBEFORE(text, delimiter, [instance], [match_mode], [match_end], [if_not_found])` — the text
+/// before the `instance`-th occurrence of `delimiter` (see [`text_split_around`]).
+pub(crate) fn textbefore_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    text_split_around(ctx, args, true)
 }
 
-/// Format `n` with `decimals` fractional places (half-away-from-zero), a minimum of `int_min` integer
-/// digits (leading-zero padded), and optional thousands grouping. The workhorse behind the fixed /
-/// thousands / percent masks.
-fn format_number(n: f64, decimals: usize, int_min: usize, grouping: bool) -> String {
-    let (neg, mut int_digits, frac_digits) = split_scaled(n, decimals);
-    while int_digits.len() < int_min {
-        int_digits.insert(0, '0');
-    }
-    if grouping {
-        int_digits = group_thousands(&int_digits);
-    }
-    let mut out = String::new();
-    if neg {
-        out.push('-');
-    }
-    out.push_str(&int_digits);
-    if decimals > 0 {
-        out.push('.');
-        out.push_str(&frac_digits);
-    }
-    out
+/// `TEXTAFTER(text, delimiter, [instance], [match_mode], [match_end], [if_not_found])` — the text
+/// after the `instance`-th occurrence of `delimiter` (see [`text_split_around`]).
+pub(crate) fn textafter_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    text_split_around(ctx, args, false)
 }
 
-/// Scale `|n|` by `10^decimals`, round half-away-from-zero, and split back into `(is_negative,
-/// integer_digits, fractional_digits)`. The sign is dropped when the rounded magnitude is zero (Excel
-/// shows `0.00`, never `-0.00`).
-fn split_scaled(n: f64, decimals: usize) -> (bool, String, String) {
-    let factor = 10f64.powi(decimals as i32);
-    let scaled = (n.abs() * factor).round();
-    let neg = n < 0.0 && scaled != 0.0;
-    let mut digits = format!("{scaled:.0}");
-    while digits.len() < decimals + 1 {
-        digits.insert(0, '0');
-    }
-    let split = digits.len() - decimals;
-    let int_digits = digits[..split].to_string();
-    let frac_digits = digits[split..].to_string();
-    (neg, int_digits, frac_digits)
-}
-
-/// Insert `,` thousands separators into a run of ASCII digits.
-fn group_thousands(int_digits: &str) -> String {
-    let n = int_digits.len();
-    let mut out = String::with_capacity(n + n / 3);
-    for (i, ch) in int_digits.chars().enumerate() {
-        if i > 0 && (n - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-/// Render an Excel date serial as `yyyy-mm-dd`. The integer day is `floor`ed from the serial, then
-/// gated to the valid Excel date band `[1, MAX_SERIAL]` (1900-01-01 … 9999-12-31) — the SAME band the
-/// sibling reader [`date_serial_arg`] enforces for YEAR/MONTH/DAY/EDATE/DATEDIF. A serial `< 1` (before
-/// the 1900 epoch, rather than Excel's fictional `1900-01-00`), a serial past 9999-12-31, or a `NaN`
-/// is `#VALUE!` — one located refusal consistent with every other TEXT format failure. The upper gate
-/// is load-bearing: without it a large serial (`=TEXT(1e300,"yyyy-mm-dd")`) flows into `serial_to_ymd`
-/// → `civil_from_days` and OVERFLOWS `i64` at `z + 719_468` — a panic under overflow-checks, or a
-/// silently-wrapped nonsense date in release. The refusal replaces both with the correct located hole.
-fn format_date_ymd(serial: f64) -> Result<String, ErrKind> {
-    let day = serial.floor();
-    if !(1.0..=MAX_SERIAL as f64).contains(&day) {
-        return Err(ErrKind::Value);
-    }
-    let (y, m, d) = serial_to_ymd(day as i64);
-    Ok(format!("{y:04}-{m:02}-{d:02}"))
-}
-
-/// Unix day index of 1899-12-31 (Excel "serial 0" in the pre-bug half); the shared epoch anchor for
-/// both directions of the serial↔date map (`serial_to_ymd` and its inverse `serial_from_ymd`).
-pub(crate) const EPOCH_1899_12_31: i64 = -25568;
-
-/// Convert an Excel date serial (integer, `>= 1`) to a proleptic-Gregorian `(year, month, day)` in the
-/// **1900 date system, WITH Excel's leap-year bug replicated** (serial 60 is the fictional
-/// `1900-02-29`; serials `>= 61` are shifted back one day to skip it, so serial 61 is `1900-03-01`).
-/// This epoch/bug fidelity is the load-bearing date call — a real Excel-authored serial round-trips.
-pub(crate) fn serial_to_ymd(serial: i64) -> (i64, u32, u32) {
-    // The phantom leap day Excel invented has no real civil date; report it verbatim.
-    if serial == 60 {
-        return (1900, 2, 29);
-    }
-    // Serials 1..59 add straight through (serial 1 = 1900-01-01); serials > 60 lose one day (the
-    // phantom 1900-02-29) so the calendar re-aligns with reality (serial 61 = 1900-03-01).
-    let unix_days = if serial < 60 {
-        EPOCH_1899_12_31 + serial
-    } else {
-        EPOCH_1899_12_31 + serial - 1
+/// The shared TEXTBEFORE/TEXTAFTER core. `instance` (default 1) selects the delimiter occurrence,
+/// COUNTING FROM THE END when negative; `instance == 0` is `#VALUE!`. `match_mode` 1 folds ASCII case;
+/// `match_end` 1 treats the end of `text` as a trailing delimiter. On no match, returns `if_not_found`
+/// (eagerly evaluated — an error fallback surfaces even on a hit) or `#N/A`.
+///
+/// FOLLOW-UP: `delimiter` is read as a single string; Excel also accepts an ARRAY of alternative
+/// delimiters (`TEXTBEFORE(a,{",",";"})`). Not yet modelled — the single-delimiter forms are exact.
+fn text_split_around(ctx: &mut EvalCtx, args: &[Expr], before: bool) -> Value {
+    let text = match arg_text(ctx, &args[0]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
     };
-    civil_from_days(unix_days)
+    let delim = match arg_text(ctx, &args[1]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    let instance = match opt_num(ctx, args, 2, 1.0) {
+        Ok(n) => n.trunc() as i64,
+        Err(k) => return Value::Error(k),
+    };
+    let ci = match opt_num(ctx, args, 3, 0.0) {
+        Ok(n) => n != 0.0,
+        Err(k) => return Value::Error(k),
+    };
+    let match_end = match opt_num(ctx, args, 4, 0.0) {
+        Ok(n) => n != 0.0,
+        Err(k) => return Value::Error(k),
+    };
+    // `if_not_found` is a plain argument, so Excel evaluates it EAGERLY (TEXTBEFORE is not a lazy
+    // IFERROR-family function): an error-valued fallback surfaces even when the delimiter IS found,
+    // and it is an argument-evaluation error, so it precedes the body's `instance == 0` refusal.
+    let if_not_found = match args.get(5) {
+        Some(e) => match scalarize(ctx.eval(e)) {
+            Value::Error(k) => return Value::Error(k),
+            v => Some(v),
+        },
+        None => None,
+    };
+    if instance == 0 {
+        return Value::Error(ErrKind::Value);
+    }
+    let text_chars: Vec<char> = text.chars().collect();
+    let delim_chars: Vec<char> = delim.chars().collect();
+    match split_around(&text_chars, &delim_chars, instance, ci, match_end, before) {
+        Some(s) => Value::Text(s),
+        None => if_not_found.unwrap_or(Value::Error(ErrKind::Na)),
+    }
 }
 
-/// Howard Hinnant's `civil_from_days`: days since the Unix epoch (1970-01-01) → proleptic-Gregorian
-/// `(year, month, day)`. Exact integer arithmetic, valid across the whole date range v1 cares about.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
-    (y + i64::from(m <= 2), m, d)
+/// Compute the TEXTBEFORE/TEXTAFTER result, or `None` when the requested occurrence does not exist.
+/// An EMPTY delimiter matches once at the very start (before = `""`, after = the whole text).
+fn split_around(
+    text: &[char],
+    delim: &[char],
+    instance: i64,
+    ci: bool,
+    match_end: bool,
+    before: bool,
+) -> Option<String> {
+    if delim.is_empty() {
+        return (instance == 1 || instance == -1).then(|| {
+            if before {
+                String::new()
+            } else {
+                text.iter().collect()
+            }
+        });
+    }
+    let mut occ = delimiter_occurrences(text, delim, ci);
+    if match_end {
+        occ.push((text.len(), text.len()));
+    }
+    let count = occ.len() as i64;
+    let idx = if instance > 0 {
+        instance - 1
+    } else {
+        count + instance
+    };
+    if idx < 0 || idx >= count {
+        return None;
+    }
+    let (start, end) = occ[idx as usize];
+    Some(if before {
+        text[..start].iter().collect()
+    } else {
+        text[end..].iter().collect()
+    })
 }
 
-/// Parse-time gate for `TEXT`: refuse ONLY an UNSUPPORTED STRING LITERAL format code (the subset
-/// `classify_format` accepts) — a statically-known-wrong format is caught up front rather than mis-rendered at eval. A
-/// non-literal format (a reference/computed string, e.g. `TEXT(A1, B1)`) is ACCEPTED and deferred to
-/// `text_fn`, which returns `#VALUE!` iff the RESOLVED format turns out unsupported. This is
-/// accept-under-uncertainty (ast-standards PART 6): a false-reject is the cardinal sin, so a dynamic
-/// format that RESOLVES to a supported code (`B1="0.00"`) — which real Excel accepts and computes —
-/// must not be rejected up front; the only deferred gap is a false-*negative* (an unsupported dynamic
-/// format becomes eval's `#VALUE!`, not a parse refusal). Registered as `TEXT`'s `validate` row so the
-/// check stays registry data, not a hand-fork in the parser.
-pub(crate) fn validate_text_format(args: &[Expr], span: Span) -> Result<(), Diag> {
-    // Arity (exactly 2) is already checked; guard defensively so a synthesized short call can't panic.
-    match args.get(1) {
-        // The one static-certainty case: a literal format string that is NOT in the supported subset.
-        Some(Expr::Lit(Value::Text(fmt))) if classify_format(fmt).is_none() => Err(Diag::new(
-            DiagCode::UnsupportedFormat,
-            span,
-            format!("TEXT format code {fmt:?} is not in the supported v1 subset"),
-        )),
-        // A supported literal, OR any non-literal format v1 cannot vet statically: accept and defer to
-        // eval's resolved-format `#VALUE!` rather than false-reject a call Excel would compute.
-        _ => Ok(()),
+/// The `(start, end)` char spans of every non-overlapping occurrence of `delim` in `text`, left to
+/// right. `ci` folds ASCII case.
+fn delimiter_occurrences(text: &[char], delim: &[char], ci: bool) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + delim.len() <= text.len() {
+        if (0..delim.len()).all(|k| char_eq(text[i + k], delim[k], ci)) {
+            out.push((i, i + delim.len()));
+            i += delim.len();
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Character equality, optionally ASCII-case-insensitive (the engine's text-fold convention).
+fn char_eq(a: char, b: char, ci: bool) -> bool {
+    if ci {
+        a.eq_ignore_ascii_case(&b)
+    } else {
+        a == b
+    }
+}
+
+/// `TEXTSPLIT(text, col_delimiter, [row_delimiter], [ignore_empty], [match_mode], [pad_with])` — split
+/// `text` into a 2D array by `col_delimiter` (across) and the optional `row_delimiter` (down). With
+/// `ignore_empty` TRUE, empty fields (and empty rows) are dropped; ragged rows are padded to the
+/// widest with `pad_with` (default `#N/A`). `match_mode` 1 folds ASCII case. An empty result is
+/// `#CALC!` (a located refusal, CORE2).
+///
+/// FOLLOW-UP: each delimiter is read as a single string; Excel also accepts an ARRAY of alternative
+/// delimiters (`TEXTSPLIT(a,{",",";"})`). Not yet modelled — the single-delimiter forms are exact.
+pub(crate) fn textsplit_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let text = match arg_text(ctx, &args[0]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    let col_delim = match arg_text(ctx, &args[1]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    let row_delim = match args.get(2) {
+        Some(e) => match arg_text(ctx, e) {
+            Ok(s) => Some(s),
+            Err(k) => return Value::Error(k),
+        },
+        None => None,
+    };
+    let ignore_empty = match opt_bool(ctx, args, 3, false) {
+        Ok(b) => b,
+        Err(k) => return Value::Error(k),
+    };
+    let ci = match opt_num(ctx, args, 4, 0.0) {
+        Ok(n) => n != 0.0,
+        Err(k) => return Value::Error(k),
+    };
+    let pad = match args.get(5) {
+        Some(e) => scalarize(ctx.eval(e)),
+        None => Value::Error(ErrKind::Na),
+    };
+
+    let text_chars: Vec<char> = text.chars().collect();
+    let col_chars: Vec<char> = col_delim.chars().collect();
+    let row_lines: Vec<Vec<char>> = match &row_delim {
+        Some(rd) if !rd.is_empty() => {
+            let rd_chars: Vec<char> = rd.chars().collect();
+            split_segments(&text_chars, &rd_chars, ci)
+                .into_iter()
+                .map(|s| s.chars().collect())
+                .collect()
+        }
+        _ => vec![text_chars],
+    };
+    let mut grid: Vec<Vec<String>> = row_lines
+        .iter()
+        .map(|line| split_segments(line, &col_chars, ci))
+        .collect();
+    if ignore_empty {
+        for row in &mut grid {
+            row.retain(|c| !c.is_empty());
+        }
+        grid.retain(|r| !r.is_empty());
+    }
+    let cols = grid.iter().map(|r| r.len()).max().unwrap_or(0);
+    if grid.is_empty() || cols == 0 {
+        return Value::Error(ErrKind::Calc);
+    }
+    let rows = grid.len();
+    let mut cells = Vec::with_capacity(rows * cols);
+    for row in grid {
+        for c in 0..cols {
+            cells.push(match row.get(c) {
+                Some(s) => Value::Text(s.clone()),
+                None => pad.clone(),
+            });
+        }
+    }
+    Value::Array(
+        Shape {
+            rows: rows as u32,
+            cols: cols as u32,
+        },
+        cells,
+    )
+}
+
+/// Split `text` into segments on every non-overlapping occurrence of `delim` (an empty `delim` yields
+/// the whole text as one segment). `ci` folds ASCII case.
+fn split_segments(text: &[char], delim: &[char], ci: bool) -> Vec<String> {
+    if delim.is_empty() {
+        return vec![text.iter().collect()];
+    }
+    let mut out = Vec::new();
+    let mut seg = String::new();
+    let mut i = 0;
+    while i < text.len() {
+        if i + delim.len() <= text.len()
+            && (0..delim.len()).all(|k| char_eq(text[i + k], delim[k], ci))
+        {
+            out.push(std::mem::take(&mut seg));
+            i += delim.len();
+        } else {
+            seg.push(text[i]);
+            i += 1;
+        }
+    }
+    out.push(seg);
+    out
+}
+
+/// `NUMBERVALUE(text, [decimal_separator], [group_separator])` — parse `text` to a number with
+/// EXPLICIT separators (defaults `.` / `,`): whitespace is ignored, group separators are stripped, the
+/// decimal separator maps to `.`, and each trailing/embedded `%` divides the result by 100. A group
+/// separator AFTER the decimal separator, equal decimal/group separators, or an otherwise unparsable
+/// core is `#VALUE!`; an empty text is `0`.
+pub(crate) fn numbervalue_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let raw = match arg_text(ctx, &args[0]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    let dec = match sep_arg(ctx, args, 1, '.') {
+        Ok(c) => c,
+        Err(k) => return Value::Error(k),
+    };
+    let grp = match sep_arg(ctx, args, 2, ',') {
+        Ok(c) => c,
+        Err(k) => return Value::Error(k),
+    };
+    if dec == grp {
+        return Value::Error(ErrKind::Value);
+    }
+    let no_ws: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+    if no_ws.is_empty() {
+        return Value::Number(0.0);
+    }
+    // Excel honours only TRAILING percent signs — each divides the result by 100; a '%' anywhere
+    // else (embedded or leading) makes the whole text invalid, e.g. NUMBERVALUE("2%5") is #VALUE!.
+    let trimmed = no_ws.trim_end_matches('%');
+    let percents = (no_ws.len() - trimmed.len()) as i32;
+    if trimmed.contains('%') {
+        return Value::Error(ErrKind::Value);
+    }
+    let body: String = trimmed.to_string();
+    // A group separator may not appear in the fractional part (right of the decimal separator).
+    if let Some(dp) = body.find(dec)
+        && body[dp + dec.len_utf8()..].contains(grp)
+    {
+        return Value::Error(ErrKind::Value);
+    }
+    let cleaned: String = body
+        .chars()
+        .filter(|c| *c != grp)
+        .map(|c| if c == dec { '.' } else { c })
+        .collect();
+    match cleaned.parse::<f64>() {
+        Ok(n) if n.is_finite() => Value::Number(n / 100f64.powi(percents)),
+        _ => Value::Error(ErrKind::Value),
+    }
+}
+
+/// The first character of an optional separator argument, or `default` when the call omits it (an
+/// empty separator string also falls back to `default`).
+fn sep_arg(ctx: &mut EvalCtx, args: &[Expr], idx: usize, default: char) -> Result<char, ErrKind> {
+    match args.get(idx) {
+        Some(e) => Ok(arg_text(ctx, e)?.chars().next().unwrap_or(default)),
+        None => Ok(default),
+    }
+}
+
+/// `UNICHAR(number)` — the single character whose UNICODE code point is `number` (truncated). Valid
+/// for `1..=0x10FFFF` excluding the surrogate range; anything outside (including `0`) is `#VALUE!`.
+pub(crate) fn unichar_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let n = match one_num(ctx, &args[0]) {
+        Ok(x) => x.trunc(),
+        Err(k) => return Value::Error(k),
+    };
+    if n < 1.0 {
+        return Value::Error(ErrKind::Value);
+    }
+    // `n as u32` saturates a huge value to `u32::MAX`, which `from_u32` then rejects (`None`).
+    match char::from_u32(n as u32) {
+        Some(c) => Value::Text(c.to_string()),
+        None => Value::Error(ErrKind::Value),
+    }
+}
+
+/// `UNICODE(text)` — the UNICODE code point of the FIRST character of `text`; an empty text is
+/// `#VALUE!`. The inverse of `UNICHAR`.
+pub(crate) fn unicode_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let s = match arg_text(ctx, &args[0]) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    match s.chars().next() {
+        Some(c) => Value::Number(c as u32 as f64),
+        None => Value::Error(ErrKind::Value),
     }
 }

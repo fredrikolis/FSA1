@@ -316,7 +316,8 @@ MATCH	text/text-fixed-decimals
 MATCH	text/text-general
 MATCH	text/text-general-15-significant-digits
 MATCH	text/text-negative-fixed
-MATCH	text/text-nonnumeric-to-numeric-format-is-value
+MATCH	text/text-coercible-text-into-numeric-format-pads
+MATCH	text/text-noncoercible-to-numeric-format-passes-through
 MATCH	text/text-percent
 MATCH	text/text-percent-decimals
 MATCH	text/text-thousands-grouping

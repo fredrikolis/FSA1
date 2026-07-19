@@ -415,7 +415,21 @@ impl<'t> Parser<'t> {
             self.advance();
         } else {
             loop {
-                args.push(self.parse_expr(0)?);
+                // An EMPTY slot — a comma, or the closing paren, with no expression before it — is an
+                // OMITTED argument. Excel treats an omitted middle/trailing argument as blank
+                // (`INDEX(a,,c)` omits row_num → the whole column; `VLOOKUP(x,t,c,)` omits
+                // range_lookup → exact), so represent it as a `Blank` literal and let the callee read
+                // it through the ordinary blank-as-0 / blank-as-false coercions. There is no
+                // blank-literal syntax, so an empty slot is the SOLE source of a literal `Blank` — it
+                // can never be a mis-parse of real content. The slot still counts toward arity.
+                if matches!(
+                    self.peek().map(|t| &t.kind),
+                    Some(TokenKind::Comma | TokenKind::RParen)
+                ) {
+                    args.push(Expr::Lit(Value::Blank));
+                } else {
+                    args.push(self.parse_expr(0)?);
+                }
                 match self.peek().map(|t| &t.kind) {
                     Some(TokenKind::Comma) => {
                         self.advance();

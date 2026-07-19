@@ -1,4 +1,4 @@
-// Concern: UNIT-TEST pins for the date/time family built-ins (DATE YEAR MONTH DAY EDATE EOMONTH DATEDIF DAYS WEEKDAY WEEKNUM WORKDAY NETWORKDAYS YEARFRAC HOUR MINUTE SECOND TIME TODAY NOW) exercised through `FUNCS` dispatch — serial construction/normalization with the replicated 1900 leap-year bug, end-of-month clamping, DATEDIF unit folding, day-count / weekday / working-day / year-fraction / time-of-day arithmetic, the pinned-clock volatiles, and the registry-wide volatility invariant for TODAY/NOW | Non-concern: the date impls (`func/date.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`arr`) | IO: in-memory `Grid` fixtures (with a pinned clock) + literal `Expr`s -> asserted `Value`s
+// Concern: UNIT-TEST pins for the date/time family built-ins (DATE YEAR MONTH DAY EDATE EOMONTH DATEDIF DAYS DAYS360 WEEKDAY WEEKNUM ISOWEEKNUM WORKDAY WORKDAY.INTL NETWORKDAYS NETWORKDAYS.INTL YEARFRAC HOUR MINUTE SECOND TIME DATEVALUE TIMEVALUE TODAY NOW) exercised through `FUNCS` dispatch — serial construction/normalization with the replicated 1900 leap-year bug, end-of-month clamping, DATEDIF unit folding, day-count (incl. the 360-day DAYS360 US/European rules) / weekday / working-day (incl. `.INTL` custom weekends) / year-fraction / time-of-day arithmetic, the text->serial DATEVALUE/TIMEVALUE readers, the pinned-clock volatiles, and the registry-wide volatility invariant for TODAY/NOW | Non-concern: the date impls (`func/date.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`arr`) | IO: in-memory `Grid` fixtures (with a pinned clock) + literal `Expr`s -> asserted `Value`s
 use super::*;
 
 #[test]
@@ -371,6 +371,263 @@ fn time_and_its_components() {
 }
 
 #[test]
+fn days360_us_and_european_methods() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let d = |y: f64, m: f64, dd: f64| call("DATE", vec![num(y), num(m), num(dd)]);
+    let d360 = |a: Expr, b: Expr, method: Option<bool>| {
+        let mut args = vec![a, b];
+        if let Some(euro) = method {
+            args.push(Expr::Lit(Value::Bool(euro)));
+        }
+        call("DAYS360", args)
+    };
+    // US (NASD), 31 -> 31: start Jan-31 -> 30, end Mar-31 -> 30 (start is 30). Exactly two 30-day
+    // months = 60. (oracle-pinned; formulas lib agrees.)
+    assert_eq!(
+        eval(&d360(d(2020.0, 1.0, 31.0), d(2020.0, 3.0, 31.0), None), &g),
+        Value::Number(60.0)
+    );
+    // US last-day-of-February start rule: Feb-29-2020 (leap, last day) -> 30, end Feb-28-2021 stays
+    // 28 (not the 31st). 360 + 0 + (28 - 30) = 358. Excel applies the last-of-Feb rule to the START
+    // only — distinct from YEARFRAC basis 0, which rewrites BOTH Feb month-ends (there = 1.0/360).
+    assert_eq!(
+        eval(&d360(d(2020.0, 2.0, 29.0), d(2021.0, 2.0, 28.0), None), &g),
+        Value::Number(358.0)
+    );
+    // A mid-month end date is untouched: Jan-15 -> Feb-29 = 30 + (29 - 15) = 44.
+    assert_eq!(
+        eval(&d360(d(2020.0, 1.0, 15.0), d(2020.0, 2.0, 29.0), None), &g),
+        Value::Number(44.0)
+    );
+    // European (30E/360): only 31 -> 30 on either endpoint, no February rule. Feb-29 stays 29, so
+    // Feb-29 -> Mar-31 = 30 + (30 - 29) = 31.
+    assert_eq!(
+        eval(
+            &d360(d(2020.0, 2.0, 29.0), d(2020.0, 3.0, 31.0), Some(true)),
+            &g
+        ),
+        Value::Number(31.0)
+    );
+    // Reversed endpoints yield a negative count (no reordering).
+    assert_eq!(
+        eval(&d360(d(2020.0, 3.0, 31.0), d(2020.0, 1.0, 31.0), None), &g),
+        Value::Number(-60.0)
+    );
+}
+
+#[test]
+fn isoweeknum_matches_weeknum_type_21() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // 2023-01-01 belongs to ISO week 52 of 2022 (oracle-pinned; == WEEKNUM(.,21)).
+    assert_eq!(
+        eval(&call("ISOWEEKNUM", vec![num(44927.0)]), &g),
+        Value::Number(52.0)
+    );
+    // 2020-01-01 (Wednesday) is ISO week 1.
+    assert_eq!(
+        eval(&call("ISOWEEKNUM", vec![num(43831.0)]), &g),
+        Value::Number(1.0)
+    );
+    // A serial before the epoch is out of domain -> #NUM!.
+    assert_eq!(
+        eval(&call("ISOWEEKNUM", vec![num(0.0)]), &g),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn networkdays_intl_custom_weekends() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // 2020-01-01 (Wed) .. 2020-01-10 (Fri): default weekend (Sat/Sun) leaves 8 working days.
+    assert_eq!(
+        eval(
+            &call("NETWORKDAYS.INTL", vec![num(43831.0), num(43840.0)]),
+            &g
+        ),
+        Value::Number(8.0)
+    );
+    // Weekend code 11 (Sunday only) drops just the one Sunday in the span -> 9.
+    assert_eq!(
+        eval(
+            &call(
+                "NETWORKDAYS.INTL",
+                vec![num(43831.0), num(43840.0), num(11.0)]
+            ),
+            &g
+        ),
+        Value::Number(9.0)
+    );
+    // A 7-char mask "0000011" (Sat+Sun non-working, Mon-first) matches the default -> 8.
+    assert_eq!(
+        eval(
+            &call(
+                "NETWORKDAYS.INTL",
+                vec![
+                    num(43831.0),
+                    num(43840.0),
+                    Expr::Lit(Value::Text("0000011".into()))
+                ]
+            ),
+            &g
+        ),
+        Value::Number(8.0)
+    );
+    // Reversed endpoints negate the count.
+    assert_eq!(
+        eval(
+            &call("NETWORKDAYS.INTL", vec![num(43840.0), num(43831.0)]),
+            &g
+        ),
+        Value::Number(-8.0)
+    );
+    // An all-`1` mask (no working day) is #VALUE!; a wrong-length mask is #VALUE!; an unsupported
+    // numeric code is #NUM!.
+    assert_eq!(
+        eval(
+            &call(
+                "NETWORKDAYS.INTL",
+                vec![
+                    num(43831.0),
+                    num(43840.0),
+                    Expr::Lit(Value::Text("1111111".into()))
+                ]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(
+            &call(
+                "NETWORKDAYS.INTL",
+                vec![
+                    num(43831.0),
+                    num(43840.0),
+                    Expr::Lit(Value::Text("00011".into()))
+                ]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(
+            &call(
+                "NETWORKDAYS.INTL",
+                vec![num(43831.0), num(43840.0), num(8.0)]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn workday_intl_custom_weekends_and_holidays() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // 2020-01-01 (Wed) + 5 working days, default weekend -> 2020-01-08 (serial 43838).
+    assert_eq!(
+        eval(&call("WORKDAY.INTL", vec![num(43831.0), num(5.0)]), &g),
+        Value::Number(43838.0)
+    );
+    // Weekend code 11 (Sunday only) makes Saturday a working day, so +5 lands one day earlier,
+    // 2020-01-07 (serial 43837).
+    assert_eq!(
+        eval(
+            &call("WORKDAY.INTL", vec![num(43831.0), num(5.0), num(11.0)]),
+            &g
+        ),
+        Value::Number(43837.0)
+    );
+    // Negative days count backward: 2020-01-01 - 5 working days = 2019-12-25 (serial 43824).
+    assert_eq!(
+        eval(&call("WORKDAY.INTL", vec![num(43831.0), num(-5.0)]), &g),
+        Value::Number(43824.0)
+    );
+    // A holiday inside the run pushes the result out by one day (mask weekend + holidays arg).
+    assert_eq!(
+        eval(
+            &call(
+                "WORKDAY.INTL",
+                vec![
+                    num(43831.0),
+                    num(5.0),
+                    Expr::Lit(Value::Text("0000011".into())),
+                    arr(1, 1, vec![n(43833.0)])
+                ]
+            ),
+            &g
+        ),
+        Value::Number(43839.0)
+    );
+    // An all-`1` mask is #VALUE!; an unsupported code is #NUM!.
+    assert_eq!(
+        eval(
+            &call(
+                "WORKDAY.INTL",
+                vec![
+                    num(43831.0),
+                    num(5.0),
+                    Expr::Lit(Value::Text("1111111".into()))
+                ]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(
+            &call("WORKDAY.INTL", vec![num(43831.0), num(5.0), num(8.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn datevalue_parses_date_text() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let dv = |s: &str| call("DATEVALUE", vec![Expr::Lit(Value::Text(s.into()))]);
+    // A plain ISO date -> its integer serial (oracle-pinned).
+    assert_eq!(eval(&dv("2020-01-01"), &g), Value::Number(43831.0));
+    // A trailing clock time is accepted but DROPPED -> the date serial only.
+    assert_eq!(eval(&dv("2020-01-01 12:00"), &g), Value::Number(43831.0));
+    // A bare clock time has no date part -> #VALUE! (this is Excel's answer; the `formulas` lib
+    // MISREADS a bare time as a date, so it is pinned here by hand rather than against the oracle).
+    assert_eq!(eval(&dv("12:00"), &g), Value::Error(ErrKind::Value));
+    // Unrecognized / empty text is #VALUE!.
+    assert_eq!(eval(&dv("not a date"), &g), Value::Error(ErrKind::Value));
+    assert_eq!(eval(&dv(""), &g), Value::Error(ErrKind::Value));
+    // A numeric (non-text) argument is #VALUE! — DATEVALUE does not coerce a serial back through.
+    assert_eq!(
+        eval(&call("DATEVALUE", vec![num(40000.0)]), &g),
+        Value::Error(ErrKind::Value)
+    );
+}
+
+#[test]
+fn timevalue_parses_time_text() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let tv = |s: &str| call("TIMEVALUE", vec![Expr::Lit(Value::Text(s.into()))]);
+    // A bare clock -> its day fraction (oracle-pinned).
+    assert_eq!(eval(&tv("12:00"), &g), Value::Number(0.5));
+    assert_eq!(
+        eval(&tv("18:30:30"), &g),
+        Value::Number((18 * 3600 + 30 * 60 + 30) as f64 / 86_400.0)
+    );
+    // A leading date part is DROPPED -> only the clock fraction.
+    assert_eq!(eval(&tv("2020-01-01 12:00"), &g), Value::Number(0.5));
+    // A bare date has a time-of-day of 0.
+    assert_eq!(eval(&tv("2020-01-01"), &g), Value::Number(0.0));
+    // Unrecognized text is #VALUE!; a non-text argument is #VALUE!.
+    assert_eq!(eval(&tv("nope"), &g), Value::Error(ErrKind::Value));
+    assert_eq!(
+        eval(&call("TIMEVALUE", vec![num(0.5)]), &g),
+        Value::Error(ErrKind::Value)
+    );
+}
+
+#[test]
 fn today_and_now_read_the_pinned_clock() {
     // The test grid pins the clock to PINNED_NOW_SERIAL (44927.5 = 2023-01-01T12:00).
     let g = Grid::new(1, vec![Value::Blank]);
@@ -386,10 +643,11 @@ fn today_and_now_read_the_pinned_clock() {
 }
 
 #[test]
-fn today_and_now_are_the_registry_volatiles() {
-    // Exactly TODAY and NOW carry `volatile: true`; every other row is pure.
+fn the_registry_volatiles_are_exactly_the_clock_and_random_functions() {
+    // The volatile rows are exactly the two clock functions (TODAY/NOW, reading `now_serial`) and the
+    // two random functions (RAND/RANDBETWEEN, reading `rand_unit`); every other row is pure.
     for f in FUNCS {
-        let expect = matches!(f.name, "TODAY" | "NOW");
+        let expect = matches!(f.name, "TODAY" | "NOW" | "RAND" | "RANDBETWEEN");
         assert_eq!(f.volatile, expect, "{} volatility", f.name);
     }
 }

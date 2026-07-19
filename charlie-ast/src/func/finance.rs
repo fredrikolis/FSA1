@@ -1,4 +1,4 @@
-// Concern: the FINANCIAL worksheet functions (PMT FV NPER RATE IPMT PPMT NPV IRR XNPV XIRR) — the cash-flow time-value built-ins over ONE shared annuity-balance / present-value model (Excel's money-OUT-negative sign convention), with the iterative root finds (IRR/RATE/XIRR) bounded to terminate (never a hang or a panic); `pow_int`'s deterministic left-to-right multiply order the conformance oracle mirrors bit-for-bit for the integer-period functions, while the irregular-date discounters (XNPV/XIRR) use `f64::powf` on an Actual/365 day count (dates are 1900-system serials) and are closeness-graded, not bit-exact | Non-concern: the registry table + dispatch (func/mod.rs), the serial↔date maps (func/date.rs + func/text.rs), and the shared `one_num`/`collect_numbers`/`block`/`coerce_num`/`finite_or_num` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the FINANCIAL worksheet functions (PMT FV PV NPER RATE IPMT PPMT NPV IRR MIRR XNPV XIRR CUMIPMT CUMPRINC SLN SYD DB DDB EFFECT NOMINAL PDURATION RRI) — the cash-flow time-value AND asset-depreciation built-ins over ONE shared annuity-balance / present-value model (Excel's money-OUT-negative sign convention), with the iterative root finds (IRR/RATE/XIRR/MIRR) bounded to terminate (never a hang or a panic); `pow_int`'s deterministic left-to-right multiply order the conformance oracle mirrors bit-for-bit for the integer-period functions, while the irregular-date discounters (XNPV/XIRR), the interest-rate converters (NOMINAL/PDURATION/RRI/MIRR) and the fixed-declining depreciators (DB/DDB) use `f64::powf`/`ln` (fractional exponents) and are closeness-graded, not bit-exact | Non-concern: the registry table + dispatch (func/mod.rs), the serial↔date maps (func/date.rs + func/text.rs), and the shared `one_num`/`collect_numbers`/`block`/`coerce_num`/`finite_or_num` helpers (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
 // Financial (v1++): PMT FV NPER RATE IPMT PPMT NPV IRR XNPV XIRR. Every cash-flow-time-value call
@@ -602,4 +602,344 @@ pub(crate) fn xirr_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
         Some(r) => finite_or_num(r),
         None => Value::Error(ErrKind::Num),
     }
+}
+
+// ============================================================================
+// Financial parity batch (v1++): PV MIRR CUMIPMT CUMPRINC SLN SYD DB DDB EFFECT
+// NOMINAL PDURATION RRI. Two sub-families join the cash-flow group above:
+//   * PV closes the annuity family — it inverts the SAME `annuity_balance` for the
+//     present-value unknown, so PMT/FV/PV/NPER/RATE now cover every slot of the
+//     one balance identity (integer-period, `pow_int`, bit-exact-graded).
+//   * MIRR/CUMIPMT/CUMPRINC extend the cash-flow group: MIRR combines a positive-
+//     flow FV and a negative-flow PV (Excel's period-1 `NPV` discounting) then a
+//     single fractional `(n−1)`-th root (closeness-graded); CUMIPMT/CUMPRINC sum
+//     the SHARED `ipmt_core`/`ppmt_core` payment split over a period window.
+//   * SLN/SYD/DB/DDB are the depreciation schedule functions — SLN/SYD are exact
+//     rational forms (`#DIV/0!`/`#NUM!` on a degenerate life/period), while DB
+//     (fixed-declining, a ROUND-to-3 rate) and DDB (double-declining book-value
+//     decline) use `f64::powf` and are closeness-graded.
+//   * EFFECT/NOMINAL convert between nominal and effective annual rates (EFFECT is
+//     integer-power, NOMINAL a fractional root); PDURATION (a log ratio) and RRI (a
+//     fractional root) invert the compound-growth relation for periods and rate.
+// Every Excel error case is a LOCATED error value, never a panic (CORE2): a zero
+// SLN life is `#DIV/0!`; an out-of-range period/rate/frequency is `#NUM!`; an
+// all-one-sign MIRR is `#DIV/0!` — each pinned against the formulas-lib oracle.
+// ============================================================================
+
+/// The present value ([`annuity_balance`] solved for `pv`): `−(fv + pmt·(1+rate·type)·(t−1)/rate)/t`
+/// with `t = (1+rate)^nper` (the linear `−(pmt·nper + fv)` when `rate == 0`). Shares the family's
+/// integer-period `pow_int`, so PV is bit-exact-graded like PMT/FV.
+fn pv_core(rate: f64, nper: f64, pmt: f64, fv: f64, typ: f64) -> f64 {
+    if rate == 0.0 {
+        return -(pmt * nper + fv);
+    }
+    let t = pow_int(1.0 + rate, int_periods(nper));
+    -(fv + pmt * (1.0 + rate * typ) * (t - 1.0) / rate) / t
+}
+
+/// `PV(rate, nper, pmt, [fv], [type])` — the present value of an annuity ([`pv_core`], Excel sign
+/// convention: a loan taken (money IN) is positive, the payments (money OUT) negative). A non-finite
+/// result (overflow, or `rate == −1` zeroing the discount denominator) demotes to `#NUM!`.
+pub(crate) fn pv_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (rate, nper, pmt) = (v[0], v[1], v[2]);
+    let fv = *v.get(3).unwrap_or(&0.0);
+    let typ = *v.get(4).unwrap_or(&0.0);
+    finite_or_num(pv_core(rate, nper, pmt, fv, typ))
+}
+
+/// `MIRR(values, finance_rate, reinvest_rate)` — the modified internal rate of return: the positive
+/// flows compounded FORWARD to the final period at `reinvest_rate` over the negative flows discounted
+/// BACK to period 0 at `finance_rate`, then the `(n−1)`-th root minus one. With `n` flows,
+/// `MIRR = (−FVpos·(1+rr)^n / (PVneg·(1+fr)))^(1/(n−1)) − 1`, where `FVpos`/`PVneg` are Excel's
+/// period-1 `NPV` of the sign-masked streams (so `FVpos` compounds and `PVneg` discounts exactly as
+/// Excel's own formula documents). A stream lacking BOTH a positive and a negative flow (a zero
+/// denominator), or a single flow (`n < 2`, a `1/0` exponent), is a located `#DIV/0!` (Excel's error
+/// for a degenerate MIRR); the final fractional root uses `f64::powf`, so MIRR is closeness-graded.
+pub(crate) fn mirr_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let cf = match collect_numbers(ctx, &args[0..1]) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let frate = match one_num(ctx, &args[1]) {
+        Ok(x) => x,
+        Err(k) => return Value::Error(k),
+    };
+    let rrate = match one_num(ctx, &args[2]) {
+        Ok(x) => x,
+        Err(k) => return Value::Error(k),
+    };
+    let n = cf.len();
+    // A single flow gives a `1/(n−1) = 1/0` exponent, and an all-one-sign stream zeroes one leg of the
+    // ratio — Excel refuses both with #DIV/0!.
+    if n < 2 || !cf.iter().any(|&c| c > 0.0) || !cf.iter().any(|&c| c < 0.0) {
+        return Value::Error(ErrKind::Div0);
+    }
+    // Excel's NPV discounts value i from period i+1, so a positive flow at index i compounds by
+    // (1+rr)^(n−i−1) once multiplied by (1+rr)^n, and a negative flow discounts by (1+fr)^i once the
+    // NPV·(1+fr) cancels its leading period.
+    let mut npv_pos = 0.0;
+    let mut npv_neg = 0.0;
+    for (i, &c) in cf.iter().enumerate() {
+        if c > 0.0 {
+            npv_pos += c / pow_int(1.0 + rrate, i as u32 + 1);
+        } else if c < 0.0 {
+            npv_neg += c / pow_int(1.0 + frate, i as u32 + 1);
+        }
+    }
+    let fv_pos = -npv_pos * pow_int(1.0 + rrate, n as u32);
+    let pv_neg = npv_neg * (1.0 + frate);
+    if pv_neg == 0.0 {
+        return Value::Error(ErrKind::Div0);
+    }
+    finite_or_num((fv_pos / pv_neg).powf(1.0 / (n as f64 - 1.0)) - 1.0)
+}
+
+/// The shared #NUM! guard for CUMIPMT/CUMPRINC (Excel refuses the SAME conditions for both): a
+/// non-positive `rate`/`nper`/`pv`, a period endpoint below 1, a reversed window (`start > end`), or a
+/// `type` that is neither 0 nor 1. Returns `true` when the arguments are OUT of Excel's domain.
+fn cum_args_out_of_range(rate: f64, nper: f64, pv: f64, start: f64, end: f64, typ: f64) -> bool {
+    rate <= 0.0
+        || nper <= 0.0
+        || pv <= 0.0
+        || start < 1.0
+        || end < 1.0
+        || start > end
+        || (typ != 0.0 && typ != 1.0)
+}
+
+/// Sum a per-period payment component over the inclusive window `start..=end` (both truncated toward
+/// zero, Excel's period integers), applying `part` — [`ipmt_core`] for CUMIPMT, [`ppmt_core`] for
+/// CUMPRINC — to each period with `fv = 0`. The ONE window-summation both cumulative functions share.
+fn cum_sum(
+    rate: f64,
+    nper: f64,
+    pv: f64,
+    start: f64,
+    end: f64,
+    typ: f64,
+    part: impl Fn(f64, f64, f64, f64, f64, f64) -> f64,
+) -> f64 {
+    let mut acc = 0.0;
+    let (s, e) = (start.trunc() as i64, end.trunc() as i64);
+    for per in s..=e {
+        acc += part(rate, per as f64, nper, pv, 0.0, typ);
+    }
+    acc
+}
+
+/// `CUMIPMT(rate, nper, pv, start_period, end_period, type)` — the cumulative INTEREST paid between
+/// `start_period` and `end_period` inclusive: the sum of [`ipmt_core`] over the window ([`cum_sum`]).
+/// Any argument outside Excel's domain ([`cum_args_out_of_range`]) is a located `#NUM!`.
+pub(crate) fn cumipmt_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (rate, nper, pv, start, end, typ) = (v[0], v[1], v[2], v[3], v[4], v[5]);
+    if cum_args_out_of_range(rate, nper, pv, start, end, typ) {
+        return Value::Error(ErrKind::Num);
+    }
+    finite_or_num(cum_sum(rate, nper, pv, start, end, typ, ipmt_core))
+}
+
+/// `CUMPRINC(rate, nper, pv, start_period, end_period, type)` — the cumulative PRINCIPAL paid between
+/// `start_period` and `end_period` inclusive: the sum of [`ppmt_core`] over the window ([`cum_sum`]).
+/// Any argument outside Excel's domain ([`cum_args_out_of_range`]) is a located `#NUM!`.
+pub(crate) fn cumprinc_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (rate, nper, pv, start, end, typ) = (v[0], v[1], v[2], v[3], v[4], v[5]);
+    if cum_args_out_of_range(rate, nper, pv, start, end, typ) {
+        return Value::Error(ErrKind::Num);
+    }
+    finite_or_num(cum_sum(rate, nper, pv, start, end, typ, ppmt_core))
+}
+
+/// `SLN(cost, salvage, life)` — straight-line depreciation per period: `(cost − salvage)/life`, the
+/// same amount every period. A zero `life` divides by zero -> a located `#DIV/0!` (Excel), distinct
+/// from the `#NUM!` the declining-balance functions emit for a bad period.
+pub(crate) fn sln_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (cost, salvage, life) = (v[0], v[1], v[2]);
+    if life == 0.0 {
+        return Value::Error(ErrKind::Div0);
+    }
+    finite_or_num((cost - salvage) / life)
+}
+
+/// `SYD(cost, salvage, life, per)` — sum-of-years'-digits depreciation for period `per`:
+/// `(cost − salvage)·(life − per + 1)·2 / (life·(life + 1))`. A period outside `1..=life`
+/// (`per < 1` or `per > life`, which also catches a `life < 1`) has no such year -> a located `#NUM!`.
+pub(crate) fn syd_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (cost, salvage, life, per) = (v[0], v[1], v[2], v[3]);
+    if per < 1.0 || per > life {
+        return Value::Error(ErrKind::Num);
+    }
+    finite_or_num((cost - salvage) * (life - per + 1.0) * 2.0 / (life * (life + 1.0)))
+}
+
+/// `DB(cost, salvage, life, period, [month])` — fixed-declining-balance depreciation for `period`.
+/// The declining rate is `ROUND(1 − (salvage/cost)^(1/life), 3)` (Excel rounds it to three places);
+/// period 1 is prorated by `month/12`, the interior periods depreciate the running book value at that
+/// rate, and — when `month < 12` — a final period `life+1` is prorated by `(12−month)/12`. A
+/// non-positive `cost`, a negative `salvage`, a `life < 1`, a `month` outside `1..=12`, or a `period`
+/// outside `1..=(life if month==12 else life+1)` is a located `#NUM!`. The `(salvage/cost)^(1/life)`
+/// fractional power uses `f64::powf`, so DB is closeness-graded.
+pub(crate) fn db_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (cost, salvage, life, period) = (v[0], v[1], v[2], v[3]);
+    let month = v.get(4).copied().unwrap_or(12.0).trunc();
+    if !(1.0..=12.0).contains(&month) || cost <= 0.0 || salvage < 0.0 || life < 1.0 || period < 1.0
+    {
+        return Value::Error(ErrKind::Num);
+    }
+    // With a partial first period (month < 12) the schedule spans one extra period (life+1).
+    let max_period = if month == 12.0 { life } else { life + 1.0 };
+    if period > max_period {
+        return Value::Error(ErrKind::Num);
+    }
+    let rate = ((1.0 - (salvage / cost).powf(1.0 / life)) * 1000.0).round() / 1000.0;
+    let mut accumulated = 0.0;
+    let mut dep = 0.0;
+    for p in 1..=(period as i64) {
+        dep = if p == 1 {
+            cost * rate * month / 12.0
+        } else if (p as f64) <= life {
+            (cost - accumulated) * rate
+        } else {
+            // The final partial period (p == life+1, reached only when month < 12).
+            (cost - accumulated) * rate * (12.0 - month) / 12.0
+        };
+        accumulated += dep;
+    }
+    finite_or_num(dep)
+}
+
+/// `DDB(cost, salvage, life, period, [factor])` — double-declining-balance depreciation for `period`
+/// (`factor` defaults to 2, i.e. twice the straight-line rate). The book value declines geometrically
+/// at `factor/life`, and the period's depreciation is the drop in book value, floored so the value
+/// never falls below `salvage` (and never negative). A negative `cost`/`salvage`, a non-positive
+/// `factor`, or a `period` outside `1..=life` is a located `#NUM!`. The `(1−rate)^period` power uses
+/// `f64::powf` (a fractional `period` is legal), so DDB is closeness-graded.
+pub(crate) fn ddb_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (cost, salvage, life, period) = (v[0], v[1], v[2], v[3]);
+    let factor = v.get(4).copied().unwrap_or(2.0);
+    if cost < 0.0 || salvage < 0.0 || factor <= 0.0 || period < 1.0 || period > life {
+        return Value::Error(ErrKind::Num);
+    }
+    let rate = factor / life;
+    // A rate ≥ 1 writes the whole cost off in period 1; guard the `(1−rate)` base from going negative
+    // by clamping to the "everything depreciates in period 1" schedule rather than raising a negative
+    // base to a power.
+    let (old_value, new_value) = if rate >= 1.0 {
+        let old = if period == 1.0 { cost } else { 0.0 };
+        (old, 0.0)
+    } else {
+        (
+            cost * (1.0 - rate).powf(period - 1.0),
+            cost * (1.0 - rate).powf(period),
+        )
+    };
+    let mut dep = if new_value < salvage {
+        old_value - salvage
+    } else {
+        old_value - new_value
+    };
+    if dep < 0.0 {
+        dep = 0.0;
+    }
+    finite_or_num(dep)
+}
+
+/// The truncated compounding frequency EFFECT/NOMINAL share: `npery` truncated toward zero (Excel
+/// truncates the periods-per-year), or `None` when it is below 1 (no valid frequency -> the caller's
+/// `#NUM!`).
+fn npery_periods(npery: f64) -> Option<f64> {
+    let n = npery.trunc();
+    (n >= 1.0).then_some(n)
+}
+
+/// `EFFECT(nominal_rate, npery)` — the effective annual interest rate for a `nominal_rate` compounded
+/// `npery` times a year: `(1 + nominal/npery)^npery − 1`. A non-positive `nominal_rate` or an `npery`
+/// below 1 is a located `#NUM!`. The integer-period power uses `pow_int`, so EFFECT is bit-exact-graded.
+pub(crate) fn effect_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (nominal, npery) = (v[0], v[1]);
+    let n = match npery_periods(npery) {
+        Some(n) if nominal > 0.0 => n,
+        _ => return Value::Error(ErrKind::Num),
+    };
+    finite_or_num(pow_int(1.0 + nominal / n, int_periods(n)) - 1.0)
+}
+
+/// `NOMINAL(effect_rate, npery)` — the nominal annual interest rate for an `effect_rate` compounded
+/// `npery` times a year: `npery·((1 + effect)^(1/npery) − 1)`. A non-positive `effect_rate` or an
+/// `npery` below 1 is a located `#NUM!`. The fractional root uses `f64::powf`, so NOMINAL is
+/// closeness-graded.
+pub(crate) fn nominal_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (effect, npery) = (v[0], v[1]);
+    let n = match npery_periods(npery) {
+        Some(n) if effect > 0.0 => n,
+        _ => return Value::Error(ErrKind::Num),
+    };
+    finite_or_num(n * ((1.0 + effect).powf(1.0 / n) - 1.0))
+}
+
+/// `PDURATION(rate, pv, fv)` — the number of periods an investment at `pv` takes to reach `fv` growing
+/// at a fixed `rate` per period: `(ln(fv) − ln(pv)) / ln(1 + rate)`. A non-positive `rate`, `pv`, or
+/// `fv` is a located `#NUM!`. The logarithms make it closeness-graded.
+pub(crate) fn pduration_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (rate, pv, fv) = (v[0], v[1], v[2]);
+    if rate <= 0.0 || pv <= 0.0 || fv <= 0.0 {
+        return Value::Error(ErrKind::Num);
+    }
+    finite_or_num((fv.ln() - pv.ln()) / (1.0 + rate).ln())
+}
+
+/// `RRI(nper, pv, fv)` — the equivalent per-period interest rate for `pv` growing to `fv` over `nper`
+/// periods: `(fv/pv)^(1/nper) − 1`. A non-positive `nper` is a located `#NUM!`; a `pv` that makes the
+/// base non-positive (a `0` or a sign flip against `fv`) yields a non-finite/NaN root that
+/// [`finite_or_num`] demotes to `#NUM!` (Excel). The fractional root uses `f64::powf`, so RRI is
+/// closeness-graded.
+pub(crate) fn rri_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let v = match scalars(ctx, args) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let (nper, pv, fv) = (v[0], v[1], v[2]);
+    if nper <= 0.0 {
+        return Value::Error(ErrKind::Num);
+    }
+    finite_or_num((fv / pv).powf(1.0 / nper) - 1.0)
 }

@@ -1,4 +1,4 @@
-// Concern: UNIT-TEST pins for the lookup & reference family built-ins (INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH XLOOKUP CHOOSE ROW COLUMN ROWS COLUMNS + the reserved INDIRECT/OFFSET) exercised through `FUNCS` dispatch — scalar/whole-row/whole-col indexing with bounds, exact-vs-approximate matching in both directions, horizontal + vector lookups, shape queries, lazy CHOOSE, reference-node reads, and the parse-time reserved-ref-function refusals | Non-concern: the lookup impls (`func/lookup.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`arr`/`n`/`t`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
+// Concern: UNIT-TEST pins for the lookup & reference family built-ins (INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH XLOOKUP CHOOSE ROW COLUMN ROWS COLUMNS ADDRESS + the reserved INDIRECT/OFFSET) exercised through `FUNCS` dispatch — scalar/whole-row/whole-col indexing with bounds, INDEX's omitted-middle-argument (whole column), exact-vs-approximate matching in both directions, the whole family SKIPPING error cells in the lookup vector, horizontal + vector lookups, shape queries, ROW/COLUMN yielding the range's coordinate ARRAY, XMATCH's reverse/binary search_mode, ADDRESS's A1/R1C1 forms, lazy CHOOSE, reference-node reads, and the parse-time reserved-ref-function refusals | Non-concern: the lookup impls (`func/lookup.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`arr`/`n`/`t`/`text`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
 use super::*;
 
 #[test]
@@ -240,7 +240,8 @@ fn row_and_column_read_the_reference_node() {
     });
     assert_eq!(eval(&call("ROW", vec![b3.clone()]), &g), n(3.0));
     assert_eq!(eval(&call("COLUMN", vec![b3]), &g), n(2.0));
-    // A range reads its top-left.
+    // A multi-cell range yields the coordinate ARRAY (Excel): ROW(C5:F10) = {5;6;7;8;9;10} (vertical),
+    // COLUMN(C5:F10) = {3,4,5,6} (horizontal).
     let rng = Expr::Range(RangeNode {
         start_col: 2,
         start_row: 4,
@@ -252,8 +253,33 @@ fn row_and_column_read_the_reference_node() {
         end_row_abs: false,
         sheet: None,
     });
-    assert_eq!(eval(&call("ROW", vec![rng.clone()]), &g), n(5.0));
-    assert_eq!(eval(&call("COLUMN", vec![rng]), &g), n(3.0));
+    assert_eq!(
+        eval(&call("ROW", vec![rng.clone()]), &g),
+        Value::Array(
+            crate::value::Shape { rows: 6, cols: 1 },
+            vec![n(5.0), n(6.0), n(7.0), n(8.0), n(9.0), n(10.0)]
+        )
+    );
+    assert_eq!(
+        eval(&call("COLUMN", vec![rng]), &g),
+        Value::Array(
+            crate::value::Shape { rows: 1, cols: 4 },
+            vec![n(3.0), n(4.0), n(5.0), n(6.0)]
+        )
+    );
+    // A SINGLE-row range's ROW (and a single-column range's COLUMN) is the scalar coordinate.
+    let one_row = Expr::Range(RangeNode {
+        start_col: 0,
+        start_row: 2,
+        end_col: 4,
+        end_row: 2,
+        start_col_abs: false,
+        start_row_abs: false,
+        end_col_abs: false,
+        end_row_abs: false,
+        sheet: None,
+    });
+    assert_eq!(eval(&call("ROW", vec![one_row]), &g), n(3.0));
     // A non-reference argument is #VALUE!.
     assert_eq!(
         eval(&call("ROW", vec![num(5.0)]), &g),
@@ -454,6 +480,203 @@ fn xmatch_exact_default_and_next_modes() {
     assert_eq!(
         eval(&call("XMATCH", vec![num(1.0), two_d]), &g),
         Value::Error(ErrKind::Na)
+    );
+}
+
+#[test]
+fn search_family_ignores_error_cells_in_the_lookup_vector() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let err = || Value::Error(ErrKind::Na);
+    // MATCH: {10; #N/A; 30} — the error cell is skipped; exact-match 30 lands on its ORIGINAL row 3.
+    let mvec = arr(3, 1, vec![n(10.0), err(), n(30.0)]);
+    assert_eq!(
+        eval(&call("MATCH", vec![num(30.0), mvec, num(0.0)]), &g),
+        n(3.0)
+    );
+    // VLOOKUP exact: {1,"a"; #N/A,"b"; 3,"c"} — 3 is found in row 3 despite the error in row 2.
+    let table = arr(3, 2, vec![n(1.0), t("a"), err(), t("b"), n(3.0), t("c")]);
+    assert_eq!(
+        eval(
+            &call(
+                "VLOOKUP",
+                vec![num(3.0), table, num(2.0), Expr::Lit(Value::Bool(false))]
+            ),
+            &g
+        ),
+        t("c")
+    );
+    // HLOOKUP exact: {1,#N/A,3 ; 10,20,30} — 3 is found in column 3 → row 2's cell = 30.
+    let htable = arr(2, 3, vec![n(1.0), err(), n(3.0), n(10.0), n(20.0), n(30.0)]);
+    assert_eq!(
+        eval(
+            &call(
+                "HLOOKUP",
+                vec![num(3.0), htable, num(2.0), Expr::Lit(Value::Bool(false))]
+            ),
+            &g
+        ),
+        n(30.0)
+    );
+    // LOOKUP vector form: keys {1,#N/A,3}, results {10,20,30} — approx-match 3 maps to ORIGINAL pos 3.
+    let keys = arr(1, 3, vec![n(1.0), err(), n(3.0)]);
+    let results = arr(1, 3, vec![n(10.0), n(20.0), n(30.0)]);
+    assert_eq!(
+        eval(&call("LOOKUP", vec![num(3.0), keys, results]), &g),
+        n(30.0)
+    );
+    // LOOKUP array form (wider-than-tall): search the first row skipping the error, return the last.
+    let wide = arr(2, 3, vec![n(1.0), err(), n(3.0), n(10.0), n(20.0), n(30.0)]);
+    assert_eq!(eval(&call("LOOKUP", vec![num(3.0), wide]), &g), n(30.0));
+}
+
+#[test]
+fn index_accepts_an_omitted_middle_argument_as_whole_column() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // INDEX(array,,col) — the omitted row_num means the WHOLE column (Excel treats it as 0). The
+    // empty slot is only expressible through the parser, so this exercises the parse→eval path.
+    let e = crate::parse("=INDEX({1,2;3,4;5,6},,2)").expect("omitted middle arg parses");
+    assert_eq!(
+        eval(&e, &g),
+        Value::Array(
+            crate::value::Shape { rows: 3, cols: 1 },
+            vec![n(2.0), n(4.0), n(6.0)]
+        )
+    );
+    // Both indices omitted → the whole array.
+    let whole = crate::parse("=INDEX({1,2;3,4},,)").expect("both omitted parses");
+    assert_eq!(
+        eval(&whole, &g),
+        Value::Array(
+            crate::value::Shape { rows: 2, cols: 2 },
+            vec![n(1.0), n(2.0), n(3.0), n(4.0)]
+        )
+    );
+}
+
+#[test]
+fn xmatch_search_mode_reverses_and_validates() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let dup = || arr(1, 4, vec![n(5.0), n(7.0), n(5.0), n(7.0)]);
+    // search_mode -1 (last-to-first): the LAST exact 5 → position 3.
+    assert_eq!(
+        eval(
+            &call("XMATCH", vec![num(5.0), dup(), num(0.0), num(-1.0)]),
+            &g
+        ),
+        n(3.0)
+    );
+    // search_mode 1 (default forward): the FIRST exact 5 → position 1.
+    assert_eq!(
+        eval(
+            &call("XMATCH", vec![num(5.0), dup(), num(0.0), num(1.0)]),
+            &g
+        ),
+        n(1.0)
+    );
+    // The binary modes ±2 request a binary search over data ASSUMED already sorted in the mode's
+    // direction; charlie collapses each to the equivalent directional linear scan, which is exact
+    // ONLY on that correctly-sorted input (a binary search over unsorted data is undefined in Excel,
+    // so it is not pinned here). +2 (ascending binary) on an ascending vector and -2 (descending
+    // binary) on a descending vector each land on the sole hit — oracle-pinned vs formulas-lib.
+    let asc = || arr(1, 4, vec![n(2.0), n(4.0), n(6.0), n(8.0)]);
+    let desc = || arr(1, 4, vec![n(8.0), n(6.0), n(4.0), n(2.0)]);
+    assert_eq!(
+        eval(
+            &call("XMATCH", vec![num(6.0), asc(), num(0.0), num(2.0)]),
+            &g
+        ),
+        n(3.0)
+    );
+    assert_eq!(
+        eval(
+            &call("XMATCH", vec![num(6.0), desc(), num(0.0), num(-2.0)]),
+            &g
+        ),
+        n(2.0)
+    );
+    // An out-of-domain search_mode is #VALUE!.
+    assert_eq!(
+        eval(
+            &call("XMATCH", vec![num(5.0), dup(), num(0.0), num(3.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Value)
+    );
+}
+
+#[test]
+fn address_builds_a1_and_r1c1_forms() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let s = |args: Vec<Expr>| text(eval(&call("ADDRESS", args), &g));
+    // A1 style, the four abs_num modes.
+    assert_eq!(s(vec![num(2.0), num(3.0)]), "$C$2");
+    assert_eq!(s(vec![num(2.0), num(3.0), num(2.0)]), "C$2");
+    assert_eq!(s(vec![num(2.0), num(3.0), num(3.0)]), "$C2");
+    assert_eq!(s(vec![num(2.0), num(3.0), num(4.0)]), "C2");
+    // A column past Z rolls over: 27 → AA.
+    assert_eq!(s(vec![num(1.0), num(27.0), num(4.0)]), "AA1");
+    // R1C1 style: absolute vs bracketed-relative.
+    let r1c1_style = || Expr::Lit(Value::Bool(false));
+    assert_eq!(s(vec![num(2.0), num(3.0), num(1.0), r1c1_style()]), "R2C3");
+    assert_eq!(
+        s(vec![num(2.0), num(3.0), num(4.0), r1c1_style()]),
+        "R[2]C[3]"
+    );
+    // A sheet prefix: bare vs quoted (a space forces quoting).
+    let a1 = Expr::Lit(Value::Bool(true));
+    assert_eq!(
+        s(vec![
+            num(2.0),
+            num(3.0),
+            num(1.0),
+            a1.clone(),
+            Expr::Lit(t("Sheet1"))
+        ]),
+        "Sheet1!$C$2"
+    );
+    assert_eq!(
+        s(vec![
+            num(1.0),
+            num(1.0),
+            num(1.0),
+            a1,
+            Expr::Lit(t("My Sheet"))
+        ]),
+        "'My Sheet'!$A$1"
+    );
+    // ADDRESS has NO upper grid bound — it is a pure address-text builder — and the SAME coordinate
+    // agrees across display styles: `=ADDRESS(1048577,1)` and its R1C1 form are both values (the
+    // A1/R1C1 branches used to disagree here). Pinned vs formulas-lib.
+    assert_eq!(s(vec![num(1_048_577.0), num(1.0)]), "$A$1048577");
+    assert_eq!(
+        s(vec![num(1_048_577.0), num(1.0), num(1.0), r1c1_style()]),
+        "R1048577C1"
+    );
+    // A column past the 16,384 grid still renders (no upper bound): 16385 → XFE.
+    assert_eq!(s(vec![num(1.0), num(16_385.0)]), "$XFE$1");
+    // Bad abs_num and a non-positive coordinate are located #VALUE!, never a panic (CORE2). The
+    // `< 1` check is style-INDEPENDENT: a non-positive coordinate errors even in relative R1C1.
+    assert_eq!(
+        eval(&call("ADDRESS", vec![num(2.0), num(3.0), num(5.0)]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(&call("ADDRESS", vec![num(0.0), num(3.0)]), &g),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(
+            &call("ADDRESS", vec![num(0.0), num(1.0), num(4.0), r1c1_style()]),
+            &g
+        ),
+        Value::Error(ErrKind::Value)
+    );
+    assert_eq!(
+        eval(
+            &call("ADDRESS", vec![num(-1.0), num(1.0), num(4.0), r1c1_style()]),
+            &g
+        ),
+        Value::Error(ErrKind::Value)
     );
 }
 

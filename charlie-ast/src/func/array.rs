@@ -128,6 +128,39 @@ pub(crate) fn map_if(shape: Shape, cond: &[Value], then_v: &Value, else_v: &Valu
     Value::Array(shape, out)
 }
 
+/// Element-wise error-catching for `IFERROR`/`IFNA` over an ARRAY value: each cell the `caught`
+/// predicate selects is replaced by the corresponding element of `fallback` (a scalar broadcasts
+/// whole, a 1×1 array collapses to its cell, a matching-shape array contributes its i-th cell); every
+/// other cell passes through unchanged. A genuinely multi-cell `fallback` of a DIFFERENT shape is a
+/// static `#VALUE!` — the shape-conformance stance [`map_if`] takes. `logical::catch_errors` owns the
+/// lazy decision (it calls this only once it has an array value holding at least one caught cell), so
+/// the per-element catch reuses this array home rather than growing a parallel loop in `logical`.
+pub(crate) fn map_catch(
+    shape: Shape,
+    cells: &[Value],
+    fallback: &Value,
+    caught: fn(&Value) -> bool,
+) -> Value {
+    if let Value::Array(s, _) = fallback
+        && !(s.rows == 1 && s.cols == 1)
+        && *s != shape
+    {
+        return Value::Error(ErrKind::Value);
+    }
+    let out = cells
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            if caught(c) {
+                branch_cell(fallback, i)
+            } else {
+                c.clone()
+            }
+        })
+        .collect();
+    Value::Array(shape, out)
+}
+
 /// The value a branch contributes to the i-th [`map_if`] cell: the i-th cell of a matching-shape array
 /// branch (a 1×1 array collapses to its single cell and broadcasts), or the whole scalar branch. An
 /// out-of-range index (only reachable on a shape skew already screened by [`map_if`]) is a defensive

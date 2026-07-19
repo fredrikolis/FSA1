@@ -1,4 +1,4 @@
-// Concern: the DYNAMIC-ARRAY (spill) function bodies — the built-ins whose value is itself an `array`: `SORT` (order the rows/cols of a block by a key column/row), `UNIQUE` (first-occurrence-distinct rows/cols, optionally exactly-once), `FILTER` (keep the rows/cols a boolean vector selects, or an `if_empty` fallback), `SEQUENCE` (a generated `rows`x`cols` counter from `start` by `step`), and `TRANSPOSE` (swap a block's axes); each is Excel-compatible in arg order and error semantics and returns a `Value::Array` (or a LOCATED first-class error value — a bad index/shape/empty result is `#VALUE!`/`#CALC!`, never a panic, CORE2) | Non-concern: the IMPLICIT-array broadcaster that maps a SCALAR-arg function element-wise (func::array owns that — these functions consume arrays WHOLE, so their registry rows carry no `broadcast` positions), the registry table + dispatch (func/mod.rs), and where a returned array is PLACED into a range file (charlie-model's GRID5 region owns the shape/orientation match) | IO: (`EvalCtx`, the call's arg `Expr`s) -> a `Value` (an `array`, or a located error value)
+// Concern: the DYNAMIC-ARRAY (spill) function bodies — the built-ins whose value is itself an `array`: `SORT`/`SORTBY` (order a block's rows/cols by a key column/row or by parallel key vectors), `UNIQUE` (first-occurrence-distinct rows/cols, optionally exactly-once), `FILTER` (keep the rows/cols a boolean vector selects, or an `if_empty` fallback), `SEQUENCE` (a generated `rows`x`cols` counter from `start` by `step`), `TRANSPOSE` (swap a block's axes), the STACKERS `VSTACK`/`HSTACK` (concatenate blocks, padding short lines with `#N/A`), and the RESHAPERS `TAKE`/`DROP`/`CHOOSEROWS`/`CHOOSECOLS` (select a sub-grid by count or by index); each is Excel-compatible in arg order and error semantics and returns a `Value::Array` (or a LOCATED first-class error value — a bad index/shape/empty result is `#VALUE!`/`#CALC!`, never a panic, CORE2) | Non-concern: the IMPLICIT-array broadcaster that maps a SCALAR-arg function element-wise (func::array owns that — these functions consume arrays WHOLE, so their registry rows carry no `broadcast` positions), the registry table + dispatch (func/mod.rs), and where a returned array is PLACED into a range file (charlie-model's GRID5 region owns the shape/orientation match) | IO: (`EvalCtx`, the call's arg `Expr`s) -> a `Value` (an `array`, or a located error value)
 use super::*;
 
 /// The largest array [`sequence_fn`] will generate before refusing — a `SEQUENCE(1e6, 1e6)` would
@@ -296,6 +296,337 @@ fn assemble(lines: &[&Vec<Value>], by_col: bool, rows: u32, cols: u32) -> Value 
     }
 }
 
+/// `VSTACK(array1, [array2], …)` — stack blocks VERTICALLY: the result is `Σrows × maxcols`, each
+/// input laid down as a band of rows, and any row narrower than the widest input padded on the right
+/// with `#N/A` (Excel). An error argument propagates.
+pub(crate) fn vstack_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let blocks = match materialize_blocks(ctx, args) {
+        Ok(b) => b,
+        Err(k) => return Value::Error(k),
+    };
+    let out_cols = blocks.iter().map(|(_, c, _)| *c).max().unwrap_or(0);
+    let out_rows: u32 = blocks.iter().map(|(r, _, _)| *r).sum();
+    let mut out = Vec::with_capacity((out_rows as usize) * (out_cols as usize));
+    for (r, c, cells) in &blocks {
+        for ri in 0..*r {
+            for ci in 0..out_cols {
+                out.push(if ci < *c {
+                    cells[(ri * c + ci) as usize].clone()
+                } else {
+                    Value::Error(ErrKind::Na)
+                });
+            }
+        }
+    }
+    Value::Array(
+        Shape {
+            rows: out_rows,
+            cols: out_cols,
+        },
+        out,
+    )
+}
+
+/// `HSTACK(array1, [array2], …)` — stack blocks HORIZONTALLY: the result is `maxrows × Σcols`, each
+/// input laid down as a band of columns, and any column shorter than the tallest input padded below
+/// with `#N/A` (Excel). An error argument propagates.
+pub(crate) fn hstack_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let blocks = match materialize_blocks(ctx, args) {
+        Ok(b) => b,
+        Err(k) => return Value::Error(k),
+    };
+    let out_rows = blocks.iter().map(|(r, _, _)| *r).max().unwrap_or(0);
+    let out_cols: u32 = blocks.iter().map(|(_, c, _)| *c).sum();
+    let mut out = Vec::with_capacity((out_rows as usize) * (out_cols as usize));
+    for ri in 0..out_rows {
+        for (r, c, cells) in &blocks {
+            for ci in 0..*c {
+                out.push(if ri < *r {
+                    cells[(ri * c + ci) as usize].clone()
+                } else {
+                    Value::Error(ErrKind::Na)
+                });
+            }
+        }
+    }
+    Value::Array(
+        Shape {
+            rows: out_rows,
+            cols: out_cols,
+        },
+        out,
+    )
+}
+
+/// Materialize every argument to a `(rows, cols, cells)` block for the stacking family, propagating
+/// the first error argument. The one shared front door VSTACK/HSTACK use.
+fn materialize_blocks(
+    ctx: &mut EvalCtx,
+    args: &[Expr],
+) -> Result<Vec<(u32, u32, Vec<Value>)>, ErrKind> {
+    args.iter().map(|a| block(ctx, a)).collect()
+}
+
+/// `TAKE(array, rows, [columns])` — keep the first `rows` rows and first `columns` columns (a NEGATIVE
+/// count takes from the END; an OMITTED/blank count keeps the whole axis). The result is
+/// `|rows| × |columns|`; a provided count of `0` (or an empty axis) is a located `#CALC!` (Excel's
+/// empty-array result). An error argument propagates. CORE2: a located error, never a panic.
+pub(crate) fn take_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let (rows, cols, cells) = match block(ctx, &args[0]) {
+        Ok(t) => t,
+        Err(k) => return Value::Error(k),
+    };
+    let want_rows = match opt_dim(ctx, args, 1) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let want_cols = match opt_dim(ctx, args, 2) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let sel_rows = take_indices(rows, want_rows);
+    let sel_cols = take_indices(cols, want_cols);
+    subgrid(&cells, cols, &sel_rows, &sel_cols)
+}
+
+/// `DROP(array, rows, [columns])` — remove the first `rows` rows and first `columns` columns (a
+/// NEGATIVE count removes from the END; an OMITTED/blank count removes none). Removing an entire axis
+/// (`|count| ≥` the axis length) leaves an empty result → a located `#CALC!` (Excel). An error
+/// argument propagates. CORE2: a located error, never a panic.
+pub(crate) fn drop_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let (rows, cols, cells) = match block(ctx, &args[0]) {
+        Ok(t) => t,
+        Err(k) => return Value::Error(k),
+    };
+    let want_rows = match opt_dim(ctx, args, 1) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let want_cols = match opt_dim(ctx, args, 2) {
+        Ok(v) => v,
+        Err(k) => return Value::Error(k),
+    };
+    let sel_rows = drop_indices(rows, want_rows);
+    let sel_cols = drop_indices(cols, want_cols);
+    subgrid(&cells, cols, &sel_rows, &sel_cols)
+}
+
+/// Read an OPTIONAL integer axis-count argument at `idx`: `None` when the call omits it OR the slot is
+/// blank (`TAKE(a,,2)` keeps every row) — the caller reads `None` as "the whole axis"; otherwise the
+/// value truncated toward zero (Excel), with an error propagated.
+fn opt_dim(ctx: &mut EvalCtx, args: &[Expr], idx: usize) -> Result<Option<i64>, ErrKind> {
+    match args.get(idx) {
+        None => Ok(None),
+        Some(e) => match scalarize(ctx.eval(e)) {
+            Value::Blank => Ok(None),
+            v => Ok(Some(coerce_num(&v)?.trunc() as i64)),
+        },
+    }
+}
+
+/// The row/col indices TAKE keeps along one axis of length `len`: the whole axis when `want` is `None`,
+/// else the first `n` (or last `|n|` when negative), clamped to the axis. A count of `0` selects none.
+fn take_indices(len: u32, want: Option<i64>) -> Vec<u32> {
+    match want {
+        None => (0..len).collect(),
+        Some(n) => {
+            let mag = n.unsigned_abs().min(u64::from(len)) as u32;
+            if n >= 0 {
+                (0..mag).collect()
+            } else {
+                (len - mag..len).collect()
+            }
+        }
+    }
+}
+
+/// The row/col indices DROP keeps along one axis of length `len`: the whole axis when `want` is `None`,
+/// else all but the first `n` (or all but the last `|n|` when negative), clamped to the axis. Removing
+/// the whole axis selects none.
+fn drop_indices(len: u32, want: Option<i64>) -> Vec<u32> {
+    match want {
+        None => (0..len).collect(),
+        Some(n) => {
+            let mag = n.unsigned_abs().min(u64::from(len)) as u32;
+            if n >= 0 {
+                (mag..len).collect()
+            } else {
+                (0..len - mag).collect()
+            }
+        }
+    }
+}
+
+/// `CHOOSEROWS(array, row_num1, [row_num2], …)` — the rows of `array` at the given 1-based indices, in
+/// the order given (a NEGATIVE index counts from the end; an index argument may itself be an array of
+/// indices, flattened). A `0` or out-of-range index is a located `#VALUE!`; an error index propagates.
+pub(crate) fn chooserows_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let (rows, cols, cells) = match block(ctx, &args[0]) {
+        Ok(t) => t,
+        Err(k) => return Value::Error(k),
+    };
+    let sel = match gather_indices(ctx, &args[1..], rows) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    subgrid(&cells, cols, &sel, &(0..cols).collect::<Vec<_>>())
+}
+
+/// `CHOOSECOLS(array, col_num1, [col_num2], …)` — the columns of `array` at the given 1-based indices,
+/// in the order given (the column dual of [`chooserows_fn`]: a NEGATIVE index counts from the end; an
+/// index argument may be an array, flattened). A `0`/out-of-range index is `#VALUE!`; an error
+/// propagates.
+pub(crate) fn choosecols_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let (rows, cols, cells) = match block(ctx, &args[0]) {
+        Ok(t) => t,
+        Err(k) => return Value::Error(k),
+    };
+    let sel = match gather_indices(ctx, &args[1..], cols) {
+        Ok(s) => s,
+        Err(k) => return Value::Error(k),
+    };
+    subgrid(&cells, cols, &(0..rows).collect::<Vec<_>>(), &sel)
+}
+
+/// Collect the 1-based selector arguments (CHOOSEROWS/CHOOSECOLS) into 0-based axis indices, flattening
+/// any array selector, resolving a negative index from the end, and rejecting `0`/out-of-range with a
+/// `#VALUE!` (an error selector propagates). `axis_len` is the length of the axis being selected.
+fn gather_indices(ctx: &mut EvalCtx, args: &[Expr], axis_len: u32) -> Result<Vec<u32>, ErrKind> {
+    let mut sel = Vec::new();
+    for e in args {
+        let (_, _, idx_cells) = block(ctx, e)?;
+        for v in &idx_cells {
+            let n = coerce_num(v)?.trunc() as i64;
+            match resolve_index(n, axis_len) {
+                Some(i) => sel.push(i),
+                None => return Err(ErrKind::Value),
+            }
+        }
+    }
+    Ok(sel)
+}
+
+/// Resolve a 1-based (or negative-from-end) index into a 0-based position on an axis of length `len`.
+/// `1..=len` maps to `0..len`; `-1..=-len` maps from the end; `0` or anything out of range is `None`.
+fn resolve_index(n: i64, len: u32) -> Option<u32> {
+    let len = u64::from(len);
+    if n >= 1 && n as u64 <= len {
+        Some((n - 1) as u32)
+    } else if n <= -1 && n.unsigned_abs() <= len {
+        Some((len - n.unsigned_abs()) as u32)
+    } else {
+        None
+    }
+}
+
+/// Assemble the sub-grid at the selected `sel_rows` × `sel_cols` (0-based, in the order given) of a
+/// `cols`-wide row-major block. An empty selection on either axis is a located `#CALC!` (Excel's
+/// empty-array result) — TAKE/DROP reach this when a count zeroes an axis. Row-major output.
+fn subgrid(cells: &[Value], cols: u32, sel_rows: &[u32], sel_cols: &[u32]) -> Value {
+    if sel_rows.is_empty() || sel_cols.is_empty() {
+        return Value::Error(ErrKind::Calc);
+    }
+    let mut out = Vec::with_capacity(sel_rows.len() * sel_cols.len());
+    for &r in sel_rows {
+        for &c in sel_cols {
+            out.push(cells[(r * cols + c) as usize].clone());
+        }
+    }
+    Value::Array(
+        Shape {
+            rows: sel_rows.len() as u32,
+            cols: sel_cols.len() as u32,
+        },
+        out,
+    )
+}
+
+/// `SORTBY(array, by_array1, [sort_order1], [by_array2, sort_order2], …)` — order the ROWS of `array`
+/// by one or more parallel key vectors (or its COLUMNS when the key vectors match the column count),
+/// each with its own `sort_order` (`1`/omitted ascending, `-1` descending — any other is `#VALUE!`).
+/// The axis is decided by the FIRST `by_array`'s length (matching `rows` → sort rows, `cols` → sort
+/// columns); every key vector must match that axis length, else `#VALUE!`. Keys rank by the shared
+/// [`cmp_dir`] (a `Blank` sorts LAST in either direction); the sort is STABLE, and multiple keys break
+/// ties left-to-right. An error argument propagates. CORE2: a located error, never a panic.
+pub(crate) fn sortby_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    let (rows, cols, cells) = match block(ctx, &args[0]) {
+        Ok(t) => t,
+        Err(k) => return Value::Error(k),
+    };
+    let mut keys: Vec<(Vec<Value>, bool)> = Vec::new();
+    let mut axis_rows = true;
+    let mut i = 1;
+    while i < args.len() {
+        let (kr, kc, kcells) = match block(ctx, &args[i]) {
+            Ok(t) => t,
+            Err(k) => return Value::Error(k),
+        };
+        // Excel: a by_array must be one row high OR one column wide, and its ORIENTATION picks the
+        // sort axis — a COLUMN (kc==1) matching the row count sorts ROWS; a ROW (kr==1) matching the
+        // column count sorts COLUMNS. Length alone is not enough (a 2×1 key on a 3×2 block is a
+        // row-count mismatch, not a column sort). Every later key must share that axis and length.
+        let sorts_rows = kc == 1 && kr == rows;
+        let sorts_cols = kr == 1 && kc == cols;
+        if keys.is_empty() {
+            axis_rows = if sorts_rows {
+                true
+            } else if sorts_cols {
+                false
+            } else {
+                return Value::Error(ErrKind::Value);
+            };
+        } else if (axis_rows && !sorts_rows) || (!axis_rows && !sorts_cols) {
+            return Value::Error(ErrKind::Value);
+        }
+        let order = match args.get(i + 1) {
+            None => 1.0,
+            Some(e) => match scalarize(ctx.eval(e)) {
+                Value::Blank => 1.0,
+                v => match coerce_num(&v) {
+                    Ok(n) => n,
+                    Err(k) => return Value::Error(k),
+                },
+            },
+        };
+        let desc = if order == 1.0 {
+            false
+        } else if order == -1.0 {
+            true
+        } else {
+            return Value::Error(ErrKind::Value);
+        };
+        keys.push((kcells, desc));
+        i += 2;
+    }
+    let count = if axis_rows { rows } else { cols };
+    let mut order: Vec<u32> = (0..count).collect();
+    order.sort_by(|&a, &b| {
+        for (kcells, desc) in &keys {
+            let o = cmp_dir(&kcells[a as usize], &kcells[b as usize], *desc);
+            if o != std::cmp::Ordering::Equal {
+                return o;
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+    let at = |r: u32, c: u32| cells[(r * cols + c) as usize].clone();
+    let mut out = Vec::with_capacity(cells.len());
+    if axis_rows {
+        for &r in &order {
+            for c in 0..cols {
+                out.push(at(r, c));
+            }
+        }
+    } else {
+        for r in 0..rows {
+            for &c in &order {
+                out.push(at(r, c));
+            }
+        }
+    }
+    Value::Array(Shape { rows, cols }, out)
+}
+
 /// Compare two SORT keys in the requested direction: [`value_cmp`] ascending, or its reverse when
 /// `desc`. A `Blank` key always sorts LAST regardless of direction (Excel places empty cells at the
 /// end of both an ascending and a descending sort) rather than resolving against the other key's
@@ -310,22 +641,5 @@ fn cmp_dir(a: &Value, b: &Value, desc: bool) -> std::cmp::Ordering {
             let o = value_cmp(a, b);
             if desc { o.reverse() } else { o }
         }
-    }
-}
-
-/// An OPTIONAL numeric argument at `idx`, or `default` when the call omits it. An error propagates.
-fn opt_num(ctx: &mut EvalCtx, args: &[Expr], idx: usize, default: f64) -> Result<f64, ErrKind> {
-    match args.get(idx) {
-        Some(e) => one_num(ctx, e),
-        None => Ok(default),
-    }
-}
-
-/// An OPTIONAL boolean flag argument at `idx`, or `default` when the call omits it. An error
-/// propagates.
-fn opt_bool(ctx: &mut EvalCtx, args: &[Expr], idx: usize, default: bool) -> Result<bool, ErrKind> {
-    match args.get(idx) {
-        Some(e) => coerce_bool(&ctx.eval(e)),
-        None => Ok(default),
     }
 }

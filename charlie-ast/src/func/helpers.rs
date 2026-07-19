@@ -1,4 +1,4 @@
-// Concern: the SHARED eval helpers reused by multiple function families — materializing an argument to a rectangular `block`, coercing a single argument to a number (`one_num`) or text (`arg_text`), gathering numbers under the direct-vs-in-range rule (`collect_numbers`), and the finite/overflow guard on a numeric result (`finite_or_num`) | Non-concern: the family function bodies that call these (func/<family>.rs) and the registry table + dispatch (func/mod.rs) | IO: (`EvalCtx`, an `Expr`/`Value`) -> an intermediate `Result`/`Value`
+// Concern: the SHARED eval helpers reused by multiple function families — materializing an argument to a rectangular `block`, coercing a single argument to a number (`one_num`) or text (`arg_text`), reading an OPTIONAL numeric/boolean argument with a default (`opt_num`/`opt_bool`), gathering numbers under the direct-vs-in-range rule (`collect_numbers`), and the finite/overflow guard on a numeric result (`finite_or_num`) | Non-concern: the family function bodies that call these (func/<family>.rs) and the registry table + dispatch (func/mod.rs) | IO: (`EvalCtx`, an `Expr`/`Value`) -> an intermediate `Result`/`Value`
 use super::*;
 
 /// Evaluate an argument to a rectangular block: `(rows, cols, cells)`. A bare scalar is a `1×1`
@@ -46,6 +46,33 @@ pub(crate) fn collect_numbers(ctx: &mut EvalCtx, args: &[Expr]) -> Result<Vec<f6
         }
     }
     Ok(nums)
+}
+
+/// An OPTIONAL numeric argument at `idx`, or `default` when the call omits it. An error propagates.
+pub(crate) fn opt_num(
+    ctx: &mut EvalCtx,
+    args: &[Expr],
+    idx: usize,
+    default: f64,
+) -> Result<f64, ErrKind> {
+    match args.get(idx) {
+        Some(e) => one_num(ctx, e),
+        None => Ok(default),
+    }
+}
+
+/// An OPTIONAL boolean flag argument at `idx`, or `default` when the call omits it. An error
+/// propagates.
+pub(crate) fn opt_bool(
+    ctx: &mut EvalCtx,
+    args: &[Expr],
+    idx: usize,
+    default: bool,
+) -> Result<bool, ErrKind> {
+    match args.get(idx) {
+        Some(e) => coerce_bool(&ctx.eval(e)),
+        None => Ok(default),
+    }
 }
 
 /// Coerce one argument to its Excel text form (general number format, `TRUE`/`FALSE`, `""` for blank),

@@ -153,6 +153,19 @@ impl Resolver for Workbook {
     fn now_serial(&self) -> f64 {
         self.now
     }
+
+    /// Whether the covering cell's CONTENT is a formula — the `ISFORMULA` seam. Reads the un-evaluated
+    /// grid cell via [`Workbook::grid_cell_at`] (which single-homes the GRID5 array-formula-region
+    /// branch, so every coordinate of a `=SORT(...)`-style region reports TRUE), never the cell's
+    /// value: a formula whose result is an error still reports TRUE, and no evaluation is triggered. A
+    /// literal, a blank/gap, or a GRID6 load-error cell is not a formula -> FALSE.
+    fn is_formula(&self, cell: CellRef) -> bool {
+        let sheet = self.resolve_sheet(cell.sheet);
+        matches!(
+            self.grid_cell_at(sheet, cell.col, cell.row),
+            Some(GridCell::Formula { .. })
+        )
+    }
 }
 
 /// An append-only arena that owns the cell buffers behind [`Resolver::range`]'s borrowed

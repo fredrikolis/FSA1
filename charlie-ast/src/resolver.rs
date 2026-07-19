@@ -37,6 +37,31 @@ pub fn system_now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Draw one pseudo-random `f64` in the half-open unit interval `[0, 1)` — the entropy the VOLATILE
+/// `RAND`/`RANDBETWEEN` built-ins read through the [`Resolver::rand_unit`] default. Single-homed here
+/// (like [`system_now_secs`]) so the raw entropy read is written once and a resolver that overrides
+/// the seam for determinism does not re-derive the mixing.
+///
+/// Distinct on every call (so two `RAND()`s in one formula differ, as Excel's do) WITHOUT an external
+/// RNG crate: a process-wide monotone counter is folded with the wall clock through the SplitMix64
+/// finalizer, then the top 53 bits — a full `f64` mantissa — are scaled to `[0, 1)`. Not
+/// cryptographic; spreadsheet `RAND` does not require it.
+pub fn system_rand_unit() -> f64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    // Fold the wall clock in so two processes started in lockstep still diverge; the counter alone
+    // guarantees per-call distinctness within a process.
+    let clock = (system_now_secs() * 1_000_000.0) as u64;
+    let mut z = clock.wrapping_add(seq.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    // SplitMix64 finalizing mix — a strong avalanche from a weak (counter) input.
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    // Top 53 bits → a uniformly-distributed f64 in [0, 1) (the 2^53 mantissa granularity).
+    (z >> 11) as f64 / ((1u64 << 53) as f64)
+}
+
 /// The engine's entire view of the outside world.
 ///
 /// `charlie-ast` evaluates against a `Resolver` it is handed, never a concrete store. Because the
@@ -73,6 +98,31 @@ pub trait Resolver {
         // The raw clock read is single-homed in [`system_now_secs`] and the epoch->serial mapping in
         // [`unix_secs_to_serial`]; this default just composes them.
         unix_secs_to_serial(system_now_secs())
+    }
+
+    /// Whether the cell at `cell` holds a **formula** (an `=…`) rather than a literal, a blank, or a
+    /// gap — the ONE seam the `ISFORMULA` information predicate reads. It inspects the cell's CONTENT
+    /// KIND, never its value, so it neither evaluates the cell nor propagates its error.
+    ///
+    /// The DEFAULT is `false`: a resolver backed by a bare value store (with no formula/literal
+    /// distinction) reports every cell as a non-formula, so `ISFORMULA` is well-defined against any
+    /// resolver without a boundary break. A resolver that knows a cell's source — charlie-model, which
+    /// loads a grid of typed cells — OVERRIDES this to answer from the loaded `Cell` kind.
+    fn is_formula(&self, _cell: CellRef) -> bool {
+        false
+    }
+
+    /// One draw of entropy in `[0, 1)` — the mutable-seam-of-the-outside-world the VOLATILE
+    /// `RAND`/`RANDBETWEEN` built-ins read (the randomness analogue of [`Self::now_serial`]'s clock).
+    /// `RAND()` returns the draw directly; `RANDBETWEEN(bottom, top)` maps it onto its integer band.
+    ///
+    /// The DEFAULT reads process entropy via [`system_rand_unit`], so a production resolver gets a
+    /// fresh value per call for free; a resolver that needs a REPRODUCIBLE stream (a test stub) can
+    /// OVERRIDE this one method to return a fixed or seeded sequence. Recorded as a seam — not a
+    /// `std::` call inline in the built-in — for exactly the same reason as the clock: determinism is
+    /// injectable at the boundary, never baked into the engine.
+    fn rand_unit(&self) -> f64 {
+        system_rand_unit()
     }
 }
 

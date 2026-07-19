@@ -1,4 +1,4 @@
-// Concern: UNIT-TEST pins for the financial family built-ins (PMT FV NPER RATE IPMT PPMT NPV IRR XNPV XIRR) exercised through `FUNCS` dispatch — PMT's linear-vs-annuity branches with the located #DIV/0! denominators (shared with IPMT/PPMT's zero-denom and NPER's zero-pmt), the annuity family (FV/NPER/RATE/IPMT/PPMT) against hand-verified Excel values, RATE's scaled-residual convergence on a large-magnitude annuity and its no-real-root/NPER-no-solution/period-out-of-range #NUM! refusals, NPV period-one discounting over args and ranges, IRR's oracle-matching convergence and its guaranteed #NUM! (never a hang) on unbracketed cashflows, the Actual/365 XNPV/XIRR on irregularly-dated cashflows (the benchmark ~10.76% case) and their mismatched-length/out-of-order-date #NUM! refusals, and dispatch's arity gate | Non-concern: the finance impls (`func/finance.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`col_range`/`arr`/`n`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
+// Concern: UNIT-TEST pins for the financial family built-ins (PMT FV PV NPER RATE IPMT PPMT NPV IRR MIRR XNPV XIRR CUMIPMT CUMPRINC SLN SYD DB DDB EFFECT NOMINAL PDURATION RRI) exercised through `FUNCS` dispatch — PMT's linear-vs-annuity branches with the located #DIV/0! denominators (shared with IPMT/PPMT's zero-denom and NPER's zero-pmt), the annuity family (FV/PV/NPER/RATE/IPMT/PPMT) against hand-verified Excel values (PV inverting PMT exactly), RATE's scaled-residual convergence on a large-magnitude annuity and its no-real-root/NPER-no-solution/period-out-of-range #NUM! refusals, NPV period-one discounting over args and ranges, IRR's oracle-matching convergence and its guaranteed #NUM! (never a hang) on unbracketed cashflows, MIRR's forward/back compounding with its all-one-sign/single-flow #DIV/0!, the CUMIPMT/CUMPRINC payment-window sums with their out-of-domain #NUM! refusals, the depreciation schedule (SLN's #DIV/0! life, SYD/DB/DDB's out-of-range-period #NUM!), the EFFECT/NOMINAL/PDURATION/RRI rate converters and their non-positive-argument #NUM! refusals, the Actual/365 XNPV/XIRR on irregularly-dated cashflows (the benchmark ~10.76% case) and their mismatched-length/out-of-order-date #NUM! refusals, and dispatch's arity gate | Non-concern: the finance impls (`func/finance.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`col_range`/`arr`/`n`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
 use super::*;
 
 /// Assert an eval yields a number within `tol` of `want` (the closeness bar for the iterative /
@@ -379,6 +379,343 @@ fn xirr_bad_input_is_num_never_a_hang() {
     let bad_dates = arr(2, 1, vec![n(44275.0), n(43831.0)]);
     assert_eq!(
         eval(&call("XIRR", vec![vals, bad_dates]), &g),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn pv_inverts_the_annuity_and_the_rate_zero_branch_is_linear() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // rate == 0 -> linear: -(pmt·nper + fv) = -(-200·60) = 12000 exactly.
+    assert_eq!(
+        eval(&call("PV", vec![num(0.0), num(60.0), num(-200.0)]), &g),
+        n(12000.0)
+    );
+    // PV inverts PMT exactly: PMT(0.5,2,-100) = 90, so PV(0.5,2,90) = -100 (1.5^2 = 2.25 is dyadic).
+    assert_eq!(
+        eval(&call("PV", vec![num(0.5), num(2.0), num(90.0)]), &g),
+        n(-100.0)
+    );
+    // With a future value the linear branch still nets exactly: -(pmt·nper + fv) = -(-100·10 + 200).
+    assert_eq!(
+        eval(
+            &call("PV", vec![num(0.0), num(10.0), num(-100.0), num(200.0)]),
+            &g
+        ),
+        n(800.0)
+    );
+    // An error argument propagates leftmost.
+    let bad = call(
+        "PV",
+        vec![call("SQRT", vec![num(-1.0)]), num(2.0), num(1.0)],
+    );
+    assert_eq!(eval(&bad, &g), Value::Error(ErrKind::Num));
+}
+
+#[test]
+fn mirr_compounds_forward_and_discounts_back_matching_the_oracle() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // MIRR([-1000,300,400,500], finance=0.1, reinvest=0.12) = 0.09815669244631553 (formulas-lib
+    // oracle, cross-checked by the closed-form (-NPVpos·(1+rr)^n / (NPVneg·(1+fr)))^(1/(n-1)) - 1).
+    let cf = arr(4, 1, vec![n(-1000.0), n(300.0), n(400.0), n(500.0)]);
+    assert_close(
+        eval(&call("MIRR", vec![cf, num(0.1), num(0.12)]), &g),
+        0.098_156_692_446_315_53,
+        1e-9,
+    );
+}
+
+#[test]
+fn mirr_needs_both_signs_and_at_least_two_flows_else_div0() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // All-positive flows: no negative leg -> the PVneg denominator is zero -> #DIV/0! (Excel).
+    let allpos = arr(3, 1, vec![n(100.0), n(200.0), n(300.0)]);
+    assert_eq!(
+        eval(&call("MIRR", vec![allpos, num(0.1), num(0.12)]), &g),
+        Value::Error(ErrKind::Div0)
+    );
+    // A single flow gives a 1/(n-1) = 1/0 exponent -> #DIV/0!.
+    let one = arr(1, 1, vec![n(-100.0)]);
+    assert_eq!(
+        eval(&call("MIRR", vec![one, num(0.1), num(0.12)]), &g),
+        Value::Error(ErrKind::Div0)
+    );
+}
+
+#[test]
+fn cumipmt_and_cumprinc_sum_the_payment_window_and_refuse_bad_domains() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // CUMIPMT(0.05/12, 60, 20000, 1, 12, 0) = -917.9910149306554 (first-year interest, formulas-lib
+    // oracle). Uses the SAME ipmt_core the annuity family shares, summed over periods 1..=12.
+    let rate = 0.05_f64 / 12.0;
+    assert_close(
+        eval(
+            &call(
+                "CUMIPMT",
+                vec![
+                    num(rate),
+                    num(60.0),
+                    num(20000.0),
+                    num(1.0),
+                    num(12.0),
+                    num(0.0),
+                ],
+            ),
+            &g,
+        ),
+        -917.991_014_930_655_4,
+        1e-6,
+    );
+    // CUMPRINC over the same window = -3611.1050596319824 (first-year principal).
+    assert_close(
+        eval(
+            &call(
+                "CUMPRINC",
+                vec![
+                    num(rate),
+                    num(60.0),
+                    num(20000.0),
+                    num(1.0),
+                    num(12.0),
+                    num(0.0),
+                ],
+            ),
+            &g,
+        ),
+        -3_611.105_059_631_982_4,
+        1e-6,
+    );
+    // start_period > end_period (a reversed window) -> #NUM!.
+    assert_eq!(
+        eval(
+            &call(
+                "CUMIPMT",
+                vec![
+                    num(rate),
+                    num(60.0),
+                    num(20000.0),
+                    num(12.0),
+                    num(1.0),
+                    num(0.0),
+                ],
+            ),
+            &g,
+        ),
+        Value::Error(ErrKind::Num)
+    );
+    // A type that is neither 0 nor 1 -> #NUM! (for CUMPRINC too).
+    assert_eq!(
+        eval(
+            &call(
+                "CUMPRINC",
+                vec![
+                    num(rate),
+                    num(60.0),
+                    num(20000.0),
+                    num(1.0),
+                    num(12.0),
+                    num(2.0),
+                ],
+            ),
+            &g,
+        ),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn sln_and_syd_are_exact_rational_forms_with_located_refusals() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // SLN(10000,1000,5) = (10000-1000)/5 = 1800 exactly (every period the same amount).
+    assert_eq!(
+        eval(&call("SLN", vec![num(10000.0), num(1000.0), num(5.0)]), &g),
+        n(1800.0)
+    );
+    // A zero life divides by zero -> a located #DIV/0! (distinct from the declining-balance #NUM!).
+    assert_eq!(
+        eval(&call("SLN", vec![num(10000.0), num(1000.0), num(0.0)]), &g),
+        Value::Error(ErrKind::Div0)
+    );
+    // SYD(10000,1000,5,2) = 9000·(5-2+1)·2/(5·6) = 72000/30 = 2400 exactly.
+    assert_eq!(
+        eval(
+            &call("SYD", vec![num(10000.0), num(1000.0), num(5.0), num(2.0)]),
+            &g
+        ),
+        n(2400.0)
+    );
+    // per > life (6 > 5) has no such year -> #NUM!; per < 1 (0) likewise.
+    assert_eq!(
+        eval(
+            &call("SYD", vec![num(10000.0), num(1000.0), num(5.0), num(6.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+    assert_eq!(
+        eval(
+            &call("SYD", vec![num(10000.0), num(1000.0), num(5.0), num(0.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn db_declining_balance_matches_excel_and_handles_the_partial_period() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // DB(10000,1000,5,2) with the default month=12: rate = ROUND(1-(0.1)^0.2,3) = 0.369; period-1
+    // depreciation 3690, period-2 = (10000-3690)·0.369 = 2328.39 (formulas-lib oracle).
+    assert_close(
+        eval(
+            &call("DB", vec![num(10000.0), num(1000.0), num(5.0), num(2.0)]),
+            &g,
+        ),
+        2328.39,
+        1e-6,
+    );
+    // With month=6 the schedule gains a partial final period life+1=6: DB(10000,1000,5,6,6) =
+    // 238.52712458788187 (formulas-lib oracle) — the (12-month)/12 proration.
+    assert_close(
+        eval(
+            &call(
+                "DB",
+                vec![num(10000.0), num(1000.0), num(5.0), num(6.0), num(6.0)],
+            ),
+            &g,
+        ),
+        238.527_124_587_881_87,
+        1e-6,
+    );
+    // period > life with month=12 (6 > 5) -> #NUM!; month outside 1..=12 (13) -> #NUM!; cost 0 -> #NUM!.
+    assert_eq!(
+        eval(
+            &call("DB", vec![num(10000.0), num(1000.0), num(5.0), num(6.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+    assert_eq!(
+        eval(
+            &call(
+                "DB",
+                vec![num(10000.0), num(1000.0), num(5.0), num(2.0), num(13.0)]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+    assert_eq!(
+        eval(
+            &call("DB", vec![num(0.0), num(1000.0), num(5.0), num(2.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn ddb_double_declining_balance_matches_excel_with_located_refusals() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // DDB(10000,1000,5,2): rate=2/5=0.4; book 10000->6000->3600, period-2 depreciation = 2400.
+    assert_close(
+        eval(
+            &call("DDB", vec![num(10000.0), num(1000.0), num(5.0), num(2.0)]),
+            &g,
+        ),
+        2400.0,
+        1e-6,
+    );
+    // A fractional period is legal: DDB(10000,1000,5,2.5) = 1859.03200617956 (formulas-lib oracle).
+    assert_close(
+        eval(
+            &call("DDB", vec![num(10000.0), num(1000.0), num(5.0), num(2.5)]),
+            &g,
+        ),
+        1_859.032_006_179_56,
+        1e-6,
+    );
+    // period > life (6 > 5) -> #NUM!; a non-positive factor (0) -> #NUM!.
+    assert_eq!(
+        eval(
+            &call("DDB", vec![num(10000.0), num(1000.0), num(5.0), num(6.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+    assert_eq!(
+        eval(
+            &call(
+                "DDB",
+                vec![num(10000.0), num(1000.0), num(5.0), num(3.0), num(0.0)]
+            ),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn effect_and_nominal_are_inverses_with_located_refusals() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // EFFECT(0.0525,4) = (1+0.0525/4)^4 - 1 = 0.05354266737075819 (formulas-lib oracle).
+    assert_close(
+        eval(&call("EFFECT", vec![num(0.0525), num(4.0)]), &g),
+        0.053_542_667_370_758_19,
+        1e-9,
+    );
+    // NOMINAL(0.053543,4) = 4·((1.053543)^(1/4)-1) = 0.052500319868356016 (formulas-lib oracle).
+    assert_close(
+        eval(&call("NOMINAL", vec![num(0.053543), num(4.0)]), &g),
+        0.052_500_319_868_356_016,
+        1e-9,
+    );
+    // A frequency below 1 (0) -> #NUM! for both; a non-positive rate -> #NUM!.
+    assert_eq!(
+        eval(&call("EFFECT", vec![num(0.05), num(0.0)]), &g),
+        Value::Error(ErrKind::Num)
+    );
+    assert_eq!(
+        eval(&call("EFFECT", vec![num(0.0), num(4.0)]), &g),
+        Value::Error(ErrKind::Num)
+    );
+    assert_eq!(
+        eval(&call("NOMINAL", vec![num(0.05), num(0.0)]), &g),
+        Value::Error(ErrKind::Num)
+    );
+}
+
+#[test]
+fn pduration_and_rri_invert_compound_growth_with_located_refusals() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    // PDURATION(0.05,1000,2000) = ln(2)/ln(1.05) = 14.206699082890472 (formulas-lib oracle).
+    assert_close(
+        eval(
+            &call("PDURATION", vec![num(0.05), num(1000.0), num(2000.0)]),
+            &g,
+        ),
+        14.206_699_082_890_472,
+        1e-9,
+    );
+    // RRI(96,10000,11000) = (1.1)^(1/96) - 1 = 0.0009933073762913303 (formulas-lib oracle).
+    assert_close(
+        eval(
+            &call("RRI", vec![num(96.0), num(10000.0), num(11000.0)]),
+            &g,
+        ),
+        0.000_993_307_376_291_330_3,
+        1e-12,
+    );
+    // PDURATION with a non-positive rate/pv/fv -> #NUM!; RRI with a non-positive nper -> #NUM!.
+    assert_eq!(
+        eval(
+            &call("PDURATION", vec![num(0.0), num(1000.0), num(2000.0)]),
+            &g
+        ),
+        Value::Error(ErrKind::Num)
+    );
+    assert_eq!(
+        eval(&call("RRI", vec![num(0.0), num(10000.0), num(11000.0)]), &g),
         Value::Error(ErrKind::Num)
     );
 }

@@ -36,6 +36,32 @@ impl<'r> EvalCtx<'r> {
         self.resolver.now_serial()
     }
 
+    /// One entropy draw in `[0, 1)` the VOLATILE `RAND`/`RANDBETWEEN` built-ins read, from the
+    /// resolver's injectable [`Resolver::rand_unit`] seam. Routed through the resolver — never
+    /// `std::` inline in a built-in — so a deterministic resolver can PIN the stream (the randomness
+    /// analogue of [`Self::now_serial`]).
+    pub(crate) fn rand_unit(&self) -> f64 {
+        self.resolver.rand_unit()
+    }
+
+    /// Whether the cell a single reference names holds a FORMULA (the `ISFORMULA` seam). Resolves the
+    /// ref's sheet NAME through the resolver — the one place a name becomes a `SheetId` — then reads
+    /// [`Resolver::is_formula`] on the coordinate. `None` when the sheet name is unknown (an
+    /// unresolvable ref, which the caller turns into `#REF!`, mirroring [`Self::eval_ref`]).
+    pub(crate) fn ref_is_formula(&self, r: &RefNode) -> Option<bool> {
+        r.resolve(|name| self.resolver.sheet_id(name))
+            .map(|cell| self.resolver.is_formula(cell))
+    }
+
+    /// Whether the TOP-LEFT cell of a range reference holds a formula — `ISFORMULA` of a range applies
+    /// to its anchor (the implicit-intersection top-left, the same corner the array/lookup surfaces
+    /// take). Normalizes so a reversed spelling (`B2:A1`) still anchors at its true top-left. `None` on
+    /// an unknown sheet name (-> `#REF!`).
+    pub(crate) fn range_is_formula(&self, rn: &RangeNode) -> Option<bool> {
+        rn.resolve(|name| self.resolver.sheet_id(name))
+            .map(|rr| self.resolver.is_formula(rr.normalized().start))
+    }
+
     /// Evaluate one sub-expression, tracking depth. Registry functions call this on their argument
     /// `Expr`s (so lazy forms like `IF`/`IFERROR` control *which* arguments are evaluated).
     pub fn eval(&mut self, expr: &Expr) -> Value {

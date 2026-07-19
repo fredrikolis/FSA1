@@ -12,5 +12,12 @@
     "formula": "=SEQUENCE(3)",
     "lib_gap": true,
     "lib_gap_reason": "formulas v1.3.4 does not implement SEQUENCE: =SEQUENCE(3) returns #NAME? (unknown function). Excel & charlie: a 3x1 array {1;2;3} whose top-left (implicit-intersection) value is 1. See KNOWN-LIB-GAPS.md."
-  }
+  },
+  { "name": "sortby_col_topleft", "category": "array", "inputs": {"A1":"a","A2":"b","A3":"c","B1":3,"B2":1,"B3":2}, "formula": "=SORTBY(A1:A3,B1:B3,1)" },
+  { "name": "vstack_topleft", "category": "array", "inputs": {"A1":1,"B1":2,"A2":3,"B2":4}, "formula": "=VSTACK(A1:B1,A2:B2)" },
+  { "name": "hstack_topleft", "category": "array", "inputs": {"A1":1,"A2":2}, "formula": "=HSTACK(A1:A2,A1:A2)" },
+  { "name": "take_topleft", "category": "array", "inputs": {"A1":1,"B1":2,"C1":3}, "formula": "=TAKE(A1:C1,1,2)" },
+  { "name": "drop_omitted_rows_topleft", "category": "array", "inputs": {"A1":1,"B1":2,"C1":3}, "formula": "=DROP(A1:C1,,1)" },
+  { "name": "choosecols_topleft", "category": "array", "inputs": {"A1":1,"B1":2,"C1":3}, "formula": "=CHOOSECOLS(A1:C1,3,1)" },
+  { "name": "chooserows_topleft", "category": "array", "inputs": {"A1":1,"A2":2,"A3":3}, "formula": "=CHOOSEROWS(A1:A3,3)" }
 ]

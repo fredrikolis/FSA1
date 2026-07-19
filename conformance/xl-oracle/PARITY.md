@@ -1,8 +1,9 @@
 <!-- Concern: the standing ENG6 parity result — the match/total over BOTH the per-formula corpus and the whole-workbook real-file corpus, the excluded lib-gaps, and the last-run date — as the human-readable snapshot of `run.sh`'s output | Non-concern: how parity is computed (oracle.py / workbook_oracle.py) and why the excluded cases are lib-gaps (KNOWN-LIB-GAPS.md) | IO: none (documentation snapshot; regenerate by running ./run.sh and ./run.sh --workbook) -->
 # PARITY.md — ENG6 differential parity result
 
-**Per-formula result: 41 / 41 graded cases MATCH. 0 charlie-defect divergences. 1 case EXCLUDED (lib-gap).**
-Corpus total: 42 cases. Reference oracle: `formulas` v1.3.4 (+ openpyxl). Last run: 2026-07-17.
+**Per-formula result: 68 / 68 graded cases MATCH. 0 charlie-defect divergences. 3 cases EXCLUDED (lib-gaps).**
+Corpus total: 71 cases (curated highlights below; `./run.sh` grades the full `corpus/*.json` set).
+Reference oracle: `formulas` v1.3.4 (+ openpyxl). Last run: 2026-07-19.
 
 `./run.sh` exit code: **0** (no charlie-defect divergence).
 
@@ -26,7 +27,8 @@ diffed cell-for-cell against the `formulas` reference (see `workbook_oracle.py`)
 | array       | 2      | 2     | 0        | SUMPRODUCT pair, array literal `{…}` |
 | errors      | 2      | 2     | 0        | `#DIV/0!`, `#N/A` |
 | edge        | 7      | 7     | 1        | `^` left-assoc, MOD(-7,3)=2, ROUND half-away, `"3"+2`, INT(-2.5); excluded: `SUMPRODUCT(--(range>x))` |
-| **total**   | **41** | **41**| **1**    | |
+| engineering | 27     | 27    | 2        | CONVERT: mass/distance/time/volume/force/power/pressure ratios, SI prefixes (incl. area²/vol³ exponent + deka alias), temperature affine (F/C/K/Rank/Reau), `pc` parsec-vs-picocalorie, `#N/A` on unknown/cross-system/bare-prefix; excluded: IEC binary prefixes `kibyte`/`Gibit` (formulas-lib defect, Excel-correct in charlie) |
+| **total**   | **68** | **68**| **3**    | |
 
 ## Whole-workbook corpus (real .xlsx)
 

@@ -496,6 +496,46 @@ fn eval_formula_evaluates_an_ad_hoc_string_against_the_workbook() {
 }
 
 #[test]
+fn isformula_reads_the_grid_content_kind_over_the_real_resolver() {
+    // A1 is a literal, B1 a formula (whose value errors), C1 a per-cell formula. ISFORMULA reads the
+    // cell's CONTENT KIND through the model's `Resolver::is_formula`, never its value — so B1 reports
+    // TRUE even though it evaluates to #DIV/0!, and a gap (Z9) reports FALSE.
+    let wb = load_one_tab("Sheet1", &[("A1", "10"), ("B1", "=1/0"), ("C1", "=A1+1")]);
+    assert_eq!(
+        wb.eval_formula(0, "ISFORMULA(A1)").unwrap(),
+        FormulaOutcome::Value("FALSE".to_string())
+    );
+    assert_eq!(
+        wb.eval_formula(0, "ISFORMULA(B1)").unwrap(),
+        FormulaOutcome::Value("TRUE".to_string())
+    );
+    assert_eq!(
+        wb.eval_formula(0, "ISFORMULA(C1)").unwrap(),
+        FormulaOutcome::Value("TRUE".to_string())
+    );
+    // A gap (no file claims Z9) is not a formula.
+    assert_eq!(
+        wb.eval_formula(0, "ISFORMULA(Z9)").unwrap(),
+        FormulaOutcome::Value("FALSE".to_string())
+    );
+}
+
+#[test]
+fn isformula_reports_true_across_a_grid5_array_formula_region() {
+    // A GRID5 array-formula region: the whole A1:A3 file is one `=SEQUENCE(3)`. Every coordinate of
+    // the region reports as a formula (VAL1: one array-formula cell spanning its range).
+    let wb = load_one_tab("Sheet1", &[("A1:A3", "=SEQUENCE(3)")]);
+    assert_eq!(
+        wb.eval_formula(0, "ISFORMULA(A1)").unwrap(),
+        FormulaOutcome::Value("TRUE".to_string())
+    );
+    assert_eq!(
+        wb.eval_formula(0, "ISFORMULA(A3)").unwrap(),
+        FormulaOutcome::Value("TRUE".to_string())
+    );
+}
+
+#[test]
 fn a_shared_dependency_computes_once_across_a_batch_render() {
     // ENG3 sharing: a viewport demanded via `values_at` builds ONE merged graph, so a dependency
     // referenced by several viewport cells is computed once. A1=2 (shared base); B1=A1+1, C1=A1+1

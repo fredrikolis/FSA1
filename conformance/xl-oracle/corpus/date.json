@@ -2,5 +2,20 @@
   { "name": "date_serial", "category": "date", "inputs": {}, "formula": "=DATE(2020,6,15)" },
   { "name": "eomonth_next", "category": "date", "inputs": {}, "formula": "=EOMONTH(DATE(2020,1,15),1)" },
   { "name": "weekday_default", "category": "date", "inputs": {}, "formula": "=WEEKDAY(DATE(2020,1,1))" },
-  { "name": "yearfrac_year", "category": "date", "inputs": {}, "formula": "=YEARFRAC(DATE(2020,1,1),DATE(2021,1,1))" }
+  { "name": "yearfrac_year", "category": "date", "inputs": {}, "formula": "=YEARFRAC(DATE(2020,1,1),DATE(2021,1,1))" },
+  { "name": "days360_us_month_ends", "category": "date", "inputs": {}, "formula": "=DAYS360(DATE(2020,1,31),DATE(2020,3,31))" },
+  { "name": "days360_us_feb_start", "category": "date", "inputs": {}, "formula": "=DAYS360(DATE(2020,2,29),DATE(2021,2,28))" },
+  { "name": "days360_european", "category": "date", "inputs": {}, "formula": "=DAYS360(DATE(2020,2,29),DATE(2020,3,31),TRUE)" },
+  { "name": "isoweeknum_prev_year", "category": "date", "inputs": {}, "formula": "=ISOWEEKNUM(DATE(2023,1,1))" },
+  { "name": "isoweeknum_week1", "category": "date", "inputs": {}, "formula": "=ISOWEEKNUM(DATE(2020,1,1))" },
+  { "name": "networkdays_intl_default", "category": "date", "inputs": {}, "formula": "=NETWORKDAYS.INTL(DATE(2020,1,1),DATE(2020,1,10))" },
+  { "name": "networkdays_intl_sunday_only", "category": "date", "inputs": {}, "formula": "=NETWORKDAYS.INTL(DATE(2020,1,1),DATE(2020,1,10),11)" },
+  { "name": "networkdays_intl_mask", "category": "date", "inputs": {}, "formula": "=NETWORKDAYS.INTL(DATE(2020,1,1),DATE(2020,1,10),\"0000011\")" },
+  { "name": "workday_intl_default", "category": "date", "inputs": {}, "formula": "=WORKDAY.INTL(DATE(2020,1,1),5)" },
+  { "name": "workday_intl_sunday_only", "category": "date", "inputs": {}, "formula": "=WORKDAY.INTL(DATE(2020,1,1),5,11)" },
+  { "name": "datevalue_iso", "category": "date", "inputs": {}, "formula": "=DATEVALUE(\"2020-01-01\")" },
+  { "name": "datevalue_drops_time", "category": "date", "inputs": {}, "formula": "=DATEVALUE(\"2020-01-01 12:00\")" },
+  { "name": "timevalue_clock", "category": "date", "inputs": {}, "formula": "=TIMEVALUE(\"12:00\")" },
+  { "name": "timevalue_with_seconds", "category": "date", "inputs": {}, "formula": "=TIMEVALUE(\"18:30:30\")" },
+  { "name": "timevalue_drops_date", "category": "date", "inputs": {}, "formula": "=TIMEVALUE(\"2020-01-01 12:00\")" }
 ]

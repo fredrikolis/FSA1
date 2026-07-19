@@ -1,4 +1,4 @@
-// Concern: UNIT-TEST pins for the DYNAMIC-ARRAY (spill) built-ins — SORT/UNIQUE/FILTER/SEQUENCE/TRANSPOSE returning `array` Values with Excel arg order + error semantics (bad sort index, empty filter/unique, non-positive/over-large SEQUENCE), driven through literal-array arguments so the shape/orientation of each result is pinned directly | Non-concern: the func::spill impls under test (func/spill.rs owns them), the GRID5 range-file PLACEMENT of a returned array (charlie-model owns that), and cross-crate conformance (the conformance crate owns the corpus) | IO: literal `Expr` args -> asserted `Value`s
+// Concern: UNIT-TEST pins for the DYNAMIC-ARRAY (spill) built-ins — SORT/SORTBY/UNIQUE/FILTER/SEQUENCE/TRANSPOSE plus the stackers VSTACK/HSTACK and reshapers TAKE/DROP/CHOOSEROWS/CHOOSECOLS returning `array` Values with Excel arg order + error semantics (bad sort index, empty filter/unique, non-positive/over-large SEQUENCE, ragged-stack #N/A padding, zero/whole-axis TAKE/DROP → #CALC!, out-of-range CHOOSE index → #VALUE!, mismatched SORTBY key → #VALUE!), driven through literal-array arguments so the shape/orientation of each result is pinned directly | Non-concern: the func::spill impls under test (func/spill.rs owns them), the GRID5 range-file PLACEMENT of a returned array (charlie-model owns that), and cross-crate conformance (the conformance crate owns the corpus) | IO: literal `Expr` args -> asserted `Value`s
 use super::*;
 
 /// Evaluate a call over literal args (the resolver is unused — a blank stub grid).
@@ -256,6 +256,195 @@ fn transpose_swaps_the_axes() {
             crate::value::Shape { rows: 2, cols: 2 },
             vec![n(1.0), n(3.0), n(2.0), n(4.0)]
         )
+    );
+}
+
+/// A 3×3 block {1..9} row-major — the shared fixture for the reshaper tests.
+fn block3() -> Expr {
+    arr(
+        3,
+        3,
+        vec![
+            n(1.0),
+            n(2.0),
+            n(3.0),
+            n(4.0),
+            n(5.0),
+            n(6.0),
+            n(7.0),
+            n(8.0),
+            n(9.0),
+        ],
+    )
+}
+
+#[test]
+fn vstack_concatenates_rows_and_pads_ragged_widths() {
+    let sh = |rows, cols| crate::value::Shape { rows, cols };
+    // VSTACK({1,2},{3,4}) → 2×2.
+    assert_eq!(
+        ev(
+            "VSTACK",
+            vec![
+                arr(1, 2, vec![n(1.0), n(2.0)]),
+                arr(1, 2, vec![n(3.0), n(4.0)])
+            ]
+        ),
+        Value::Array(sh(2, 2), vec![n(1.0), n(2.0), n(3.0), n(4.0)])
+    );
+    // A narrower block pads on the right with #N/A to the widest input.
+    let na = Value::Error(ErrKind::Na);
+    assert_eq!(
+        ev(
+            "VSTACK",
+            vec![
+                arr(1, 3, vec![n(1.0), n(2.0), n(3.0)]),
+                arr(1, 1, vec![n(4.0)])
+            ]
+        ),
+        Value::Array(
+            sh(2, 3),
+            vec![n(1.0), n(2.0), n(3.0), n(4.0), na.clone(), na]
+        )
+    );
+}
+
+#[test]
+fn hstack_concatenates_columns_and_pads_ragged_heights() {
+    let sh = |rows, cols| crate::value::Shape { rows, cols };
+    // HSTACK({1;2},{3;4}) → 2×2 {1,3;2,4}.
+    assert_eq!(
+        ev(
+            "HSTACK",
+            vec![a1(vec![n(1.0), n(2.0)]), a1(vec![n(3.0), n(4.0)])]
+        ),
+        Value::Array(sh(2, 2), vec![n(1.0), n(3.0), n(2.0), n(4.0)])
+    );
+    // A shorter column pads below with #N/A to the tallest input.
+    let na = Value::Error(ErrKind::Na);
+    assert_eq!(
+        ev(
+            "HSTACK",
+            vec![a1(vec![n(1.0), n(2.0), n(3.0)]), a1(vec![n(4.0)])]
+        ),
+        Value::Array(
+            sh(3, 2),
+            vec![n(1.0), n(4.0), n(2.0), na.clone(), n(3.0), na]
+        )
+    );
+}
+
+#[test]
+fn take_keeps_leading_or_trailing_rows_and_cols() {
+    let sh = |rows, cols| crate::value::Shape { rows, cols };
+    // First 2 rows × first 2 cols.
+    assert_eq!(
+        ev("TAKE", vec![block3(), num(2.0), num(2.0)]),
+        Value::Array(sh(2, 2), vec![n(1.0), n(2.0), n(4.0), n(5.0)])
+    );
+    // Negative counts take from the end: last 1 row × last 2 cols.
+    assert_eq!(
+        ev("TAKE", vec![block3(), num(-1.0), num(-2.0)]),
+        Value::Array(sh(1, 2), vec![n(8.0), n(9.0)])
+    );
+    // An omitted column count keeps every column.
+    assert_eq!(
+        ev("TAKE", vec![block3(), num(1.0)]),
+        Value::Array(sh(1, 3), vec![n(1.0), n(2.0), n(3.0)])
+    );
+    // A zero count zeroes an axis → #CALC!.
+    assert_eq!(
+        ev("TAKE", vec![block3(), num(0.0)]),
+        Value::Error(ErrKind::Calc)
+    );
+}
+
+#[test]
+fn drop_removes_leading_or_trailing_rows_and_cols() {
+    let sh = |rows, cols| crate::value::Shape { rows, cols };
+    // Drop the first row and first column → bottom-right 2×2 {5,6;8,9}.
+    assert_eq!(
+        ev("DROP", vec![block3(), num(1.0), num(1.0)]),
+        Value::Array(sh(2, 2), vec![n(5.0), n(6.0), n(8.0), n(9.0)])
+    );
+    // Negative drops from the end: drop the last 2 rows → keep the first row.
+    assert_eq!(
+        ev("DROP", vec![block3(), num(-2.0)]),
+        Value::Array(sh(1, 3), vec![n(1.0), n(2.0), n(3.0)])
+    );
+    // Dropping the whole axis → #CALC!.
+    assert_eq!(
+        ev("DROP", vec![block3(), num(3.0)]),
+        Value::Error(ErrKind::Calc)
+    );
+}
+
+#[test]
+fn chooserows_and_choosecols_select_and_reorder_by_index() {
+    let sh = |rows, cols| crate::value::Shape { rows, cols };
+    // CHOOSEROWS reorders: rows 3 then 1.
+    assert_eq!(
+        ev("CHOOSEROWS", vec![block3(), num(3.0), num(1.0)]),
+        Value::Array(
+            sh(2, 3),
+            vec![n(7.0), n(8.0), n(9.0), n(1.0), n(2.0), n(3.0)]
+        )
+    );
+    // A negative row index counts from the end.
+    assert_eq!(
+        ev("CHOOSEROWS", vec![block3(), num(-1.0)]),
+        Value::Array(sh(1, 3), vec![n(7.0), n(8.0), n(9.0)])
+    );
+    // An out-of-range row index → #VALUE!.
+    assert_eq!(
+        ev("CHOOSEROWS", vec![block3(), num(4.0)]),
+        Value::Error(ErrKind::Value)
+    );
+    // CHOOSECOLS: column 2 alone, then columns 3 & 1 reordered.
+    assert_eq!(
+        ev("CHOOSECOLS", vec![block3(), num(2.0)]),
+        Value::Array(sh(3, 1), vec![n(2.0), n(5.0), n(8.0)])
+    );
+    assert_eq!(
+        ev("CHOOSECOLS", vec![block3(), num(3.0), num(1.0)]),
+        Value::Array(
+            sh(3, 2),
+            vec![n(3.0), n(1.0), n(6.0), n(4.0), n(9.0), n(7.0)]
+        )
+    );
+}
+
+#[test]
+fn sortby_orders_rows_by_a_parallel_key_vector() {
+    let sh = |rows, cols| crate::value::Shape { rows, cols };
+    let data = || {
+        arr(
+            3,
+            2,
+            vec![t("a"), n(10.0), t("b"), n(20.0), t("c"), n(30.0)],
+        )
+    };
+    let key = || a1(vec![n(3.0), n(1.0), n(2.0)]);
+    // Ascending by the key {3;1;2}: row order 2,3,1.
+    assert_eq!(
+        ev("SORTBY", vec![data(), key()]),
+        Value::Array(
+            sh(3, 2),
+            vec![t("b"), n(20.0), t("c"), n(30.0), t("a"), n(10.0)]
+        )
+    );
+    // Descending.
+    assert_eq!(
+        ev("SORTBY", vec![data(), key(), num(-1.0)]),
+        Value::Array(
+            sh(3, 2),
+            vec![t("a"), n(10.0), t("c"), n(30.0), t("b"), n(20.0)]
+        )
+    );
+    // A key vector whose length matches neither axis → #VALUE!.
+    assert_eq!(
+        ev("SORTBY", vec![data(), a1(vec![n(1.0), n(2.0)])]),
+        Value::Error(ErrKind::Value)
     );
 }
 

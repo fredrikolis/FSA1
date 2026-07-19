@@ -71,3 +71,84 @@ values, for transparency). Distorting charlie to chase a wrong reference is forb
   dimension errors, and the reference-into-a-region case) with hand-verified Excel values.
 - **Verdict:** `lib-gap` (reference does not model spill). The per-formula oracle grades the anchor;
   the region fill is Rust-tested. charlie is correct.
+
+## 5. `QUOTIENT` / `COMBIN` / `SUBTOTAL` / `AGGREGATE` — unimplemented (`#NAME?`)
+
+- **Cases:** `mathtrig/quotient_basic` (`=QUOTIENT(5,2)`), `mathtrig/quotient_negative`
+  (`=QUOTIENT(-5,2)`), `mathtrig/combin_basic` (`=COMBIN(8,2)`), `mathtrig/subtotal_sum`
+  (`=SUBTOTAL(9,A1:A5)`), `mathtrig/subtotal_average` (`=SUBTOTAL(1,A1:A5)`), `mathtrig/aggregate_sum`
+  (`=AGGREGATE(9,4,A1:A5)`), `mathtrig/aggregate_large` (`=AGGREGATE(14,4,A1:A5,2)`).
+- **Correct (Excel & charlie):** `2`, `-2`, `28`, `14`, `2.8`, `14`, `4` respectively. QUOTIENT
+  truncates the quotient toward zero; COMBIN(8,2) is the binomial coefficient; SUBTOTAL/AGGREGATE
+  aggregate the range by their leading function number (9 = SUM, 1 = AVERAGE, 14 = LARGE).
+- **`formulas` v1.3.4 output:** `#NAME?` for all seven — the function names are not recognized at all.
+- **Root cause (probed directly):** these four functions are simply absent from the library's function
+  table, while their Math/Trig siblings ARE present (GCD/LCM/FACT/SUMSQ/MROUND/CEILING.MATH/FLOOR.MATH/
+  TRUNC/SIGN/EVEN/ODD all grade and Match in `corpus/mathtrig.json`). So the gap is specific to these
+  four names, not Math/Trig functions in general.
+- **Coverage instead:** charlie's QUOTIENT/COMBIN/SUBTOTAL/AGGREGATE are pinned by Rust tests with
+  hand-verified Excel values (`charlie-ast` `func::tests::math`, `func::tests::combinatorics`, and
+  `func::tests::subtotal`).
+- **Verdict:** `lib-gap` (reference unsupported). Excluded from pass/fail; charlie is correct.
+
+## 6. `MODE.MULT(range)` — whole-workbook model returns `#VALUE!` (MODE.SNGL / FREQUENCY work)
+
+- **Case:** `statistical/mode_mult_topleft` — inputs `A1:A5 = {1;2;2;3;3}`, formula
+  `=MODE.MULT(A1:A5)`.
+- **Correct (Excel & charlie):** the multi-mode array `{2;3}` (both values occur twice), whose
+  top-left (implicit-intersection) value — what a single-cell `charlie-cli eval` reports — is `2`.
+- **`formulas` v1.3.4 output:** `#VALUE!` — **wrong**, specifically on the whole-workbook
+  `ExcelModel` path the oracle uses (`ExcelModel().loads(xlsx).finish().calculate()`).
+- **Root cause (probed directly):** the SAME library computes `MODE.MULT({1,2,2,3,3})` correctly as
+  `2` through its inline `Parser().ast(...).compile()` path, and its siblings `MODE.SNGL(A1:A5)` (→ `2`)
+  and the array-returning `FREQUENCY(A1:A5,B1:B2)` (→ `2`) both compute correctly in the ExcelModel
+  path. So the defect is specific to MODE.MULT's dynamic-array handling in the workbook model, not
+  array-returning statistical functions in general.
+- **Coverage instead:** charlie's MODE.MULT is pinned by a Rust test with a hand-verified Excel value
+  (`charlie-ast` `func::tests::stats_rank::mode_mult_returns_all_modes_as_a_column`, asserting the full
+  `{2;3}` column array).
+- **Verdict:** `lib-gap` (reference defect). Excluded from pass/fail; charlie is correct.
+
+## 7. `DSUM` / `DAVERAGE` / `DCOUNT` / `DCOUNTA` / `DGET` / `DMAX` / `DMIN` — unimplemented (`#NAME?`)
+
+- **Cases (probed directly):** the whole Database family over the canonical Excel orchard database
+  (`Tree Height Age Yield Profit` + six records) with a criteria block, e.g.
+  `=DSUM(A1:E7,"Profit",A10:C11)`, `=DGET(A1:E7,"Yield",A10:C11)`, `=DCOUNT(A1:E7,"Age",A10:C11)`.
+- **Correct (Excel & charlie):** for `Tree=Apple AND Height>10 AND Age>12` (two matching records):
+  DSUM Profit = `180`, DAVERAGE Yield = `12`, DCOUNT Age = `2`, DCOUNTA Tree = `2`, DMAX Profit =
+  `105`, DMIN Profit = `75`; DGET is `#NUM!` (two matches), `14` for a single-match criterion, and
+  `#VALUE!` for no match.
+- **`formulas` v1.3.4 output:** `#NAME?` for all seven — the function names are not recognized at all
+  (verified by loading each into the `ExcelModel` path the oracle uses).
+- **Root cause (probed directly):** the entire `D*` database family is absent from the library's
+  function table, while the sibling criteria-aggregation `*IF(S)` forms (SUMIF/COUNTIFS/… graded in
+  `corpus/aggregate.json`) ARE present. So the gap is the whole Database family, not criteria matching
+  in general.
+- **Coverage instead:** charlie's Database family is pinned by Rust tests with hand-verified Excel
+  values (`charlie-ast` `func::tests::database` — field-by-name and by 1-based number, the OR/AND
+  criteria semantics, blank-row match-all, the counts vs numeric reducers, DGET's single/no/multi
+  contract, and the error-propagation rules), plus the DATABASE criteria grammar itself: bare text is
+  matched BEGINS-WITH (criterion `Apple` selects both `Apple` and `Apple2`) while a leading `=` forces
+  exact — pinned with a strict-prefix fixture in
+  `func::tests::database::bare_text_criteria_match_begins_with_and_leading_eq_forces_exact`, so the
+  begins-with-vs-exact divergence from the `*IF(S)` grammar is exercised, not just assumed.
+- **Known limitations (recorded):** a criteria label naming no database column is ignored rather than
+  evaluated as Excel COMPUTED CRITERIA (can over-accept vs Excel), and a non-integer field number is
+  truncated toward zero — both defensible scope cuts for a fresh D* landing, neither lib-verifiable.
+- **Verdict:** `lib-gap` (reference unsupported). Excluded from pass/fail; charlie is correct.
+
+## 8. `CONVERT(number, from, to)` with IEC binary prefixes (`ki`/`Mi`/`Gi`/…) — reference uses non-power-of-two multipliers
+
+- **Cases:** `engineering/convert_bin_kibyte_byte` (`=CONVERT(1,"kibyte","byte")`) and
+  `engineering/convert_bin_gibit_bit` (`=CONVERT(1,"Gibit","bit")`).
+- **Correct (Excel & charlie):** `1024` and `1073741824` (=2^30). The IEC binary prefixes scale by
+  powers of two: `ki`=2^10, `Mi`=2^20, `Gi`=2^30, … `Yi`=2^80. So a kibibyte is `1024` bytes.
+- **`formulas` v1.3.4 output:** `8` and `28` — **wrong**. The library's `units.json` tabulates the
+  binary-prefixed information units with small integer multipliers (e.g. `kibit`=8, `Gibit`=28)
+  instead of `2^(10·n)`, so every binary-prefix conversion is off by orders of magnitude. The library
+  is correct on the SI (decimal) information prefixes in the same table (`kbit`=1000, graded and
+  Matching as `engineering/convert_info_kbit_bit`), so the defect is specific to the binary prefixes.
+- **Coverage instead:** charlie's binary prefixes are pinned by a Rust test with hand-verified Excel
+  values (`charlie-ast` `func::tests::engineering::binary_prefixes_are_excel_exact_powers_of_two`:
+  `kibyte→byte=1024`, `Mibyte→byte=1048576`, `kibit→bit=1024`, `Gibit→bit=2^30`).
+- **Verdict:** `lib-gap` (reference defect). Excluded from pass/fail; charlie is correct.

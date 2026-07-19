@@ -6,15 +6,26 @@ use crate::test_support::Grid;
 
 mod aggregation;
 mod array;
+mod combinatorics;
+mod database;
 mod date;
+mod engineering;
 mod finance;
 mod info;
 mod logical;
 mod lookup;
 mod math;
+mod random;
 mod spill;
 mod stats;
+mod stats_desc;
+mod stats_dist;
+mod stats_rank;
+mod stats_reg;
+mod subtotal;
 mod text;
+mod text_format;
+mod trig;
 
 fn num(n: f64) -> Expr {
     Expr::Lit(Value::Number(n))
@@ -73,8 +84,11 @@ fn registry_is_self_consistent() {
             assert!(max >= f.min_args, "{}: max >= min", f.name);
         }
         assert!(
-            f.name.chars().all(|c| c.is_ascii_uppercase() || c == '.'),
-            "UPPERCASE name (a `.` is allowed for the dotted Excel spellings, e.g. STDEV.S)"
+            f.name
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '.'),
+            "UPPERCASE name (a `.` is allowed for the dotted Excel spellings, e.g. STDEV.S; a \
+             digit for names like LOG10/ATAN2)"
         );
     }
     let mut names: Vec<String> = FUNCS.iter().map(|f| f.name.to_ascii_uppercase()).collect();

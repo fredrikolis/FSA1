@@ -1,4 +1,4 @@
-// Concern: UNIT-TEST pins for the logical family built-ins (IF IFERROR AND OR IFS NOT IFNA SWITCH) exercised through `FUNCS` dispatch — lazy branch evaluation, coercion/propagation, first-true-wins selection, and #N/A-vs-#VALUE! structural refusals | Non-concern: the logical impls (`func/logical.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
+// Concern: UNIT-TEST pins for the logical family built-ins (IF IFERROR AND OR XOR TRUE FALSE IFS NOT IFNA SWITCH) exercised through `FUNCS` dispatch — lazy branch evaluation, coercion/propagation, first-true-wins selection, element-wise error-catching over arrays, and #N/A-vs-#VALUE! structural refusals | Non-concern: the logical impls (`func/logical.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
 use super::*;
 
 #[test]
@@ -24,6 +24,92 @@ fn if_is_lazy_and_iferror_catches() {
     // IFERROR passes a non-error through.
     let e = call("IFERROR", vec![num(7.0), num(99.0)]);
     assert_eq!(eval(&e, &g), Value::Number(7.0));
+}
+
+#[test]
+fn true_false_constants_and_xor() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let b = |v: bool| Expr::Lit(Value::Bool(v));
+    // The zero-arg logical constants in call form.
+    assert_eq!(eval(&call("TRUE", vec![]), &g), Value::Bool(true));
+    assert_eq!(eval(&call("FALSE", vec![]), &g), Value::Bool(false));
+    // XOR is TRUE iff an ODD number of the logical data are TRUE.
+    assert_eq!(
+        eval(&call("XOR", vec![b(true), b(false)]), &g),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval(&call("XOR", vec![b(true), b(true)]), &g),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        eval(&call("XOR", vec![b(true), b(true), b(true)]), &g),
+        Value::Bool(true)
+    );
+    // Numbers coerce (non-zero = TRUE): 1,0,5 -> two TRUEs -> even -> FALSE.
+    assert_eq!(
+        eval(&call("XOR", vec![num(1.0), num(0.0), num(5.0)]), &g),
+        Value::Bool(false)
+    );
+    // An error propagates; a direct non-logical text is #VALUE!; no logical datum is #VALUE!.
+    assert_eq!(
+        eval(
+            &call("XOR", vec![Expr::Lit(Value::Error(ErrKind::Div0)), b(true)]),
+            &g
+        ),
+        Value::Error(ErrKind::Div0)
+    );
+    assert_eq!(
+        eval(&call("XOR", vec![Expr::Lit(Value::Text("x".into()))]), &g),
+        Value::Error(ErrKind::Value)
+    );
+}
+
+#[test]
+fn iferror_and_ifna_catch_element_wise_over_arrays() {
+    let g = Grid::new(1, vec![Value::Blank]);
+    let shape = crate::value::Shape { rows: 3, cols: 1 };
+    // IFERROR over an array: each error cell -> the scalar fallback; non-error cells kept.
+    let a = arr(3, 1, vec![n(1.0), Value::Error(ErrKind::Div0), n(3.0)]);
+    assert_eq!(
+        eval(&call("IFERROR", vec![a, num(0.0)]), &g),
+        Value::Array(shape, vec![n(1.0), n(0.0), n(3.0)])
+    );
+    // An array with no error passes through unchanged (the fallback is never consulted).
+    let clean = arr(3, 1, vec![n(1.0), n(2.0), n(3.0)]);
+    assert_eq!(
+        eval(&call("IFERROR", vec![clean, num(99.0)]), &g),
+        Value::Array(shape, vec![n(1.0), n(2.0), n(3.0)])
+    );
+    // IFNA catches ONLY #N/A element-wise: a #DIV/0! cell is KEPT, a #N/A cell is replaced.
+    let mixed = arr(
+        3,
+        1,
+        vec![
+            Value::Error(ErrKind::Na),
+            Value::Error(ErrKind::Div0),
+            n(5.0),
+        ],
+    );
+    assert_eq!(
+        eval(&call("IFNA", vec![mixed, num(0.0)]), &g),
+        Value::Array(shape, vec![n(0.0), Value::Error(ErrKind::Div0), n(5.0)])
+    );
+    // IFERROR with a matching-shape array fallback contributes its i-th cell for each error.
+    let with_errs = arr(
+        3,
+        1,
+        vec![
+            n(1.0),
+            Value::Error(ErrKind::Value),
+            Value::Error(ErrKind::Na),
+        ],
+    );
+    let fallback = arr(3, 1, vec![n(10.0), n(20.0), n(30.0)]);
+    assert_eq!(
+        eval(&call("IFERROR", vec![with_errs, fallback]), &g),
+        Value::Array(shape, vec![n(1.0), n(20.0), n(30.0)])
+    );
 }
 
 #[test]

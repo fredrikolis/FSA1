@@ -27,6 +27,10 @@ impl Sheet {
 /// [`Grid::with_sheet`] and addressed by name.
 pub(crate) struct Grid {
     sheets: Vec<Sheet>,
+    /// The `(sheet_idx, col, row)` coordinates the stub reports as FORMULA cells (for `ISFORMULA`).
+    /// The bare value store carries no formula/literal distinction of its own, so a test that
+    /// exercises `ISFORMULA` marks the cells it wants treated as formulas via [`Grid::with_formula`].
+    formula_cells: Vec<(usize, u32, u32)>,
 }
 
 impl Grid {
@@ -39,7 +43,16 @@ impl Grid {
                 cols,
                 cells,
             }],
+            formula_cells: Vec::new(),
         }
+    }
+
+    /// Mark a DEFAULT-sheet coordinate as a FORMULA cell, so [`Resolver::is_formula`] reports it TRUE
+    /// — the seam `ISFORMULA` reads. The stub's value store is unchanged (its `value`/`range` still
+    /// return the cell's stored `Value`); this only records the content-KIND `ISFORMULA` inspects.
+    pub(crate) fn with_formula(mut self, col: u32, row: u32) -> Grid {
+        self.formula_cells.push((0, col, row));
+        self
     }
 
     /// Append an additional NAMED sheet, so a cross-sheet reference (`Other!A1`) resolves to it. The
@@ -51,6 +64,11 @@ impl Grid {
             cells,
         });
         self
+    }
+
+    /// The default-sheet index a resolved [`CellRef`] addresses (used by [`Resolver::is_formula`]).
+    fn sheet_idx(&self, sheet: Option<SheetId>) -> usize {
+        sheet.map_or(0, |SheetId(i)| i as usize)
     }
 
     /// The sheet a resolved [`CellRef`]/[`RangeRef`] addresses: its `SheetId` indexes `sheets`, and
@@ -107,5 +125,14 @@ impl Resolver for Grid {
     /// truth: [`crate::resolver::PINNED_NOW_SERIAL`]).
     fn now_serial(&self) -> f64 {
         crate::resolver::PINNED_NOW_SERIAL
+    }
+
+    /// Report a coordinate as a formula iff a test marked it via [`Grid::with_formula`] — the seam
+    /// `ISFORMULA` reads. An unmarked cell (the default) is a non-formula, matching the trait default.
+    fn is_formula(&self, cell: CellRef) -> bool {
+        let idx = self.sheet_idx(cell.sheet);
+        self.formula_cells
+            .iter()
+            .any(|&(s, c, r)| s == idx && c == cell.col && r == cell.row)
     }
 }
