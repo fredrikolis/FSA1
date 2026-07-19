@@ -11,13 +11,16 @@
 mod dates;
 pub mod error;
 mod reader;
+mod resolve;
 mod serialize;
 mod source;
 mod translate;
+mod xlsx_meta;
 
 use std::path::Path;
 
 pub use error::{ErrorKind, IngestError};
+pub use resolve::Resolution;
 pub use source::{SheetSource, SourceBook, SourceCell};
 
 use serialize::sheet_files;
@@ -102,7 +105,7 @@ fn materialize(book: &SourceBook, dest: &Path) -> Result<ImportReport, IngestErr
                 format!("cannot create {:?}: {e}", dir.display()),
             )
         })?;
-        for (filename, content) in sheet_files(sheet)? {
+        for (filename, content) in sheet_files(sheet, &book.resolution)? {
             let full = dir.join(&filename);
             std::fs::write(&full, content).map_err(|e| {
                 IngestError::io(
@@ -176,6 +179,7 @@ mod tests {
                     ..cell(2.0)
                 },
             ],
+            resolution: Resolution::empty(),
         }
     }
 
@@ -222,6 +226,7 @@ mod tests {
                 cols: 2,
                 cells: vec![SourceCell::Number(7.0), SourceCell::Blank],
             }],
+            resolution: Resolution::empty(),
         };
         let report = write_book(&book, &dest).unwrap();
         assert_eq!(

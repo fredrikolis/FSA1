@@ -10,15 +10,19 @@ use charlie_ast::{ErrKind, Value};
 use charlie_model::{display_value, encode_field, lex_literal};
 
 use crate::error::IngestError;
+use crate::resolve::Resolution;
 use crate::source::{SheetSource, SourceCell};
-use crate::translate::translate_formula;
+use crate::translate::translate_formula_ctx;
 
 /// Turn one neutral sheet into its charlie grid files: ONE FILE PER NON-BLANK CELL, named by that
 /// cell's A1 coordinate (`A1`, `H3`, `D2`), whose content is the single cell's literal or `=formula`
 /// (CORE3: a cell is its own file, edited directly). A BLANK source cell produces NO file — a gap
 /// reads blank. An empty sheet yields no files (an empty tab folder). Row-major order, so the returned
 /// files are in reading order. Each file is a 1×1 grid filling its bare-`A1` range exactly (GRID4).
-pub fn sheet_files(sheet: &SheetSource) -> Result<Vec<(String, String)>, IngestError> {
+pub fn sheet_files(
+    sheet: &SheetSource,
+    res: &Resolution,
+) -> Result<Vec<(String, String)>, IngestError> {
     let mut files = Vec::new();
     for row in 0..sheet.rows {
         for col in 0..sheet.cols {
@@ -30,8 +34,10 @@ pub fn sheet_files(sheet: &SheetSource) -> Result<Vec<(String, String)>, IngestE
             }
             // Spell the cell's logical field, then apply the UNIFORM field escaping (backslash/tab/
             // newline -> `\\`/`\t`/`\n`) so the on-disk field is the exact inverse of the deserializer's
-            // split-then-decode — a tab/newline/backslash in any cell round-trips losslessly.
-            let content = encode_field(&cell_field(cell));
+            // split-then-decode — a tab/newline/backslash in any cell round-trips losslessly. A formula
+            // is translated + reference-resolved against `res` for THIS cell's sheet + 0-based row (the
+            // relative `Table[@Col]`/`[#This Row]` forms need the row).
+            let content = encode_field(&cell_field(cell, res, &sheet.name, row));
             files.push((format_cell(col, row), content));
         }
     }
@@ -41,7 +47,7 @@ pub fn sheet_files(sheet: &SheetSource) -> Result<Vec<(String, String)>, IngestE
 /// Spell one source cell as its LOGICAL TSV field (before the uniform field escaping the caller applies
 /// via [`encode_field`]). Infallible: every cell — including any text — is representable, so an embedded
 /// tab/newline/backslash is no longer a refusal (the field escaping carries it losslessly).
-fn cell_field(cell: &SourceCell) -> String {
+fn cell_field(cell: &SourceCell, res: &Resolution, sheet: &str, row: u32) -> String {
     match cell {
         SourceCell::Blank => String::new(),
         // A lossless decimal that re-lexes to the SAME f64 (Rust's shortest round-trip `Display`), not
@@ -53,10 +59,11 @@ fn cell_field(cell: &SourceCell) -> String {
         // lexer), so the two never drift.
         SourceCell::Error(k) => error_literal(*k),
         SourceCell::Text(s) => text_field(s),
-        // A formula is translated to charlie's Excel-A1 grammar, preserved VERBATIM when untranslatable
-        // (translate never fails now — GRID6 flags an unparseable cell at load, not here), so a single
-        // unsupported formula never aborts the import.
-        SourceCell::Formula(raw) => translate_formula(raw),
+        // A formula is translated to charlie's Excel-A1 grammar AND reference-resolved (defined names +
+        // `Table[…]` structured refs) against `res` for this cell's `sheet`+`row`, preserved VERBATIM
+        // when untranslatable/unresolvable (translate never fails now — GRID6 flags such a cell at load,
+        // not here), so a single unsupported formula never aborts the import.
+        SourceCell::Formula(raw) => translate_formula_ctx(raw, res, sheet, row),
     }
 }
 
@@ -171,7 +178,10 @@ mod tests {
     fn errors_and_bools_spell_their_literals() {
         assert_eq!(error_literal(ErrKind::Div0), "#DIV/0!");
         assert_eq!(error_literal(ErrKind::Na), "#N/A");
-        assert_eq!(cell_field(&SourceCell::Bool(true)), "TRUE");
+        assert_eq!(
+            cell_field(&SourceCell::Bool(true), &Resolution::empty(), "S", 0),
+            "TRUE"
+        );
     }
 
     #[test]
@@ -183,7 +193,7 @@ mod tests {
             cols: 1,
             cells: vec![SourceCell::Number(7.0)],
         };
-        let files = sheet_files(&sheet).unwrap();
+        let files = sheet_files(&sheet, &Resolution::empty()).unwrap();
         assert_eq!(files, vec![("A1".to_string(), "7".to_string())]);
     }
 
@@ -202,7 +212,7 @@ mod tests {
                 SourceCell::Text("x".to_string()),
             ],
         };
-        let files = sheet_files(&sheet).unwrap();
+        let files = sheet_files(&sheet, &Resolution::empty()).unwrap();
         assert_eq!(
             files,
             vec![
@@ -223,7 +233,7 @@ mod tests {
             cols: 1,
             cells: vec![SourceCell::Formula("of:=[Sheet1.A1:Sheet2.B2]".to_string())],
         };
-        let files = sheet_files(&sheet).unwrap();
+        let files = sheet_files(&sheet, &Resolution::empty()).unwrap();
         assert_eq!(
             files,
             vec![("A1".to_string(), "=[Sheet1.A1:Sheet2.B2]".to_string())]
@@ -244,7 +254,7 @@ mod tests {
                 SourceCell::Text("C:\\dir".to_string()),
             ],
         };
-        let files = sheet_files(&sheet).unwrap();
+        let files = sheet_files(&sheet, &Resolution::empty()).unwrap();
         assert_eq!(
             files,
             vec![

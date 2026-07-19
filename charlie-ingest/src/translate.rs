@@ -1,18 +1,28 @@
-// Concern: translate an ODS/OpenFormula formula string into charlie's Excel-A1 grammar — strip the `of:=`/`of:`/`=` lead; rewrite bracketed references `[.A1]`→`A1`, `[.A1:.A3]`→`A1:A3`, `[Sheet2.A1]`→`Sheet2!A1`, `['My Sheet'.A1]`→`'My Sheet'!A1` (preserving `$`-anchors); map the ODS `;` argument separator to `,` (only outside string literals); keep Excel-compatible function names as written EXCEPT the niladic booleans `TRUE()`/`FALSE()`, normalized to charlie's `TRUE`/`FALSE` literals; and preserve anything UNTRANSLATABLE (a 3D range, an inline array `{…}`, a malformed reference, an unterminated string) VERBATIM as `=<source body>` rather than aborting — so the import always succeeds and charlie's loader flags such a cell as a located GRID6 error (visible in `--functions`, reported by `check`), never a silently-wrong formula and never a whole-import failure | Non-concern: whether the translated formula PARSES/EVALUATES in charlie (charlie-ast owns that; an untranslatable/unsupported formula surfaces as a load-time GRID6 error cell downstream) and reading the cell (reader.rs) | IO: (a raw OpenFormula `&str`) -> `String` (the `=…` charlie formula, best-effort verbatim on an untranslatable construct)
-//! OpenFormula → charlie Excel-A1 translation: [`translate_formula`]. The returned string always
-//! includes the leading `=`; an untranslatable construct is preserved verbatim (GRID6 flags it at load).
+// Concern: translate a source formula string (ODS/OpenFormula OR xlsx Excel-A1) into charlie's Excel-A1 grammar AND resolve its references at import (CORE3) so the engine only ever sees A1 — strip the `of:=`/`of:`/`=` lead; rewrite ODS bracketed references `[.A1]`→`A1`, `[.A1:.A3]`→`A1:A3`, `[Sheet2.A1]`→`Sheet2!A1`, `['My Sheet'.A1]`→`'My Sheet'!A1` (preserving `$`-anchors); map the ODS `;` argument separator to `,` (only outside string literals); keep Excel-compatible function names as written EXCEPT the niladic booleans `TRUE()`/`FALSE()`, normalized to charlie's `TRUE`/`FALSE` literals; and — via the workbook `Resolution` — replace a DEFINED-NAME token with its A1 target and a `Table[…]` STRUCTURED reference with its A1 range, guarding TOKEN BOUNDARIES (never inside a string literal, never a function name it precedes with `(`, never the tail after a `!` sheet qualifier, only a whole identifier — so `Days` never matches inside `Calendar1Year`); a name/table/column/region that does not resolve is left VERBATIM (HARD RULE 5 — it loads as a located GRID6 `#NAME?`, never a silently-wrong range); anything else UNTRANSLATABLE (a 3-D range, an inline array `{…}`, a malformed reference, an unterminated string) is preserved VERBATIM as `=<source body>` so the import always succeeds | Non-concern: whether the translated formula PARSES/EVALUATES in charlie (charlie-ast owns that; an untranslatable/unsupported formula surfaces as a load-time GRID6 error cell downstream), READING the name/table metadata (reader.rs + xlsx_meta.rs), and the resolution LOGIC/geometry itself (resolve.rs owns the name map + structured-ref A1 math) | IO: (a raw formula `&str`, the workbook `Resolution`, the formula cell's sheet + 0-based row) -> `String` (the `=…` charlie formula, best-effort verbatim on an untranslatable/unresolvable construct)
+//! Source formula → charlie Excel-A1 translation + import-time reference resolution:
+//! [`translate_formula_ctx`] (context-free translation passes an empty [`Resolution`]). The returned
+//! string always includes the leading `=`; an untranslatable/unresolvable construct is preserved
+//! verbatim (GRID6).
+
+use std::iter::Peekable;
+use std::str::CharIndices;
 
 use charlie_ast::a1::parse_a1;
 
-/// Translate a raw source-dialect formula into a charlie `=formula` (always with the leading `=`).
-/// A successful rewrite yields the Excel-A1 form; an UNTRANSLATABLE construct (a 3-D range, an inline
-/// array, a malformed reference, an unterminated string) is preserved VERBATIM as `=<source body>`
-/// (the lead stripped) rather than refused — the import still succeeds, and charlie's deserializer
-/// flags the cell as a located GRID6 error (`--functions` shows this raw text; `check` reports it).
-/// This preserves the source formula so an agent can see and fix exactly what charlie could not parse.
-pub fn translate_formula(raw: &str) -> String {
+use crate::resolve::Resolution;
+
+/// Translate a raw source-dialect formula into a charlie `=formula` (always with the leading `=`),
+/// resolving defined names and `Table[…]` structured references against `res` (a name/table target for
+/// the formula's own `sheet` + 0-based `row`, which the relative `@`/`#This Row` forms need). A
+/// successful rewrite yields the resolved Excel-A1 form; an UNTRANSLATABLE construct (a 3-D range, an
+/// inline array, a malformed reference, an unterminated string) is preserved VERBATIM as `=<source body>`
+/// rather than refused — the import still succeeds and charlie's deserializer flags such a cell as a
+/// located GRID6 error (`--functions` shows the raw text; `check` reports it), so an agent sees exactly
+/// what charlie could not resolve. A name/table token that simply does not resolve is likewise left as
+/// written (a located `#NAME?` at load, never a silently-wrong range — HARD RULE 5).
+pub fn translate_formula_ctx(raw: &str, res: &Resolution, sheet: &str, row: u32) -> String {
     let body = strip_lead(raw.trim());
-    match rewrite_body(body) {
+    match rewrite_body(body, res, sheet, row) {
         Ok(translated) => format!("={translated}"),
         // GRID6: keep the source body verbatim so a single untranslatable/unsupported formula no longer
         // aborts the whole import — it becomes a per-cell located error at load instead.
@@ -33,10 +43,11 @@ fn strip_lead(s: &str) -> &str {
     }
 }
 
-/// Scan the formula body, rewriting bracketed references and `;`→`,` while leaving string literals
-/// verbatim. An inline array `{…}` is refused (ODS array syntax differs from charlie's and a naive
-/// `;`→`,` would silently transpose it).
-fn rewrite_body(body: &str) -> Result<String, String> {
+/// Scan the formula body, rewriting bracketed ODS references and `;`→`,`, resolving defined-name and
+/// `Table[…]` structured-reference tokens (via `res`, for the formula's `sheet`+`row`), while leaving
+/// string literals verbatim. An inline array `{…}` is refused (ODS array syntax differs from charlie's
+/// and a naive `;`→`,` would silently transpose it).
+fn rewrite_body(body: &str, res: &Resolution, sheet: &str, row: u32) -> Result<String, String> {
     let mut out = String::with_capacity(body.len());
     let mut chars = body.char_indices().peekable();
     while let Some((_, c)) = chars.next() {
@@ -62,6 +73,33 @@ fn rewrite_body(body: &str) -> Result<String, String> {
                     }
                 }
             }
+            '\'' => {
+                // A single-quoted sheet name in the Excel-A1 dialect (`'Annual Report'!A1`). Copy it
+                // ATOMICALLY through the closing quote — honouring the `''` escape (a doubled quote is a
+                // literal quote inside the name, Excel's convention) — so its interior words are never
+                // walked as bare identifiers and mistaken for defined names. Without this arm a name that
+                // collides with a word inside a quoted sheet name would be substituted INTO a cross-sheet
+                // reference, silently corrupting it (HARD RULE 5). (ODS quotes its sheet names INSIDE the
+                // `[…]` bracket, handled by the `[` arm; a top-level `'…'` is only the xlsx sheet form.)
+                out.push('\'');
+                loop {
+                    match chars.next() {
+                        Some((_, '\'')) => {
+                            out.push('\'');
+                            if matches!(chars.peek(), Some((_, '\''))) {
+                                let (_, q) = chars.next().expect("peeked");
+                                out.push(q);
+                            } else {
+                                break;
+                            }
+                        }
+                        Some((_, other)) => out.push(other),
+                        None => {
+                            return Err("unterminated quoted sheet name in formula".to_string());
+                        }
+                    }
+                }
+            }
             '[' => {
                 let mut inner = String::new();
                 loop {
@@ -77,11 +115,10 @@ fn rewrite_body(body: &str) -> Result<String, String> {
             '{' | '}' => {
                 return Err("an inline array `{…}` is not translatable from ODS".to_string());
             }
-            c if c.is_ascii_alphabetic() => {
-                // An identifier (a function name or a bare/niladic name). Accumulate it, then normalize
-                // OpenFormula's niladic booleans `TRUE()`/`FALSE()` — which charlie models as LITERALS,
-                // not functions — into the bare `TRUE`/`FALSE`. Every other name (function or bare) is
-                // kept verbatim (charlie's function names are Excel-compatible).
+            c if c.is_ascii_alphabetic() || c == '_' => {
+                // An identifier: a function name, a defined name, or a table name preceding a `[…]`
+                // structured reference. Accumulate the WHOLE token (so `Days` never matches inside
+                // `Calendar1Year`), then decide by what follows and by the resolution context.
                 let mut ident = String::new();
                 ident.push(c);
                 while let Some((_, nc)) = chars.peek() {
@@ -92,21 +129,85 @@ fn rewrite_body(body: &str) -> Result<String, String> {
                         break;
                     }
                 }
-                out.push_str(&ident);
-                if (ident == "TRUE" || ident == "FALSE") && matches!(chars.peek(), Some((_, '('))) {
-                    chars.next(); // consume '('
-                    if matches!(chars.peek(), Some((_, ')'))) {
-                        chars.next(); // consume ')' — a niladic call becomes the bare literal
-                    } else {
-                        // `TRUE(<args>)` is not the niladic form; leave the `(` for the normal loop.
-                        out.push('(');
+                // A token right after a `!` is the tail of a sheet-qualified reference, never a name/table.
+                let after_bang = out.trim_end().ends_with('!');
+                let next = chars.peek().map(|&(_, c)| c);
+                if next == Some('!') {
+                    // This identifier is the LHS SHEET QUALIFIER of a reference (`Data!A1`): the `!` and
+                    // its address follow. It is a sheet name, never a defined name — push it verbatim so a
+                    // defined name that collides with a sheet name cannot be substituted INTO the qualifier
+                    // and silently corrupt a previously-correct cross-sheet formula (HARD RULE 5). The
+                    // `!` (and the RHS, guarded by `after_bang`) flow on through the loop unchanged.
+                    out.push_str(&ident);
+                } else if next == Some('[') && !after_bang && res.is_table(&ident) {
+                    // A `Table[…]` structured reference: consume the balanced `[…]` group and resolve it
+                    // to A1; if it does not resolve, keep the token verbatim (a located #NAME? at load).
+                    let inner = consume_bracket_group(&mut chars)?;
+                    match res.resolve_structured(&ident, &inner, sheet, row) {
+                        Some(a1) => out.push_str(&a1),
+                        None => {
+                            out.push_str(&ident);
+                            out.push('[');
+                            out.push_str(&inner);
+                            out.push(']');
+                        }
                     }
+                } else if next == Some('(') {
+                    // A function call. Normalize OpenFormula's niladic booleans `TRUE()`/`FALSE()` —
+                    // which charlie models as LITERALS — into the bare `TRUE`/`FALSE`; every other
+                    // function name is Excel-compatible and kept verbatim (the `(` flows to the loop).
+                    out.push_str(&ident);
+                    if ident == "TRUE" || ident == "FALSE" {
+                        chars.next(); // consume '('
+                        if matches!(chars.peek(), Some((_, ')'))) {
+                            chars.next(); // a niladic call becomes the bare literal
+                        } else {
+                            out.push('('); // `TRUE(<args>)` is not niladic; keep the `(`
+                        }
+                    }
+                } else if !after_bang {
+                    // A bare identifier: resolve it as a defined name, else keep it verbatim.
+                    match res.name_target(&ident, sheet) {
+                        Some(target) => out.push_str(target),
+                        None => out.push_str(&ident),
+                    }
+                } else {
+                    out.push_str(&ident);
                 }
             }
             other => out.push(other),
         }
     }
     Ok(out)
+}
+
+/// Consume a balanced `[…]` structured-reference group (the iterator is positioned AT the opening `[`),
+/// returning the inner text (nested brackets preserved, outer stripped). An unbalanced group is an
+/// error, so the whole formula is kept verbatim (a located GRID6 error at load).
+fn consume_bracket_group(chars: &mut Peekable<CharIndices<'_>>) -> Result<String, String> {
+    match chars.next() {
+        Some((_, '[')) => {}
+        _ => return Err("expected `[` opening a structured reference".to_string()),
+    }
+    let mut depth = 1;
+    let mut inner = String::new();
+    for (_, c) in chars.by_ref() {
+        match c {
+            '[' => {
+                depth += 1;
+                inner.push('[');
+            }
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(inner);
+                }
+                inner.push(']');
+            }
+            other => inner.push(other),
+        }
+    }
+    Err("unterminated structured reference".to_string())
 }
 
 /// Rewrite the interior of one `[...]` reference token into charlie A1: a single ref (`.A1`,
@@ -198,8 +299,9 @@ fn validate_addr(addr: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// Context-free translation (empty resolution) — the ODS/xlsx grammar paths that carry no names.
     fn ok(raw: &str) -> String {
-        translate_formula(raw)
+        translate_formula_ctx(raw, &Resolution::empty(), "", 0)
     }
 
     #[test]
@@ -269,14 +371,106 @@ mod tests {
         // GRID6: an untranslatable construct is kept as `=<source body>` (lead stripped), never a
         // refusal — the import succeeds and charlie's loader flags the cell as a located error. The
         // preserved text is exactly the source body so an agent sees what to fix in `--functions`.
+        assert_eq!(ok("of:=[Sheet1.A1:Sheet2.B2]"), "=[Sheet1.A1:Sheet2.B2]"); // 3-D range
+        assert_eq!(ok("of:={1;2;3}"), "={1;2;3}"); // inline array
+        assert_eq!(ok("of:=[.A1"), "=[.A1"); // unterminated bracket
+        assert_eq!(ok(r#"of:=CONCAT("x"#), r#"=CONCAT("x"#); // unterminated string
+        assert_eq!(ok("of:=[.ZZ]"), "=[.ZZ]"); // no row -> malformed address
+        assert_eq!(ok("of:=[.99]"), "=[.99]"); // no column -> malformed address
+    }
+
+    /// A small workbook resolution: a `Sales` table (A1:C4, cols Region/Q1/Q2) on `Data`, plus a
+    /// workbook name `TaxRate` -> `Data!$H$1` — enough to exercise the token-boundary rules.
+    fn ctx() -> Resolution {
+        let mut r = Resolution::empty();
+        r.add_table(
+            "Sales",
+            "Data",
+            vec!["Region".into(), "Q1".into(), "Q2".into()],
+            "A1:C4",
+            1,
+            0,
+        );
+        r.add_name("TaxRate", None, "Data!$H$1");
+        r
+    }
+
+    fn tr(raw: &str, row: u32) -> String {
+        translate_formula_ctx(raw, &ctx(), "Data", row)
+    }
+
+    #[test]
+    fn resolves_names_and_structured_refs_to_a1() {
+        // A defined name -> its A1 target; a structured column -> the data body; @Col -> this row.
+        assert_eq!(tr("TaxRate*100", 0), "=Data!$H$1*100");
+        assert_eq!(tr("SUM(Sales[Q1])", 0), "=SUM(B2:B4)");
         assert_eq!(
-            translate_formula("of:=[Sheet1.A1:Sheet2.B2]"),
-            "=[Sheet1.A1:Sheet2.B2]"
-        ); // 3-D range
-        assert_eq!(translate_formula("of:={1;2;3}"), "={1;2;3}"); // inline array
-        assert_eq!(translate_formula("of:=[.A1"), "=[.A1"); // unterminated bracket
-        assert_eq!(translate_formula(r#"of:=CONCAT("x"#), r#"=CONCAT("x"#); // unterminated string
-        assert_eq!(translate_formula("of:=[.ZZ]"), "=[.ZZ]"); // no row -> malformed address
-        assert_eq!(translate_formula("of:=[.99]"), "=[.99]"); // no column -> malformed address
+            tr("SUM(Sales[[#Headers],[Amount]])", 0),
+            "=SUM(Sales[[#Headers],[Amount]])"
+        ); // bad col -> verbatim
+        assert_eq!(tr("Sales[[#Headers],[Q1]]", 0), "=B1");
+        // @Col resolves against the FORMULA's own 0-based row (row 2 -> B3).
+        assert_eq!(tr("Sales[@Q1]", 2), "=B3");
+        // @Col authored OUTSIDE the data band (row 0 is the header row; row 49 is far below) does NOT
+        // resolve to a stray cell — it stays verbatim -> a located #NAME? (HARD RULE 5).
+        assert_eq!(tr("Sales[@Q1]", 0), "=Sales[@Q1]");
+        assert_eq!(tr("Sales[@Q1]", 49), "=Sales[@Q1]");
+        // The 58296 shape: SUMIFS over structured refs becomes a pure-A1 SUMIFS.
+        assert_eq!(
+            tr(r#"SUMIFS(Sales[Q2],Sales[Q1],">="&E4)"#, 0),
+            r#"=SUMIFS(C2:C4,B2:B4,">="&E4)"#
+        );
+    }
+
+    #[test]
+    fn token_boundaries_are_respected() {
+        // A name is matched only as a WHOLE token — never as a substring of a longer identifier, and
+        // never inside a string literal.
+        assert_eq!(tr("TaxRateExtra+1", 0), "=TaxRateExtra+1"); // longer ident, not the name
+        assert_eq!(
+            tr(r#"IF(A1,"TaxRate","Sales[Q1]")"#, 0),
+            r#"=IF(A1,"TaxRate","Sales[Q1]")"#
+        );
+        // A function name is not treated as a defined name (it is followed by `(`).
+        assert_eq!(tr("SUM(A1:A2)", 0), "=SUM(A1:A2)");
+        // An unknown name/table is left verbatim (loads as a located #NAME?, never silently wrong).
+        assert_eq!(tr("Unknown+1", 0), "=Unknown+1");
+        assert_eq!(tr("Other[Col]", 0), "=Other[Col]");
+        // A plain cell ref is untouched (E4 is not a name).
+        assert_eq!(tr("E4+1", 0), "=E4+1");
+    }
+
+    #[test]
+    fn a_sheet_qualifier_lhs_is_never_resolved_as_a_defined_name() {
+        // HARD RULE 5: an identifier that is itself a SHEET qualifier (immediately followed by `!`) is
+        // pushed verbatim — a defined name that collides with a sheet name must never be substituted
+        // INTO the LHS of a cross-sheet reference (which would silently corrupt a correct formula).
+        let mut r = Resolution::empty();
+        r.add_name("Data", None, "Zzz!$A$1"); // a defined name colliding with the sheet name `Data`
+        let tr = |raw: &str| translate_formula_ctx(raw, &r, "Sheet1", 0);
+        assert_eq!(tr("Data!A1"), "=Data!A1"); // the qualifier is untouched, not `=Zzz!$A$1!A1`
+        assert_eq!(tr("SUM(Data!A1:A3)"), "=SUM(Data!A1:A3)");
+        // The RHS after the `!` was already guarded; both ends now hold.
+        assert_eq!(tr("Data!Data"), "=Data!Data");
+    }
+
+    #[test]
+    fn a_quoted_sheet_name_is_copied_atomically_not_walked_as_names() {
+        // HARD RULE 5: a single-quoted sheet name is copied through the closing quote, so its interior
+        // words are never walked as bare identifiers and resolved as defined names — even when a word
+        // inside the quoted name collides with a real defined name.
+        let mut r = Resolution::empty();
+        r.add_name("Report", None, "Zzz!$A$1"); // collides with a word inside `'Annual Report'`
+        r.add_name("Data", None, "Zzz!$B$1"); // collides with a word inside `'It''s Data'`
+        let tr = |raw: &str| translate_formula_ctx(raw, &r, "Sheet1", 0);
+        assert_eq!(tr("'Annual Report'!A1"), "='Annual Report'!A1");
+        assert_eq!(
+            tr("SUM('Annual Report'!A1:A3)"),
+            "=SUM('Annual Report'!A1:A3)"
+        );
+        // The `''` escape inside a quoted sheet name is preserved (a literal apostrophe in the name).
+        assert_eq!(tr("'It''s Data'!A1"), "='It''s Data'!A1");
+        // An unterminated quoted sheet name is untranslatable -> kept verbatim as `=<body>` (GRID6).
+        assert_eq!(tr("'Annual Report!A1"), "='Annual Report!A1");
     }
 }

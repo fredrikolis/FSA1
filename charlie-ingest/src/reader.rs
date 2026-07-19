@@ -1,4 +1,4 @@
-// Concern: the FORMAT FIREWALL — the ONE module that touches calamine — reading a real `.ods` OR `.xlsx` workbook into the format-neutral `SourceBook`: DISPATCH by extension (a `.ods`/`.xlsx` opened via calamine's `open_workbook_auto` behind ONE code path; any other extension is a located CORE2 refusal), and for each sheet fuse calamine's cached VALUE range (`worksheet_range`) with its FORMULA range (`worksheet_formula`) into an A1-anchored, row-major rectangle of `SourceCell`s — a formula cell keeps its raw source-dialect text for `translate` (ODS `of:=[.A1]`, or xlsx's already-Excel-A1 `A1`), a value cell maps calamine's `Data` onto charlie's VAL3 value model, a date/time cell becoming an Excel serial via `dates`; every failure (unsupported extension, unopenable file, unreadable sheet, unrepresentable error kind, unparseable date, an oversized used range) is a located `IngestError` (CORE2), never a panic | Non-concern: translating the formula grammar (translate.rs — one translator serves BOTH dialects, so the reader is format-specific only in its OPENER), spelling a cell to TSV (serialize.rs), and writing files (lib.rs); calamine/zip/xml stay behind this seam so charlie-model/ast never see them | IO: (a `.ods`/`.xlsx` path) -> `Result<SourceBook, IngestError>`
+// Concern: the FORMAT FIREWALL — the ONE module that touches calamine — reading a real `.ods` OR `.xlsx` workbook into the format-neutral `SourceBook`: DISPATCH by extension (a `.ods`/`.xlsx` opened via calamine's `open_workbook_auto` behind ONE code path; any other extension is a located CORE2 refusal), and for each sheet fuse calamine's cached VALUE range (`worksheet_range`) with its FORMULA range (`worksheet_formula`) into an A1-anchored, row-major rectangle of `SourceCell`s — a formula cell keeps its raw source-dialect text for `translate` (ODS `of:=[.A1]`, or xlsx's already-Excel-A1 `A1`), a value cell maps calamine's `Data` onto charlie's VAL3 value model, a date/time cell becoming an Excel serial via `dates`; and (for xlsx) BUILD the workbook reference `Resolution` — fusing each table's SHEET from calamine (which navigates the sheet rels) with the scoped `definedName`s + full table `ref`/header/totals/columns from the xlsx parts (`xlsx_meta`, the sibling zip/xml firewall module) so `translate` can resolve names/tables to A1 (HARD RULE 4); every failure (unsupported extension, unopenable file, unreadable sheet, unrepresentable error kind, unparseable date, an oversized used range, unreadable metadata) is a located `IngestError` (CORE2), never a panic | Non-concern: translating the formula grammar (translate.rs — one translator serves BOTH dialects, so the reader is format-specific only in its OPENER), the name/table resolution LOGIC (resolve.rs), reading the name/table metadata parts (xlsx_meta.rs owns zip/quick-xml), spelling a cell to TSV (serialize.rs), and writing files (lib.rs); calamine stays behind this seam (zip/xml behind xlsx_meta's) so charlie-model/ast never see them | IO: (a `.ods`/`.xlsx` path) -> `Result<SourceBook, IngestError>`
 //! The calamine-backed reader: [`read_file`], opening `.ods` and `.xlsx` behind one code path
 //! (`open_workbook_auto`). calamine is confined here (HARD firewall) — the rest of the crate, and all
 //! of charlie-model/ast, work only on the neutral [`SourceBook`]. The reader is format-specific ONLY in
@@ -6,6 +6,7 @@
 //! `translate` rewrites both dialects (an xlsx formula is already Excel-A1, so translation is a noop
 //! beyond prepending `=`; an ODS formula is rewritten from OpenFormula).
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -15,7 +16,9 @@ use charlie_ast::ErrKind;
 
 use crate::dates::{iso_datetime_to_serial, iso_duration_to_serial};
 use crate::error::{ErrorKind, IngestError};
+use crate::resolve::Resolution;
 use crate::source::{SheetSource, SourceBook, SourceCell};
+use crate::xlsx_meta;
 
 /// The largest used-range area (in cells) the reader will materialize before refusing. A real sheet's
 /// used range is far below this; a pathological one becomes a located refusal, never an OOM abort.
@@ -62,10 +65,79 @@ pub fn read_file(path: &Path) -> Result<SourceBook, IngestError> {
 
     let names = wb.sheet_names().to_vec();
     let mut sheets = Vec::with_capacity(names.len());
-    for name in names {
-        sheets.push(read_sheet(&mut wb, &name)?);
+    for name in &names {
+        sheets.push(read_sheet(&mut wb, name)?);
     }
-    Ok(SourceBook { sheets })
+    // Build the reference resolution (defined names + table geometry) that `translate` applies so the
+    // engine only ever sees A1 (HARD RULE 4). This is where names/tables are resolved — in ingest.
+    let resolution = build_resolution(path, &mut wb, &names)?;
+    Ok(SourceBook { sheets, resolution })
+}
+
+/// Build the workbook's [`Resolution`] from the source. For an xlsx this fuses two sources kept behind
+/// the format firewall: calamine gives each table's SHEET (it already navigates the sheet rels), and the
+/// xlsx parts ([`xlsx_meta`]) give the scoped `definedName`s and each table's full `ref`/header/totals/
+/// columns — the extents calamine's high-level seam does not surface. For any other format the result is
+/// empty (ODS defined names are left unresolved — they load as `#NAME?` unchanged, never silently wrong).
+fn build_resolution(
+    path: &Path,
+    wb: &mut Sheets<BufReader<File>>,
+    sheet_order: &[String],
+) -> Result<Resolution, IngestError> {
+    let Sheets::Xlsx(x) = wb else {
+        return Ok(Resolution::empty());
+    };
+    // table displayName -> its sheet (via calamine). `load_tables` populates a possibly-empty table set;
+    // if it errors we simply resolve no tables (their structured refs then load as located #NAME?).
+    //
+    // Degradation policy (deliberate, HARD RULE 5): a table we cannot MAP to a sheet is dropped, not a
+    // refusal — its structured refs stay verbatim and load as a located `#NAME?`, so the import always
+    // succeeds (GRID6) and no ref is ever silently wrong. This is the two soft spots below: (1) a
+    // `load_tables` error leaves `table_sheet` empty (all tables drop), and (2) a table in `meta.tables`
+    // whose xlsx displayName has no key in `table_sheet` is skipped by the `get` at the loop below (a
+    // displayName/`table_names_in_sheet` spelling divergence). This is intentionally SOFTER than
+    // `xlsx_meta::read_meta(path)?` refusing a malformed metadata PART (a CORE2 structural failure):
+    // there the bytes are corrupt, here a lookup simply misses. In practice calamine and `xlsx_meta`
+    // read the same displayName, so a divergence would indicate a calamine-vs-part inconsistency rather
+    // than a real workbook defect — a located `#NAME?` (visible in `--functions` / `check`) is the
+    // right, non-aborting signal for it.
+    let mut table_sheet: HashMap<String, String> = HashMap::new();
+    if x.load_tables().is_ok() {
+        for s in sheet_order {
+            for t in x.table_names_in_sheet(s) {
+                table_sheet.insert(t.clone(), s.clone());
+            }
+        }
+    }
+
+    let meta = xlsx_meta::read_meta(path)?;
+    let mut res = Resolution::empty();
+    for n in meta.names {
+        // localSheetId is a 0-based index into the workbook's sheet order. NOTE: `sheet_order` is
+        // calamine's `sheet_names()`; this assumes it matches workbook.xml's 0-based sheet indexing. For
+        // the common all-worksheet workbook it does. Were calamine ever to omit or reorder sheet types
+        // (e.g. chart sheets), a sheet-local name could be attributed to the wrong sheet's scope — a
+        // wrong scope only ever narrows/mis-shadows a lookup, so a mis-scoped name simply fails to
+        // resolve and its token loads as a located #NAME? (HARD RULE 5), never a silently-wrong target.
+        let scope = n
+            .local_sheet_id
+            .and_then(|i| sheet_order.get(i as usize))
+            .cloned();
+        res.add_name(&n.name, scope, &n.target);
+    }
+    for t in meta.tables {
+        if let Some(sheet) = table_sheet.get(&t.name) {
+            res.add_table(
+                &t.name,
+                sheet,
+                t.columns,
+                &t.ref_str,
+                t.header_rows,
+                t.totals_rows,
+            );
+        }
+    }
+    Ok(res)
 }
 
 /// Read one sheet: fuse its value and formula ranges into an A1-anchored rectangle. Format-blind — it

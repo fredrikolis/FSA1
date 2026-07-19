@@ -1,4 +1,4 @@
-# Concern: AUTHOR the committed .xlsx test corpus for charlie-ingest — emit a small set of real Excel (OOXML) spreadsheets (via openpyxl) MIRRORING the .ods corpus: every value type, a SUM/formula chain, a cross-sheet reference, date cells, blanks, and VLOOKUP/IF — so the same import->eval assertions hold for both formats. An xlsx formula is stored in Excel-A1 already (no `of:=`/`[.A1]`), and an openpyxl-written formula carries NO cached value (charlie re-evaluates), so these files exercise the reader's format-blind path and translate's near-noop-for-xlsx behaviour | Non-concern: the Rust importer/translation under test (src/**) and running the tests (the .xlsx artifacts this writes are committed; the venv that runs this is gitignored); the .ods corpus (make_fixtures.py owns that) | IO: () -> writes tests/fixtures/*.xlsx next to this script's parent crate
+# Concern: AUTHOR the committed .xlsx test corpus for charlie-ingest — emit a small set of real Excel (OOXML) spreadsheets (via openpyxl) MIRRORING the .ods corpus (every value type, a SUM/formula chain, a cross-sheet reference, date cells, blanks, VLOOKUP/IF) PLUS an xlsx-only reference-resolution fixture (`resolution.xlsx`: a worksheet TABLE with structured references `Sales[Q1]`/`Sales[@Q1]`/`Sales[[#Headers],[Q1]]` and workbook DEFINED NAMES `TaxRate`/`AllQ1`, with hand-verified expected values) — so the same import->eval assertions hold and the importer's name/table -> A1 resolution is proven end-to-end. An xlsx formula is stored in Excel-A1 already (no `of:=`/`[.A1]`), and an openpyxl-written formula carries NO cached value (charlie re-evaluates), so these files exercise the reader's format-blind path, translate's near-noop-for-xlsx behaviour, and the resolver | Non-concern: the Rust importer/translation under test (src/**) and running the tests (the .xlsx artifacts this writes are committed; the venv that runs this is gitignored); the .ods corpus (make_fixtures.py owns that) | IO: () -> writes tests/fixtures/*.xlsx next to this script's parent crate
 """Regenerate the committed .xlsx fixture corpus. Run from a venv with openpyxl installed:
 
     python3 -m venv .fixture-venv && .fixture-venv/bin/pip install openpyxl
@@ -77,6 +77,52 @@ def make_functions():
     write(wb, "functions.xlsx")
 
 
+def make_resolution():
+    """Defined names + table structured references (the import-time reference-resolution fixture).
+
+    Sheet "Data" holds a table `Sales` (A1:C4; header row Region/Q1/Q2; data rows 2..4) plus formulas
+    that use structured refs and defined names, with hand-verified expected values:
+        E2 =SUM(Sales[Q1])           -> SUM(B2:B4) = 10+20+30 = 60
+        E3 =SUM(Sales[Q2])           -> SUM(C2:C4) = 15+25+35 = 75
+        F2 =Sales[@Q1]               -> B2 = 10   (this-row, formula on row 2)
+        F3 =Sales[@Q1]               -> B3 = 20   (this-row, formula on row 3)
+        G2 =Sales[[#Headers],[Q1]]   -> B1 = "Q1" (the header cell)
+        H2 =TaxRate*100              -> Data!$H$1 * 100 = 0.2*100 = 20
+        H3 =SUM(AllQ1)               -> SUM(Data!$B$2:$B$4) = 60
+    Defined names: TaxRate -> Data!$H$1 (a cell), AllQ1 -> Data!$B$2:$B$4 (a range). openpyxl writes no
+    cached values, so charlie re-evaluates every formula from the resolved A1 the importer produced.
+    """
+    from openpyxl.workbook.defined_name import DefinedName
+    from openpyxl.worksheet.table import Table
+
+    wb = openpyxl.Workbook()
+    t = wb.active
+    t.title = "Data"
+    # The Sales table: a header row + three data rows.
+    for col, head in enumerate(["Region", "Q1", "Q2"], start=1):
+        t.cell(row=1, column=col, value=head)
+    for r, (region, q1, q2) in enumerate(
+        [("North", 10, 15), ("South", 20, 25), ("East", 30, 35)], start=2
+    ):
+        t.cell(row=r, column=1, value=region)
+        t.cell(row=r, column=2, value=q1)
+        t.cell(row=r, column=3, value=q2)
+    t.add_table(Table(displayName="Sales", ref="A1:C4"))
+
+    # Structured references (columns E/F/G) + defined-name references (column H).
+    t["E2"] = "=SUM(Sales[Q1])"
+    t["E3"] = "=SUM(Sales[Q2])"
+    t["F2"] = "=Sales[@Q1]"
+    t["F3"] = "=Sales[@Q1]"
+    t["G2"] = "=Sales[[#Headers],[Q1]]"
+    t["H1"] = 0.2
+    t["H2"] = "=TaxRate*100"
+    t["H3"] = "=SUM(AllQ1)"
+    wb.defined_names.add(DefinedName("TaxRate", attr_text="Data!$H$1"))
+    wb.defined_names.add(DefinedName("AllQ1", attr_text="Data!$B$2:$B$4"))
+    write(wb, "resolution.xlsx")
+
+
 def make_blanks_repeats():
     """A sparse sheet: leading value, interior blanks, a trailing value, a blank row. Used range A1:D3."""
     wb = openpyxl.Workbook()
@@ -94,3 +140,4 @@ if __name__ == "__main__":
     make_literals()
     make_functions()
     make_blanks_repeats()
+    make_resolution()

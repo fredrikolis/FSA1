@@ -79,6 +79,8 @@ dependencies = [
  "calamine",
  "charlie-ast",
  "charlie-model",
+ "quick-xml",
+ "zip",
 ]
 
 [[package]]

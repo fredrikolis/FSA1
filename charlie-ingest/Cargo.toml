@@ -13,3 +13,12 @@ edition = "2024"
 charlie-ast = { path = "../charlie-ast" }
 charlie-model = { path = "../charlie-model" }
 calamine = "0.36"
+# The xlsx metadata reader (`xlsx_meta.rs`) reads the definedNames + table parts (`xl/tables/*.xml`)
+# that calamine's high-level `Reader` seam does not surface (name scoping, table header/totals extent).
+# `zip`/`quick-xml` are part of the format firewall (HARD RULE 4): they live in charlie-ingest ONLY,
+# alongside calamine, so charlie-model/charlie-ast stay A1-only. Versions match calamine's transitive
+# pins so no new resolution is introduced.
+# Minimal zip surface (deflate/stored — what an xlsx uses); no extra compression backends beyond what
+# calamine already pulls, so the lockfile does not grow.
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"

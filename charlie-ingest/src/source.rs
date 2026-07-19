@@ -1,9 +1,11 @@
-// Concern: the FORMAT-NEUTRAL intermediate a deserializer produces and the serializer consumes — one sheet's cells as an A1-anchored, row-major rectangle (`SheetSource`), each cell a `SourceCell` (blank / number / text / bool / error / date-serial / raw-formula), and the whole book (`SourceBook`); this is the seam that keeps the format reader (calamine) on one side and charlie's TSV writer on the other, so a second format (xlsx) reuses the entire translate/serialize/write half unchanged | Non-concern: reading a concrete format (reader.rs owns calamine) and spelling a cell to TSV (serialize.rs owns that) | IO: none — data types
+// Concern: the FORMAT-NEUTRAL intermediate a deserializer produces and the serializer consumes — one sheet's cells as an A1-anchored, row-major rectangle (`SheetSource`), each cell a `SourceCell` (blank / number / text / bool / error / date-serial / raw-formula), the workbook's reference `Resolution` (defined-name map + table geometry, all A1 strings — no calamine/zip/xml types cross here), and the whole book (`SourceBook`); this is the seam that keeps the format reader (calamine) on one side and charlie's TSV writer on the other, so a second format (xlsx) reuses the entire translate/serialize/write half unchanged | Non-concern: reading a concrete format (reader.rs owns calamine) and spelling a cell to TSV (serialize.rs owns that) | IO: none — data types
 //! The deserializer↔serializer seam: [`SourceBook`], [`SheetSource`], [`SourceCell`]. A reader fills
 //! these from a concrete format; the serializer turns them into charlie grid files. Neither the AST nor
 //! the model learns of any format because the format never travels past this neutral shape.
 
 use charlie_ast::ErrKind;
+
+pub use crate::resolve::Resolution;
 
 /// One source cell, already mapped off its concrete format into charlie's value vocabulary (VAL3) plus
 /// the one non-value arm — a raw, still-untranslated formula string. A date/time cell arrives as a
@@ -48,8 +50,11 @@ impl SheetSource {
     }
 }
 
-/// A whole workbook as neutral sheets, in source order.
+/// A whole workbook as neutral sheets, in source order, plus the reference [`Resolution`] (defined
+/// names + table geometry) the serializer applies while translating each formula so the engine only
+/// ever sees A1. `resolution` is empty for a source with no names/tables (or a format not yet resolved).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceBook {
     pub sheets: Vec<SheetSource>,
+    pub resolution: Resolution,
 }
