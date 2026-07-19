@@ -27,7 +27,7 @@ pub mod workbook;
 
 pub use diagnostic::{Applicability, ByteSpan, Code, Diagnostic, Fix, Loc, Severity};
 pub use filename::{FileName, parse_filename};
-pub use grid::{Cell, Grid, deserialize_tsv, lex_literal, load_error_value};
+pub use grid::{Cell, Grid, deserialize_tsv, encode_field, lex_literal, load_error_value};
 pub use overlap::{Rect, detect_overlaps};
 pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, display_value, parse_viewport, render,

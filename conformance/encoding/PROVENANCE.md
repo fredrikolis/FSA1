@@ -54,6 +54,16 @@ rendered value:
 5. **`FORMAT.md`** was replaced by a superseded-pointer to `SPEC.md` + `charlie-cli --guide` (the former
    `docs/format.md` guide is retired; its rationale now lives in the governing code).
 
+## Subsequent GROWTH (never a silent rewrite)
+
+- **TSV field escaping** — `conformance-forms/tsv-escaping/` (a tab `Cells` of four 1×1 files plus an
+  `EXPECTED.md`) was ADDED when the deserializer gained field escaping (`\t`, `\n`, `\\`; SPEC.md
+  GRID2 "current deserializer"). It probes an embedded newline (`A1`), an embedded tab (`A2`), a
+  literal backslash (`A3`), and a **malformed escape** (`A4` = `bad\x`) that deserializes to a located
+  `#VALUE!` GRID6 error while `A1`–`A3` still load (GRID6 locality). Verified against `charlie-cli
+  render`/`check`; the manifest and pinned digest above were regenerated in the carrying commit. No
+  pre-existing fixture byte changed.
+
 ## What this corpus is graded by
 
 - **The 6 valid category workbooks** (`aggregation`, `conditional`, `dates`, `lookup-join`, `model`,
@@ -67,7 +77,7 @@ rendered value:
 
 ## Fingerprint (oracle-input purity)
 
-`MANIFEST.sha256` records a `sha256sum` line for **every** corpus file (105 files: `FORMAT.md`, the
+`MANIFEST.sha256` records a `sha256sum` line for **every** corpus file (110 files: `FORMAT.md`, the
 `artifacts/` tree, and the two `oracle/*/EXPECTED.md` ledgers) — everything except this file and the
 manifest itself. Re-verify at any time from this directory:
 
@@ -78,7 +88,7 @@ sha256sum -c MANIFEST.sha256 --quiet   # exit 0 == corpus is byte-identical to t
 Digest of the manifest itself (a single value pinning the whole set):
 
 ```
-sha256(MANIFEST.sha256) = b75bf7dd7ecc008917f2602ddda454cf8f5c14761f81de76f19f66cf8153696f
+sha256(MANIFEST.sha256) = 08b8b369731c9820159fe3a14a40843ef8508b39367f21323d44f42f60d8d7a0
 ```
 
 `.github/workflows/build.yml` runs `sha256sum -c MANIFEST.sha256 --quiet` in this directory on every

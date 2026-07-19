@@ -48,6 +48,12 @@ pub enum Code {
     /// to a `#NAME?` error value (this code's `err_class`), never a silent drop and never a whole-file
     /// failure; `check` reports it with its location and a non-zero exit.
     FormulaSyntax,
+    /// A TSV field with a malformed escape: a backslash that does not begin one of the three field
+    /// escapes (`\t`, `\n`, `\\`), or a trailing backslash. GRID6: like [`Code::FormulaSyntax`], this
+    /// is a located, per-cell LOAD-TIME error — the cell deserializes to a [`crate::Cell::LoadError`]
+    /// that resolves to a `#VALUE!` error value (this code's `err_class`), never a silent literal and
+    /// never a whole-file failure; `check` reports it with its location and a non-zero exit.
+    MalformedEscape,
     /// A `=formula` cross-cell dependency CHAIN that is finite but deeper than the model's pull-depth
     /// bound (demand-driven eval, B3) — a `#NUM!`-class refusal. Distinct from [`Code::Cycle`]: the
     /// chain terminates, it is merely too long to evaluate by native recursion, so the deepest link
@@ -78,6 +84,7 @@ impl Code {
         Code::Overlap,
         Code::Cycle,
         Code::FormulaSyntax,
+        Code::MalformedEscape,
         Code::DepthLimit,
         Code::RangeTooLarge,
         Code::CellOutOfRange,
@@ -99,6 +106,7 @@ impl Code {
             Code::Overlap => "overlap",
             Code::Cycle => "cycle",
             Code::FormulaSyntax => "formula-syntax",
+            Code::MalformedEscape => "malformed-escape",
             Code::DepthLimit => "depth-limit",
             Code::RangeTooLarge => "range-too-large",
             Code::CellOutOfRange => "cell-out-of-range",
@@ -120,6 +128,9 @@ impl Code {
             Code::Overlap => "two files in a tab claim intersecting cells",
             Code::Cycle => "a formula cell must not depend on itself (directly or via a chain)",
             Code::FormulaSyntax => "a formula body must parse into a charlie-ast expression",
+            Code::MalformedEscape => {
+                "a backslash in a TSV field must begin an escape: \\t, \\n, or \\\\"
+            }
             Code::DepthLimit => "a formula dependency chain must not exceed the pull-depth bound",
             Code::RangeTooLarge => "a referenced range must not exceed the materialization bound",
             Code::CellOutOfRange => "a traced tab index must be within the workbook's sheets",
@@ -168,6 +179,9 @@ impl Code {
             Code::FormulaSyntax => {
                 "correct the `=formula` so it parses (balance parentheses, fix operators and function names)"
             }
+            Code::MalformedEscape => {
+                "write a literal backslash as `\\\\`, a tab as `\\t`, a newline as `\\n`; a backslash before anything else (or at the field's end) is malformed"
+            }
             Code::DepthLimit => {
                 "shorten the formula dependency chain below the pull-depth bound (flatten intermediate cells)"
             }
@@ -199,6 +213,10 @@ impl Code {
             // (`crate::Cell::LoadError`) that resolves to `#NAME?` — so this refusal DOES cite an AST
             // error class (the cell is a value, unlike the purely-structural filename/dimension faults).
             Code::FormulaSyntax => Some(ErrKind::Name),
+            // GRID6: a malformed TSV escape deserializes to a located error VALUE
+            // (`crate::Cell::LoadError`) that resolves to `#VALUE!` — a corrupt cell literal, so (like
+            // the ragged-grid `#VALUE!` class) it cites the value-error class.
+            Code::MalformedEscape => Some(ErrKind::Value),
             _ => None,
         }
     }
@@ -386,7 +404,7 @@ mod tests {
     #[test]
     fn registry_is_self_consistent() {
         // Every variant appears in ALL exactly once, and code strings are unique.
-        assert_eq!(Code::ALL.len(), 15);
+        assert_eq!(Code::ALL.len(), 16);
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();
         codes.sort_unstable();
         let before = codes.len();
@@ -417,6 +435,8 @@ mod tests {
         assert_eq!(Code::MalformedFilename.err_class(), None);
         // GRID6: an unparseable formula surfaces as a `#NAME?` error VALUE, so it cites a class.
         assert_eq!(Code::FormulaSyntax.err_class(), Some(ErrKind::Name));
+        // GRID6: a malformed TSV escape surfaces as a `#VALUE!` error VALUE.
+        assert_eq!(Code::MalformedEscape.err_class(), Some(ErrKind::Value));
     }
 
     #[test]
