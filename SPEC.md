@@ -40,7 +40,13 @@ that constrain them.
 A grid is deserialized from **TSV**: the **entire file content is the grid** — there is no header,
 annotation, or metadata line, and the first line is the first row. Columns are tab-separated, rows are
 newline-separated; each cell is a literal or an `=formula`. An empty field is a blank cell — a double
-tab (`a⇥⇥b`) makes the middle cell blank, as do leading and trailing empty fields. Because the engine operates only on the grid (GRID3),
+tab (`a⇥⇥b`) makes the middle cell blank, as do leading and trailing empty fields. A field may
+contain a tab, newline, or backslash, written as the escapes `\t`, `\n`, and `\\`; a literal backslash
+must always be written `\\`. The deserializer decodes every field by this one rule: only an *unescaped*
+tab or newline is a column or row delimiter (so a cell can hold multi-line text), and a backslash always
+begins one of these three escapes. A backslash followed by anything else — or a trailing backslash — is
+a malformed cell and deserializes to a located error value (GRID6), never a silent literal or a
+file-level refusal. Because the engine operates only on the grid (GRID3),
 TSV is the *current* deserializer; another format, or a generator, is a new deserializer and leaves
 the engine untouched.
 
