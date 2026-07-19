@@ -22,18 +22,19 @@ that constrain them.
 
 ## FS — on-disk layout
 
-- **FS1 · workbook / tab / file.** A workbook is a folder of tabs; a tab is a folder of files. — *each sub-folder of the workbook is a tab, except the reserved `.cache/` (FS3); a cross-tab reference is `Tab!A1`.*
-- **FS2 · closed range.** A file's name is a closed range — a bounded rectangle of A1 cells with inclusive endpoints. — *the file for rows 2–11 of column F is `F2:F11`; one cell is `A1`; a 3-wide by 8-tall block is `B2:D9`.*
+- **FS1 · workbook / tab / file.** A workbook is a folder of tabs; a tab is a folder of files. — *each sub-folder of the workbook is a tab, except the reserved `.cache/` (FS3); the root and each tab may also hold name entries (FS4); a cross-tab reference is `Tab!A1`.*
+- **FS2 · closed range.** A cell/grid file's name is a closed range — a bounded rectangle of A1 cells with inclusive endpoints; a **name** (FS4) is the exception, identified by an identifier rather than an A1 range. — *the file for rows 2–11 of column F is `F2:F11`; one cell is `A1`; a 3-wide by 8-tall block is `B2:D9`.*
 - **FS3 · reserved cache directory.** `.cache/` at the workbook root is not a tab; it holds only regenerable, non-authoritative derived data. — *deleting `.cache/` never changes any cell's value — no value derives from it (VAL2), only the work to recompute one does; every other sub-folder of the workbook is a tab (FS1).*
+- **FS4 · name.** A name is a filesystem entry — in a tab folder (sheet-scoped) or the workbook root (workbook-scoped) — identified by an identifier and resolving to a target cell, range, or value; it occupies no A1 coordinate (it is addressed by its identifier, not by position). — *a formula referencing a name evaluates against the name's resolved target; scope is location — a sheet-scoped name shadows a workbook-scoped one of the same identifier; names may overlap each other and cells freely (a cell may belong to any number of names); charlie refuses a name that parses as an A1 address (CORE2), so a name never collides with a cell's filename; a name that resolves to no cell, range, or value is a located `#NAME?` value (VAL3). The engine consumes only the resolved A1/value — it is A1/address-based (ENG1, CORE1); the on-disk representation of a name is a deserializer concern (GRID3), normalized to the same name at load.*
 
 ## GRID — deserialization (content → grid)
 
-- **GRID1 · grid.** A file's content is exactly its grid: for every coordinate in its closed range, one cell — an explicit value or an explicit `=formula` (unless the whole file is a single array formula that fills the range, GRID5). — *the grid of `F2:F11` is exactly ten cells, each a value or a formula; the file holds those cells and carries no header, annotation, or metadata.*
+- **GRID1 · grid.** A cell/grid file's content is exactly its grid: for every coordinate in its closed range, one cell — an explicit value or an explicit `=formula` (unless the whole file is a single array formula that fills the range, GRID5). A name (FS4) is not a grid file. — *the grid of `F2:F11` is exactly ten cells, each a value or a formula; the file holds those cells and carries no header, annotation, or metadata.*
 - **GRID2 · deserializer / generator.** A deserializer turns a file's content into its grid. A generator is a deserializer that computes the grid from a compact form rather than reading it cell-for-cell. — *a deserializer takes file content in some format and produces a grid; a generator's grid is the same artifact a file would otherwise list by hand.*
 - **GRID3 · content → grid via a deserializer.** The engine operates only on the grid; a file's format lives entirely in its deserializer, so switching format switches only the deserializer. — *`render --functions` shows the same grid whether a file was written as TSV or produced by a generator; the engine is unchanged when the deserializer changes.*
 - **GRID4 · the grid fills its range.** A grid fills its file's closed range exactly. — *a `B2:D9` file whose grid is not 3×8 is a located dimension error.*
 - **GRID5 · array formula fills its range.** A file's whole content may instead be a single `=formula` whose value is an array; that array fills the file's closed range exactly, one element per coordinate. This is the only form in which one formula spans more than one cell — there is no dynamic spill beyond a file's declared range, so the range is the author's explicit, bounded spill region. — *a `C1:C3` file whose sole content is `=SORT(A1:A3)` is the sorted 3×1 array in C1:C3; element `(r,c)` of the array fills the range's `(r,c)` coordinate; a single formula whose value is not an array of exactly the range's shape and orientation — a scalar, or a wrong-shaped array — is a located dimension error (GRID4), detected at evaluation; a one-cell file holding an array formula keeps only the array's top-left element; importing a spreadsheet's spilled array over a region yields exactly the range file for that region.*
-- **GRID6 · error locality.** A cell whose content cannot be deserialized is a located error value (VAL3) in the grid — not a whole-file failure; unrelated cells still load and evaluate. — *an unparseable formula in one cell deserializes to a located error value — one of the six value types (VAL3), carrying its location — so it renders as that error and `charlie-cli check` reports it with a non-zero exit and its location, while every other cell in the file still yields its value: the error cell is visible and located (CORE2), never a silent drop or skip. Because Excel rejects unparseable content at entry rather than storing it, this load-time error value is a deliberate charlie divergence outside the ENG6 parity corpus (cf. GRID5). Structural faults of the file itself — a grid that does not fill its range (GRID4), a malformed filename (FS2), or overlapping files — remain file-level refusals (CORE2), not cell error values.*
+- **GRID6 · error locality.** A cell whose content cannot be deserialized is a located error value (VAL3) in the grid — not a whole-file failure; unrelated cells still load and evaluate. — *an unparseable formula in one cell deserializes to a located error value — one of the six value types (VAL3), carrying its location — so it renders as that error and `charlie-cli check` reports it with a non-zero exit and its location, while every other cell in the file still yields its value: the error cell is visible and located (CORE2), never a silent drop or skip. Because Excel rejects unparseable content at entry rather than storing it, this load-time error value is a deliberate charlie divergence outside the ENG6 parity corpus (cf. GRID5). Structural faults of the file itself — a grid that does not fill its range (GRID4), a malformed filename (FS2), or overlapping cell/grid files — remain file-level refusals (CORE2), not cell error values.*
 
 ### The current deserializer
 
@@ -49,6 +50,27 @@ a malformed cell and deserializes to a located error value (GRID6), never a sile
 file-level refusal. Because the engine operates only on the grid (GRID3),
 TSV is the *current* deserializer; another format, or a generator, is a new deserializer and leaves
 the engine untouched.
+
+### The current name representation
+
+A name (FS4) is deserialized from one of two on-disk forms, normalized to the same name at load, so the
+engine sees only the resolved target (GRID3):
+
+- **A symlink** to the target cell(s): a bare `<name>` symlink names a single cell; a `<name>` with a
+  top-left and a bottom-right corner symlink (`<name>.begin` + `<name>.end`) names the rectangle between
+  them. The deserializer accepts any of several self-evident corner aliases — top-left
+  (`begin` / `start` / `tl` / `topleft`) and bottom-right (`end` / `br` / `bottomright`) — but only
+  `begin` / `end` are documented, and a name is written with the canonical `begin` / `end`. A labeled
+  corner always has a cell file (a blank corner is materialized), so every link resolves.
+- **A regular file** whose content is the target reference or expression: `Days` holding `=A2:A366` (a
+  static range), or `Rate` holding `=Base*1.05`, `Pi` holding `3.14` (a named formula / constant — a cell
+  that is not at a coordinate).
+
+The reader understands both forms; the writer chooses one (POSIX emits the symlink form for a static
+cell/range; the regular-file form is the portable representation and the only form for a named formula).
+Because a spreadsheet is edited on the filesystem (CORE3), the symlink form is also a write path — editing
+through `<name>` writes its target cell. The distribution container preserves symlinks (a tar of the tree). A lone corner (a `.begin` without its
+`.end`, or the reverse), or a `begin` below or right of its `end`, is a located refusal (CORE2).
 
 ## VAL — the cell & value model
 
