@@ -1,0 +1,268 @@
+[
+  {
+    "name": "len_basic",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=LEN(\"hello\")"
+  },
+  {
+    "name": "len_empty",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=LEN(\"\")"
+  },
+  {
+    "name": "len_of_number",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=LEN(12345)"
+  },
+  {
+    "name": "lower_basic",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=LOWER(\"HeLLo\")"
+  },
+  {
+    "name": "upper_basic",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=UPPER(\"HeLLo\")"
+  },
+  {
+    "name": "proper_words",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=PROPER(\"the quick brown\")"
+  },
+  {
+    "name": "proper_mixed",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=PROPER(\"mcDONALD's\")"
+  },
+  {
+    "name": "mid_middle",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=MID(\"abcdef\",2,3)"
+  },
+  {
+    "name": "mid_past_end",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=MID(\"abc\",2,10)"
+  },
+  {
+    "name": "mid_zero_len",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=MID(\"abc\",2,0)"
+  },
+  {
+    "name": "find_char",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=FIND(\"c\",\"abcabc\")"
+  },
+  {
+    "name": "find_from_start",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=FIND(\"a\",\"banana\",2)"
+  },
+  {
+    "name": "find_missing_value_err",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=FIND(\"z\",\"abc\")"
+  },
+  {
+    "name": "find_case_sensitive",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=FIND(\"B\",\"aBc\")"
+  },
+  {
+    "name": "search_case_insensitive",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=SEARCH(\"B\",\"abc\")"
+  },
+  {
+    "name": "search_wildcard",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=SEARCH(\"b?d\",\"abcde\")",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 returns #VALUE! for a wildcard pattern in SEARCH (does not implement ?/* wildcards). Excel & charlie: 2 (\"b?d\" matches \"bcd\" at position 2). Reference-library gap; charlie hand-verified vs Excel."
+  },
+  {
+    "name": "exact_true",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=EXACT(\"abc\",\"abc\")"
+  },
+  {
+    "name": "exact_false_case",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=EXACT(\"abc\",\"ABC\")"
+  },
+  {
+    "name": "code_upper_a",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=CODE(\"A\")"
+  },
+  {
+    "name": "code_of_string_first",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=CODE(\"Apple\")"
+  },
+  {
+    "name": "replace_middle",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=REPLACE(\"abcdef\",2,3,\"XY\")"
+  },
+  {
+    "name": "replace_insert",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=REPLACE(\"abc\",4,0,\"DEF\")"
+  },
+  {
+    "name": "rept_thrice",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=REPT(\"ab\",3)"
+  },
+  {
+    "name": "rept_zero",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=REPT(\"x\",0)"
+  },
+  {
+    "name": "trim_internal_collapse",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=TRIM(\"  a   b  \")",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 only strips leading/trailing spaces (\"a   b\"); it does not collapse internal runs of spaces. Excel & charlie: \"a b\" (internal multiple spaces collapse to one). Reference-library gap; charlie hand-verified vs Excel."
+  },
+  {
+    "name": "trim_no_change",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=TRIM(\"abc\")"
+  },
+  {
+    "name": "trim_leading_trailing",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=TRIM(\"  abc  \")"
+  },
+  {
+    "name": "value_integer",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=VALUE(\"123\")"
+  },
+  {
+    "name": "value_decimal",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=VALUE(\"1.5\")"
+  },
+  {
+    "name": "value_negative",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=VALUE(\"-42\")"
+  },
+  {
+    "name": "textjoin_ignore_empty",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=TEXTJOIN(\"-\",TRUE,\"a\",\"\",\"b\")",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 ignores the ignore_empty flag: it emits \"a--b\" for both TRUE and FALSE. Excel & charlie with ignore_empty=TRUE: \"a-b\" (the empty argument is skipped). Reference-library gap; charlie hand-verified vs Excel."
+  },
+  {
+    "name": "textjoin_keep_empty",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=TEXTJOIN(\"-\",FALSE,\"a\",\"\",\"b\")"
+  },
+  {
+    "name": "textjoin_range",
+    "category": "text2",
+    "inputs": {
+      "A1": "x",
+      "A2": "y",
+      "A3": "z"
+    },
+    "formula": "=TEXTJOIN(\",\",TRUE,A1:A3)"
+  },
+  {
+    "name": "left_zero",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=LEFT(\"abc\",0)"
+  },
+  {
+    "name": "left_default_one",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=LEFT(\"abc\")"
+  },
+  {
+    "name": "right_default_one",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=RIGHT(\"abc\")"
+  },
+  {
+    "name": "substitute_nth",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=SUBSTITUTE(\"a-a-a\",\"a\",\"b\",2)"
+  },
+  {
+    "name": "concat_range",
+    "category": "text2",
+    "inputs": {
+      "A1": "a",
+      "A2": "b",
+      "A3": "c"
+    },
+    "formula": "=CONCAT(A1:A3)"
+  },
+  {
+    "name": "dollar_two_decimals",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=DOLLAR(1234.5,2)",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 does not implement DOLLAR (returns #NAME?). Excel & charlie: \"$1,234.50\". Reference-library gap; charlie hand-verified vs Excel and Rust-pinned in func::tests text_format."
+  },
+  {
+    "name": "dollar_negative_parens",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=DOLLAR(-1234.5,2)",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 does not implement DOLLAR (returns #NAME?). Excel & charlie: \"($1,234.50)\" (negative currency in parentheses). Reference-library gap; charlie hand-verified vs Excel."
+  },
+  {
+    "name": "dollar_neg_decimals_rounds",
+    "category": "text2",
+    "inputs": {},
+    "formula": "=DOLLAR(1234.5,-2)",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 does not implement DOLLAR (returns #NAME?). Excel & charlie: \"$1,200\" (negative decimals round to hundreds). Reference-library gap; charlie hand-verified vs Excel."
+  }
+]

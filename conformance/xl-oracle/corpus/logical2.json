@@ -1,0 +1,123 @@
+[
+  {
+    "name": "and_all_true",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=AND(TRUE,1>0,2>1)"
+  },
+  {
+    "name": "and_one_false",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=AND(TRUE,1>2)"
+  },
+  {
+    "name": "and_range",
+    "category": "logical2",
+    "inputs": {
+      "A1": true,
+      "A2": true,
+      "A3": true
+    },
+    "formula": "=AND(A1:A3)"
+  },
+  {
+    "name": "or_one_true",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=OR(FALSE,1>0)"
+  },
+  {
+    "name": "or_all_false",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=OR(FALSE,1>2)"
+  },
+  {
+    "name": "not_true",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=NOT(TRUE)"
+  },
+  {
+    "name": "not_number_nonzero",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=NOT(5)"
+  },
+  {
+    "name": "not_zero",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=NOT(0)"
+  },
+  {
+    "name": "switch_match_second",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=SWITCH(2,1,\"a\",2,\"b\",\"z\")"
+  },
+  {
+    "name": "switch_default",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=SWITCH(9,1,\"a\",2,\"b\",\"z\")"
+  },
+  {
+    "name": "switch_no_default_na",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=SWITCH(9,1,\"a\",2,\"b\")"
+  },
+  {
+    "name": "switch_text_key",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=SWITCH(\"y\",\"x\",1,\"y\",2)"
+  },
+  {
+    "name": "if_false_branch",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=IF(1>2,\"big\",\"small\")"
+  },
+  {
+    "name": "if_omitted_false_returns_false",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=IF(1>2,\"yes\")"
+  },
+  {
+    "name": "if_number_condition_nonzero",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=IF(5,\"t\",\"f\")"
+  },
+  {
+    "name": "if_number_condition_zero",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=IF(0,\"t\",\"f\")"
+  },
+  {
+    "name": "ifs_first_match",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=IFS(1>0,\"a\",1>2,\"b\")"
+  },
+  {
+    "name": "and_bool_coercion_number",
+    "category": "logical2",
+    "inputs": {},
+    "formula": "=AND(1,1)"
+  },
+  {
+    "name": "or_range_mixed",
+    "category": "logical2",
+    "inputs": {
+      "A1": 0,
+      "A2": 1
+    },
+    "formula": "=OR(A1:A2)"
+  }
+]

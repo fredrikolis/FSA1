@@ -1,0 +1,224 @@
+[
+  {
+    "name": "abs_negative",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ABS(-5)"
+  },
+  {
+    "name": "abs_positive",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ABS(5)"
+  },
+  {
+    "name": "abs_zero",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ABS(0)"
+  },
+  {
+    "name": "abs_of_text_number",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ABS(\"-3\")"
+  },
+  {
+    "name": "power_int",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=POWER(2,10)"
+  },
+  {
+    "name": "power_fractional",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=POWER(9,0.5)",
+    "tol": 1e-12
+  },
+  {
+    "name": "power_negative_base_even",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=POWER(-2,2)"
+  },
+  {
+    "name": "power_zero_exp",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=POWER(5,0)"
+  },
+  {
+    "name": "sqrt_perfect",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=SQRT(16)"
+  },
+  {
+    "name": "sqrt_two",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=SQRT(2)",
+    "tol": 1e-12
+  },
+  {
+    "name": "sqrt_zero",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=SQRT(0)"
+  },
+  {
+    "name": "ceiling_basic",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=CEILING(2.5,1)"
+  },
+  {
+    "name": "ceiling_step_half",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=CEILING(2.1,0.5)"
+  },
+  {
+    "name": "ceiling_multiple",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=CEILING(23,5)"
+  },
+  {
+    "name": "floor_basic",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=FLOOR(2.5,1)"
+  },
+  {
+    "name": "floor_step_half",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=FLOOR(2.9,0.5)"
+  },
+  {
+    "name": "floor_multiple",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=FLOOR(23,5)"
+  },
+  {
+    "name": "roundup_pos",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ROUNDUP(3.11,1)"
+  },
+  {
+    "name": "roundup_neg",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ROUNDUP(-3.11,1)"
+  },
+  {
+    "name": "roundup_to_int",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ROUNDUP(3.001,0)"
+  },
+  {
+    "name": "rounddown_pos",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ROUNDDOWN(3.19,1)"
+  },
+  {
+    "name": "rounddown_neg",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ROUNDDOWN(-3.19,1)"
+  },
+  {
+    "name": "rounddown_neg_digits",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=ROUNDDOWN(1234,-2)"
+  },
+  {
+    "name": "product_range",
+    "category": "math2",
+    "inputs": {
+      "A1": 2,
+      "A2": 3,
+      "A3": 4
+    },
+    "formula": "=PRODUCT(A1:A3)"
+  },
+  {
+    "name": "product_with_blank",
+    "category": "math2",
+    "inputs": {
+      "A1": 2,
+      "A3": 4
+    },
+    "formula": "=PRODUCT(A1:A3)"
+  },
+  {
+    "name": "product_direct_args",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=PRODUCT(2,5,10)"
+  },
+  {
+    "name": "mod_negative_divisor",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=MOD(7,-3)"
+  },
+  {
+    "name": "mod_both_negative",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=MOD(-7,-3)"
+  },
+  {
+    "name": "int_negative",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=INT(-2.5)"
+  },
+  {
+    "name": "sum_mixed_direct_range",
+    "category": "math2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2
+    },
+    "formula": "=SUM(A1:A2,10)"
+  },
+  {
+    "name": "gcd_three",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=GCD(12,18,24)"
+  },
+  {
+    "name": "lcm_three",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=LCM(2,3,4)"
+  },
+  {
+    "name": "fact_zero",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=FACT(0)"
+  },
+  {
+    "name": "sign_positive",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=SIGN(42)"
+  },
+  {
+    "name": "mround_half_step",
+    "category": "math2",
+    "inputs": {},
+    "formula": "=MROUND(7,2)"
+  }
+]

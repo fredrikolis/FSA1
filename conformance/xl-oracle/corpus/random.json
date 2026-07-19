@@ -1,0 +1,20 @@
+[
+  {
+    "name": "randbetween_collapsed",
+    "category": "random",
+    "inputs": {},
+    "formula": "=RANDBETWEEN(7,7)"
+  },
+  {
+    "name": "randbetween_in_bounds",
+    "category": "random",
+    "inputs": {},
+    "formula": "=AND(RANDBETWEEN(1,10)>=1,RANDBETWEEN(1,10)<=10)"
+  },
+  {
+    "name": "rand_in_unit_interval",
+    "category": "random",
+    "inputs": {},
+    "formula": "=AND(RAND()>=0,RAND()<1)"
+  }
+]

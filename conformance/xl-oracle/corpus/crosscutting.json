@@ -1,0 +1,372 @@
+[
+  {
+    "name": "cc_prec_mul_before_add",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=2+3*4"
+  },
+  {
+    "name": "cc_prec_add_before_mul",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=2*3+4"
+  },
+  {
+    "name": "cc_div_left_assoc",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=100/10/2"
+  },
+  {
+    "name": "cc_sub_left_assoc",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=10-2-3"
+  },
+  {
+    "name": "cc_pow_left_assoc",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=2^3^2"
+  },
+  {
+    "name": "cc_unary_binds_tighter_than_pow",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=-3^2"
+  },
+  {
+    "name": "cc_unary_double_neg",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=--5"
+  },
+  {
+    "name": "cc_mul_neg_literal",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=2*-3"
+  },
+  {
+    "name": "cc_percent_literal",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=50%"
+  },
+  {
+    "name": "cc_percent_in_expr",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=200%*3"
+  },
+  {
+    "name": "cc_percent_after_number",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=10+5%"
+  },
+  {
+    "name": "cc_parens_override",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=(2+3)*4"
+  },
+  {
+    "name": "cc_cmp_lt",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=1<2"
+  },
+  {
+    "name": "cc_cmp_le_eq",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=2<=2"
+  },
+  {
+    "name": "cc_cmp_ne",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=1<>2"
+  },
+  {
+    "name": "cc_cmp_text_order",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=\"a\"<\"b\""
+  },
+  {
+    "name": "cc_cmp_text_case_insensitive",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=\"apple\"=\"APPLE\""
+  },
+  {
+    "name": "cc_cmp_bool_vs_number",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=TRUE=1"
+  },
+  {
+    "name": "cc_cmp_bool_gt_number",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=TRUE>1"
+  },
+  {
+    "name": "cc_coerce_text_add",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=\"3\"+2"
+  },
+  {
+    "name": "cc_coerce_text_mul",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=\"3\"*\"4\""
+  },
+  {
+    "name": "cc_coerce_sci_text",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=\"1e2\"+0"
+  },
+  {
+    "name": "cc_coerce_spaces_around_number",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=\" 5 \"+1"
+  },
+  {
+    "name": "cc_coerce_bool_add",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=TRUE+1"
+  },
+  {
+    "name": "cc_coerce_false_add",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=FALSE+10"
+  },
+  {
+    "name": "cc_coerce_bool_mul",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=TRUE*5"
+  },
+  {
+    "name": "cc_bool_sum_of_comparisons",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=(1=1)+(2=2)"
+  },
+  {
+    "name": "cc_concat_numbers",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=1&2"
+  },
+  {
+    "name": "cc_concat_bool",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=TRUE&\"\""
+  },
+  {
+    "name": "cc_concat_number_text",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=1/4&\"\""
+  },
+  {
+    "name": "cc_blank_plus_number",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=A1+5"
+  },
+  {
+    "name": "cc_blank_concat",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=A1&\"x\""
+  },
+  {
+    "name": "cc_blank_equals_zero",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=A1=0"
+  },
+  {
+    "name": "cc_blank_equals_emptytext",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=A1=\"\""
+  },
+  {
+    "name": "cc_blank_in_sum",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=SUM(A1,5)"
+  },
+  {
+    "name": "cc_err_div0",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=1/0"
+  },
+  {
+    "name": "cc_err_na",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=NA()"
+  },
+  {
+    "name": "cc_err_value_from_text",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=\"x\"+1"
+  },
+  {
+    "name": "cc_err_num_from_sqrt",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=SQRT(-1)"
+  },
+  {
+    "name": "cc_err_div0_mod_zero",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=MOD(7,0)"
+  },
+  {
+    "name": "cc_err_propagate_add",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=1/0+1"
+  },
+  {
+    "name": "cc_err_propagate_in_sum",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=SUM(1,1/0)"
+  },
+  {
+    "name": "cc_err_propagate_na_add",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=NA()+1"
+  },
+  {
+    "name": "cc_err_propagate_through_if_true",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=IF(TRUE,1/0,5)"
+  },
+  {
+    "name": "cc_err_na_wins_over_div0_left",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=NA()+1/0"
+  },
+  {
+    "name": "cc_round_half_up_pos",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=ROUND(0.5,0)"
+  },
+  {
+    "name": "cc_round_half_up_neg",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=ROUND(-0.5,0)"
+  },
+  {
+    "name": "cc_round_half_1p5",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=ROUND(1.5,0)"
+  },
+  {
+    "name": "cc_round_half_2p5",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=ROUND(2.5,0)"
+  },
+  {
+    "name": "cc_round_neg_digits",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=ROUND(1234.5,-2)"
+  },
+  {
+    "name": "cc_date_serial_one",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=DATE(1900,1,1)"
+  },
+  {
+    "name": "cc_date_1900_leap_phantom",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=DATE(1900,2,29)"
+  },
+  {
+    "name": "cc_date_after_phantom_leap",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=DATE(1900,3,1)"
+  },
+  {
+    "name": "cc_date_arith_diff",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=DATE(2021,1,1)-DATE(2020,1,1)"
+  },
+  {
+    "name": "cc_array_literal_sum_rows",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=SUM({1;2;3})"
+  },
+  {
+    "name": "cc_array_literal_2d_sum",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=SUM({1,2;3,4})"
+  },
+  {
+    "name": "cc_sumproduct_mul_bool_idiom",
+    "category": "crosscut",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3
+    },
+    "formula": "=SUMPRODUCT((A1:A3>1)*1)"
+  },
+  {
+    "name": "cc_nested_arith",
+    "category": "crosscut",
+    "inputs": {},
+    "formula": "=(2+3)*(4-1)/3"
+  },
+  {
+    "name": "cc_range_sum_with_blanks",
+    "category": "crosscut",
+    "inputs": {
+      "A1": 10,
+      "A3": 20
+    },
+    "formula": "=SUM(A1:A3)"
+  },
+  {
+    "name": "cc_count_ignores_blanks",
+    "category": "crosscut",
+    "inputs": {
+      "A1": 10,
+      "A3": 20
+    },
+    "formula": "=COUNT(A1:A3)"
+  }
+]

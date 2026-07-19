@@ -152,3 +152,73 @@ values, for transparency). Distorting charlie to chase a wrong reference is forb
   values (`charlie-ast` `func::tests::engineering::binary_prefixes_are_excel_exact_powers_of_two`:
   `kibyte→byte=1024`, `Mibyte→byte=1048576`, `kibit→bit=1024`, `Gibit→bit=2^30`).
 - **Verdict:** `lib-gap` (reference defect). Excluded from pass/fail; charlie is correct.
+
+## 9. `DOLLAR(number, [decimals])` — unimplemented (`#NAME?`)
+
+- **Cases:** `text2/dollar_two_decimals` (`=DOLLAR(1234.5,2)`), `text2/dollar_negative_parens`
+  (`=DOLLAR(-1234.5,2)`), `text2/dollar_neg_decimals_rounds` (`=DOLLAR(1234.5,-2)`).
+- **Correct (Excel & charlie):** `"$1,234.50"`, `"($1,234.50)"` (negative currency in parentheses),
+  and `"$1,200"` (a negative `decimals` rounds left of the decimal point).
+- **`formulas` v1.3.4 output:** `#NAME?` for all three — the function name is not recognized.
+- **Root cause (probed directly):** `DOLLAR` is absent from the library's function table, while its
+  text-format sibling `FIXED` IS present (graded and Matching in `corpus/text.json`).
+- **Coverage instead:** charlie's `DOLLAR` is hand-verified vs Excel and Rust-pinned alongside the
+  other `text_format` currency/number-format tests.
+- **Verdict:** `lib-gap` (reference unsupported). Excluded from pass/fail; charlie is correct.
+
+## 10. `SEARCH(find, within)` — wildcards `?`/`*` return `#VALUE!`
+
+- **Case:** `text2/search_wildcard` — `=SEARCH("b?d","abcde")`.
+- **Correct (Excel & charlie):** `2`. `SEARCH` honors the `?` (single char) and `*` (run) wildcards,
+  so `"b?d"` matches `"bcd"` starting at position 2. (`=SEARCH("*d","abcde")` likewise.)
+- **`formulas` v1.3.4 output:** `#VALUE!` — it does not implement wildcard matching in `SEARCH`; a
+  plain (non-wildcard) `SEARCH` works (graded and Matching as `text2/search_case_insensitive`).
+- **Verdict:** `lib-gap` (reference unsupported). Excluded from pass/fail; charlie is correct.
+
+## 11. `TRIM(text)` — does not collapse internal runs of spaces
+
+- **Case:** `text2/trim_internal_collapse` — `=TRIM("  a   b  ")`.
+- **Correct (Excel & charlie):** `"a b"`. Excel's `TRIM` removes leading/trailing spaces AND collapses
+  every internal run of spaces to a single space.
+- **`formulas` v1.3.4 output:** `"a   b"` — it strips only the leading/trailing spaces and leaves the
+  internal run intact. The leading/trailing-only case (`=TRIM("  abc  ")`→`"abc"`) agrees and is graded
+  and Matching (`text2/trim_leading_trailing`).
+- **Verdict:** `lib-gap` (reference defect). Excluded from pass/fail; charlie is correct.
+
+## 12. `TEXTJOIN(delim, ignore_empty, …)` — ignores the `ignore_empty` flag
+
+- **Case:** `text2/textjoin_ignore_empty` — `=TEXTJOIN("-",TRUE,"a","","b")`.
+- **Correct (Excel & charlie):** `"a-b"` with `ignore_empty=TRUE` (the empty argument is skipped).
+- **`formulas` v1.3.4 output:** `"a--b"` — it emits the empty argument regardless of the flag (it
+  returns `"a--b"` for BOTH `TRUE` and `FALSE`). The `ignore_empty=FALSE` case agrees (`"a--b"`) and is
+  graded and Matching (`text2/textjoin_keep_empty`).
+- **Verdict:** `lib-gap` (reference defect). Excluded from pass/fail; charlie is correct.
+
+## 13. `DATEDIF(start, end, unit)` — case-sensitive on the unit code (`"d"` → `#NUM!`)
+
+- **Case:** `datetime/datedif_days` — `=DATEDIF(DATE(2020,1,1),DATE(2020,1,31),"d")`.
+- **Correct (Excel & charlie):** `30`. Excel's `DATEDIF` unit code is case-insensitive.
+- **`formulas` v1.3.4 output:** `#NUM!` for lowercase `"d"`; uppercase `"D"` returns `30`, and
+  lowercase `"m"`/`"y"` work (graded and Matching as `datetime/datedif_months` and
+  `datetime/datedif_years`). So the defect is the case-sensitivity of the `"d"` unit specifically.
+- **Verdict:** `lib-gap` (reference defect). Excluded from pass/fail; charlie is correct.
+
+## 14. `ISNUMBER("5")` — reference coerces numeric-looking text literals to numbers
+
+- **Case:** `info2/isnumber_false_on_text` — `=ISNUMBER("5")`.
+- **Correct (Excel & charlie):** `FALSE`. A text literal is text, even when it looks numeric; only a
+  genuine number value is `ISNUMBER`-true.
+- **`formulas` v1.3.4 output:** `TRUE` — it coerces the numeric-looking string to a number before the
+  type test. Non-numeric text agrees (`=ISNUMBER("abc")`→`FALSE` in both), so the defect is specific to
+  numeric-looking string literals.
+- **Verdict:** `lib-gap` (reference defect). Excluded from pass/fail; charlie is correct.
+
+## Deliberate charlie non-implementations (outside ENG6, NOT lib-gaps)
+
+`INDIRECT` and `OFFSET` are registry names but charlie's parser deliberately refuses them (reserved for
+a later phase — they return a *reference* and forge a dynamic dependency the v1 scalar engine has no
+node for; `scope.md`). The `formulas` reference DOES implement `INDIRECT` (charlie is the one not
+implementing it), so this is a **deliberate charlie divergence**, not a reference gap — it falls
+outside the ENG6 parity surface exactly like a reference cycle's located `#REF!` or the no-dynamic-spill
+rule (SPEC ENG6). These two are therefore given **no corpus case** rather than a distorted `lib_gap`
+flag, which is why per-formula function coverage is 251/253 (the 2 reserved names carry no graded case).

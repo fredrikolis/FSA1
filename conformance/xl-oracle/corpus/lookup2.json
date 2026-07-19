@@ -1,0 +1,142 @@
+[
+  {
+    "name": "choose_index_two",
+    "category": "lookup2",
+    "inputs": {},
+    "formula": "=CHOOSE(2,10,20,30)"
+  },
+  {
+    "name": "choose_index_one",
+    "category": "lookup2",
+    "inputs": {},
+    "formula": "=CHOOSE(1,\"a\",\"b\")"
+  },
+  {
+    "name": "choose_from_cells",
+    "category": "lookup2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=CHOOSE(3,A1,A2,A3)"
+  },
+  {
+    "name": "columns_of_block",
+    "category": "lookup2",
+    "inputs": {},
+    "formula": "=COLUMNS(A1:C2)"
+  },
+  {
+    "name": "columns_single",
+    "category": "lookup2",
+    "inputs": {},
+    "formula": "=COLUMNS(A1)"
+  },
+  {
+    "name": "rows_of_block",
+    "category": "lookup2",
+    "inputs": {},
+    "formula": "=ROWS(A1:C4)"
+  },
+  {
+    "name": "rows_single",
+    "category": "lookup2",
+    "inputs": {},
+    "formula": "=ROWS(A1)"
+  },
+  {
+    "name": "xlookup_exact",
+    "category": "lookup2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=XLOOKUP(2,A1:A3,B1:B3)"
+  },
+  {
+    "name": "xlookup_not_found_default",
+    "category": "lookup2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=XLOOKUP(99,A1:A3,B1:B3,\"none\")"
+  },
+  {
+    "name": "xlookup_first_value",
+    "category": "lookup2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=XLOOKUP(1,A1:A3,B1:B3)"
+  },
+  {
+    "name": "choose_columns_sum",
+    "category": "lookup2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=SUM(CHOOSE(2,A1:A3,B1:B3))"
+  },
+  {
+    "name": "match_exact_pos",
+    "category": "lookup2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=MATCH(20,B1:B3,0)"
+  },
+  {
+    "name": "match_approx_le",
+    "category": "lookup2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=MATCH(25,A1:A3,1)"
+  },
+  {
+    "name": "index_row_col",
+    "category": "lookup2",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=INDEX(A1:B3,2,2)"
+  }
+]
