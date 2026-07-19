@@ -115,9 +115,12 @@ fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) ->
             // VAL1), so the view never implies each coordinate holds its own formula.
             Some(src) if src.array_continuation => ARRAY_CONTINUATION_MARK.to_string(),
             // A formula cell shows its source text; a literal cell shows its value (Excel's Ctrl+`
-            // "show formulas" view: formulas as text, literals as their value).
+            // "show formulas" view: formulas as text, literals as their value). GRID6: a load-error
+            // cell shows its RAW (unparsed) source text, so an agent sees exactly what to fix — while
+            // `--values` shows the located error value it resolves to.
             Some(src) => match src.cell {
                 Cell::Formula { src: text, .. } => text.clone(),
+                Cell::LoadError { src: text, .. } => text.clone(),
                 Cell::Value(_) => display_value(&wb.value_at(sheet, col, row)),
             },
             None => String::new(),

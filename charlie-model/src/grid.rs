@@ -1,18 +1,33 @@
-// Concern: the GRID (GRID1) — the resolved cells of a file's closed range: for every coordinate one `Cell`, either an explicit literal `Value` or a parsed formula (`Expr`, plus its verbatim source for the "show formulas" render) — and the TSV DESERIALIZER (GRID2, the current on-disk format): tab-separated columns, newline-separated rows; a field beginning with `=` is a parsed formula, any other field a lexed literal, an empty field a Blank; a ragged grid is a located `#VALUE!`-class refusal. Includes the per-token literal lexer (number/bool/error/text with force-text and quoted-string escapes) | Non-concern: whether the grid fills its file's declared range exactly (GRID4 — the dimension check lives in `parse_file`), EVALUATING a formula (charlie-ast owns eval; workbook.rs drives it), and the filename that declares the range (filename.rs) | IO: (a file's content `&str`) -> `Result<Grid, Diagnostic>`
+// Concern: the GRID (GRID1) — the resolved cells of a file's closed range: for every coordinate one `Cell`, either an explicit literal `Value`, a parsed formula (`Expr`, plus its verbatim source for the "show formulas" render), or a GRID6 LOAD-ERROR cell (an `=formula` charlie cannot parse — its verbatim source plus the located `Diagnostic`, which resolves to a located error VALUE rather than failing the whole file) — and the TSV DESERIALIZER (GRID2, the current on-disk format): tab-separated columns, newline-separated rows; a field beginning with `=` is a parsed formula (or, if unparseable, a located error cell, GRID6), any other field a lexed literal, an empty field a Blank; a ragged grid is a located `#VALUE!`-class file-level refusal. Includes the per-token literal lexer (number/bool/error/text with force-text and quoted-string escapes) | Non-concern: whether the grid fills its file's declared range exactly (GRID4 — the dimension check lives in `parse_file`), EVALUATING a formula (charlie-ast owns eval; workbook.rs drives it), SURFACING a load-error cell's diagnostic to `check` (workbook.rs `lint` scans grids for it), and the filename that declares the range (filename.rs) | IO: (a file's content `&str`) -> `Result<Grid, Diagnostic>` (a structural fault is `Err`; an unparseable formula is a `Cell::LoadError` inside the grid, GRID6)
 //! The grid and its TSV deserializer: [`Grid`], [`Cell`], [`deserialize_tsv`], [`lex_literal`].
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use charlie_ast::{ErrKind, Expr, Shape, Value, parse};
 
-/// One resolved cell of a [`Grid`]: an explicit literal value, or a parsed `=formula` (GRID1/VAL2).
-/// A formula keeps both its parsed [`Expr`] (what the engine evaluates) and its verbatim `src` text
-/// (what the `--functions` "show formulas" render echoes), so the model never re-parses to display.
+/// One resolved cell of a [`Grid`]: an explicit literal value, a parsed `=formula` (GRID1/VAL2), or a
+/// GRID6 load-error cell. A formula keeps both its parsed [`Expr`] (what the engine evaluates) and its
+/// verbatim `src` text (what the `--functions` "show formulas" render echoes), so the model never
+/// re-parses to display.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cell {
     /// A literal value (number/text/bool/error/blank).
     Value(Value),
     /// A parsed formula and its source text (the leading `=` included).
     Formula { src: String, expr: Expr },
+    /// A GRID6 load-error cell: an `=formula` whose content charlie-ast could not parse. It keeps its
+    /// verbatim source text (`src`, echoed by `--functions` so an agent sees what to fix) and the
+    /// located [`Diagnostic`] (surfaced by `check`, and cited by [`load_error_value`] to spell the
+    /// cell's error value at eval, VAL3). It is NOT a whole-file failure (GRID6): every other cell in
+    /// the file still loads and evaluates.
+    LoadError { src: String, diag: Diagnostic },
+}
+
+/// The located error VALUE a GRID6 [`Cell::LoadError`] cell resolves to (VAL3): the spreadsheet-error
+/// class its diagnostic cites (an unparseable `=formula` is a [`Code::FormulaSyntax`] refusal, which
+/// cites `#NAME?`). Single home so the resolver, the evaluate defensive arm, and the computation hash
+/// all spell the same error value for a load-error cell.
+pub fn load_error_value(diag: &Diagnostic) -> Value {
+    Value::Error(diag.code.err_class().unwrap_or(ErrKind::Name))
 }
 
 /// The resolved cells of a file's closed range (GRID1): a [`Shape`] and one [`Cell`] per coordinate,
@@ -42,9 +57,12 @@ impl Grid {
 
 /// Deserialize a file's content into a [`Grid`] (GRID2, the TSV format): each physical line is a row
 /// split on tabs; a field beginning with `=` parses to a formula cell, any other field lexes to a
-/// literal, and an empty field is a `Blank`. Never panics; a ragged grid or an unparseable formula is
-/// a located [`Diagnostic`]. `file` names the file for diagnostics; the entire content is the grid
-/// (GRID1) — there is no header/annotation line, so grid row `n` is file line `n` (1-based).
+/// literal, and an empty field is a `Blank`. Never panics. A ragged grid is a located [`Diagnostic`]
+/// (`Err`, a structural file-level refusal). An UNPARSEABLE `=formula` is NOT a whole-file failure
+/// (GRID6): it deserializes to a [`Cell::LoadError`] carrying its verbatim source and located
+/// diagnostic, so every other cell still loads. `file` names the file for diagnostics; the entire
+/// content is the grid (GRID1) — there is no header/annotation line, so grid row `n` is file line `n`
+/// (1-based).
 ///
 /// The grid's own dimensions come from the content; whether they FILL the file's declared range
 /// (GRID4) is checked separately in [`crate::parse_file`].
@@ -87,7 +105,7 @@ pub fn deserialize_tsv(file: &str, content: &str) -> Result<Grid, Diagnostic> {
         // the exact column (line byte offset + the refusal's span into the token, 1-based).
         let mut byte = 0usize;
         for field in fields {
-            cells.push(deserialize_field(file, (row_idx + 1) as u32, byte, field)?);
+            cells.push(deserialize_field(file, (row_idx + 1) as u32, byte, field));
             byte += field.len() + 1; // + the tab separator
         }
     }
@@ -101,32 +119,36 @@ pub fn deserialize_tsv(file: &str, content: &str) -> Result<Grid, Diagnostic> {
 }
 
 /// Deserialize one TSV field: a `=`-prefixed field is a parsed formula, anything else a lexed literal.
-fn deserialize_field(
-    file: &str,
-    file_line: u32,
-    byte: usize,
-    token: &str,
-) -> Result<Cell, Diagnostic> {
+/// An `=formula` charlie-ast cannot parse becomes a GRID6 [`Cell::LoadError`] carrying its verbatim
+/// source and the located refusal — a per-cell error, never a whole-file failure. Infallible: a field
+/// always yields a cell (the ragged-grid structural fault is caught in [`deserialize_tsv`]).
+fn deserialize_field(file: &str, file_line: u32, byte: usize, token: &str) -> Cell {
     if token.starts_with('=') {
-        let expr = parse(token).map_err(|diag| {
-            Diagnostic::new(
-                Code::FormulaSyntax,
-                Loc::body_span(
-                    file,
-                    file_line,
-                    (byte + diag.span.start + 1) as u32,
-                    file_line,
-                    (byte + diag.span.end + 1) as u32,
+        match parse(token) {
+            Ok(expr) => Cell::Formula {
+                src: token.to_string(),
+                expr,
+            },
+            // GRID6: an unparseable/unsupported formula is a located error VALUE in the grid, not a
+            // whole-file refusal. Keep the verbatim source (so `--functions` shows what to fix) and the
+            // located diagnostic (so `check` reports it); the cell resolves to `#NAME?` at eval.
+            Err(diag) => Cell::LoadError {
+                src: token.to_string(),
+                diag: Diagnostic::new(
+                    Code::FormulaSyntax,
+                    Loc::body_span(
+                        file,
+                        file_line,
+                        (byte + diag.span.start + 1) as u32,
+                        file_line,
+                        (byte + diag.span.end + 1) as u32,
+                    ),
+                    format!("cannot parse formula {token:?}: {}", diag.message),
                 ),
-                format!("cannot parse formula {token:?}: {}", diag.message),
-            )
-        })?;
-        Ok(Cell::Formula {
-            src: token.to_string(),
-            expr,
-        })
+            },
+        }
     } else {
-        Ok(Cell::Value(lex_literal(token)))
+        Cell::Value(lex_literal(token))
     }
 }
 
@@ -276,12 +298,38 @@ mod tests {
     }
 
     #[test]
-    fn an_unparseable_formula_is_a_located_refusal() {
-        let d = deserialize_tsv("A1", "=SUM(").unwrap_err();
-        assert_eq!(d.code, Code::FormulaSyntax);
-        // Located on the first grid row (file line 1 — the whole content is the grid) at the refusal's
-        // column.
-        assert!(matches!(d.loc, Loc::Body { line: 1, .. }), "{:?}", d.loc);
+    fn an_unparseable_formula_is_a_located_error_cell_not_a_file_refusal() {
+        // GRID6: an unparseable `=formula` deserializes to a located error cell (never a whole-file
+        // `Err`), so the file still loads and every other cell resolves. Here the whole content is the
+        // one bad formula.
+        let g =
+            deserialize_tsv("A1", "=SUM(").expect("GRID6: the file loads, the cell is the error");
+        assert_eq!(g.shape, Shape { rows: 1, cols: 1 });
+        match &g.cells[0] {
+            Cell::LoadError { src, diag } => {
+                assert_eq!(src, "=SUM(");
+                assert_eq!(diag.code, Code::FormulaSyntax);
+                // Located on the first grid row (file line 1 — the whole content is the grid).
+                assert!(
+                    matches!(diag.loc, Loc::Body { line: 1, .. }),
+                    "{:?}",
+                    diag.loc
+                );
+                // The cell resolves to a located `#NAME?` error value (VAL3).
+                assert_eq!(load_error_value(diag), Value::Error(ErrKind::Name));
+            }
+            other => panic!("expected a load-error cell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unparseable_formula_does_not_abort_its_neighbours() {
+        // GRID6: one bad formula cell in a row leaves the literal and good formula beside it intact.
+        let g = deserialize_tsv("A1:C1", "1\t=SUM(\t=A1+1").expect("the file loads (GRID6)");
+        assert_eq!(g.shape, Shape { rows: 1, cols: 3 });
+        assert_eq!(g.cells[0], Cell::Value(Value::Number(1.0)));
+        assert!(matches!(&g.cells[1], Cell::LoadError { src, .. } if src == "=SUM("));
+        assert!(matches!(&g.cells[2], Cell::Formula { src, .. } if src == "=A1+1"));
     }
 
     #[test]

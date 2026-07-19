@@ -1,15 +1,23 @@
-// Concern: translate an ODS/OpenFormula formula string into charlie's Excel-A1 grammar — strip the `of:=`/`of:`/`=` lead; rewrite bracketed references `[.A1]`→`A1`, `[.A1:.A3]`→`A1:A3`, `[Sheet2.A1]`→`Sheet2!A1`, `['My Sheet'.A1]`→`'My Sheet'!A1` (preserving `$`-anchors); map the ODS `;` argument separator to `,` (only outside string literals); keep Excel-compatible function names as written EXCEPT the niladic booleans `TRUE()`/`FALSE()`, normalized to charlie's `TRUE`/`FALSE` literals; and turn anything untranslatable (a 3D range, an inline array `{…}`, a malformed reference, an unterminated string) into a LOCATED refusal (CORE2) — never a panic, never a silently-wrong formula | Non-concern: whether the translated formula PARSES/EVALUATES in charlie (charlie-ast owns that; a bad translation surfaces as a load-time FormulaSyntax refusal downstream) and reading the cell (reader.rs) | IO: (a raw OpenFormula `&str`) -> `Result<String, String>` (the `=…` charlie formula, or a reason)
-//! OpenFormula → charlie Excel-A1 translation: [`translate_formula`]. The returned string includes the
-//! leading `=`. A failure is a human reason string (the caller attaches the source location).
+// Concern: translate an ODS/OpenFormula formula string into charlie's Excel-A1 grammar — strip the `of:=`/`of:`/`=` lead; rewrite bracketed references `[.A1]`→`A1`, `[.A1:.A3]`→`A1:A3`, `[Sheet2.A1]`→`Sheet2!A1`, `['My Sheet'.A1]`→`'My Sheet'!A1` (preserving `$`-anchors); map the ODS `;` argument separator to `,` (only outside string literals); keep Excel-compatible function names as written EXCEPT the niladic booleans `TRUE()`/`FALSE()`, normalized to charlie's `TRUE`/`FALSE` literals; and preserve anything UNTRANSLATABLE (a 3D range, an inline array `{…}`, a malformed reference, an unterminated string) VERBATIM as `=<source body>` rather than aborting — so the import always succeeds and charlie's loader flags such a cell as a located GRID6 error (visible in `--functions`, reported by `check`), never a silently-wrong formula and never a whole-import failure | Non-concern: whether the translated formula PARSES/EVALUATES in charlie (charlie-ast owns that; an untranslatable/unsupported formula surfaces as a load-time GRID6 error cell downstream) and reading the cell (reader.rs) | IO: (a raw OpenFormula `&str`) -> `String` (the `=…` charlie formula, best-effort verbatim on an untranslatable construct)
+//! OpenFormula → charlie Excel-A1 translation: [`translate_formula`]. The returned string always
+//! includes the leading `=`; an untranslatable construct is preserved verbatim (GRID6 flags it at load).
 
 use charlie_ast::a1::parse_a1;
 
-/// Translate a raw source-dialect formula into a charlie `=formula`. `Ok` carries the leading `=`; `Err`
-/// carries a human reason (untranslatable construct or malformed reference) for a located refusal.
-pub fn translate_formula(raw: &str) -> Result<String, String> {
+/// Translate a raw source-dialect formula into a charlie `=formula` (always with the leading `=`).
+/// A successful rewrite yields the Excel-A1 form; an UNTRANSLATABLE construct (a 3-D range, an inline
+/// array, a malformed reference, an unterminated string) is preserved VERBATIM as `=<source body>`
+/// (the lead stripped) rather than refused — the import still succeeds, and charlie's deserializer
+/// flags the cell as a located GRID6 error (`--functions` shows this raw text; `check` reports it).
+/// This preserves the source formula so an agent can see and fix exactly what charlie could not parse.
+pub fn translate_formula(raw: &str) -> String {
     let body = strip_lead(raw.trim());
-    let translated = rewrite_body(body)?;
-    Ok(format!("={translated}"))
+    match rewrite_body(body) {
+        Ok(translated) => format!("={translated}"),
+        // GRID6: keep the source body verbatim so a single untranslatable/unsupported formula no longer
+        // aborts the whole import — it becomes a per-cell located error at load instead.
+        Err(_) => format!("={body}"),
+    }
 }
 
 /// Strip the OpenFormula lead: `of:=` (LibreOffice's namespaced form), or a bare `of:`, or a bare `=`.
@@ -191,7 +199,7 @@ mod tests {
     use super::*;
 
     fn ok(raw: &str) -> String {
-        translate_formula(raw).unwrap_or_else(|e| panic!("{raw:?} should translate: {e}"))
+        translate_formula(raw)
     }
 
     #[test]
@@ -257,12 +265,18 @@ mod tests {
     }
 
     #[test]
-    fn untranslatable_constructs_are_located_refusals_not_panics() {
-        assert!(translate_formula("of:=[Sheet1.A1:Sheet2.B2]").is_err()); // 3-D range
-        assert!(translate_formula("of:={1;2;3}").is_err()); // inline array
-        assert!(translate_formula("of:=[.A1").is_err()); // unterminated bracket
-        assert!(translate_formula(r#"of:=CONCAT("x"#).is_err()); // unterminated string
-        assert!(translate_formula("of:=[.ZZ]").is_err()); // no row -> malformed address
-        assert!(translate_formula("of:=[.99]").is_err()); // no column -> malformed address
+    fn untranslatable_constructs_are_preserved_verbatim_for_grid6_not_refused() {
+        // GRID6: an untranslatable construct is kept as `=<source body>` (lead stripped), never a
+        // refusal — the import succeeds and charlie's loader flags the cell as a located error. The
+        // preserved text is exactly the source body so an agent sees what to fix in `--functions`.
+        assert_eq!(
+            translate_formula("of:=[Sheet1.A1:Sheet2.B2]"),
+            "=[Sheet1.A1:Sheet2.B2]"
+        ); // 3-D range
+        assert_eq!(translate_formula("of:={1;2;3}"), "={1;2;3}"); // inline array
+        assert_eq!(translate_formula("of:=[.A1"), "=[.A1"); // unterminated bracket
+        assert_eq!(translate_formula(r#"of:=CONCAT("x"#), r#"=CONCAT("x"#); // unterminated string
+        assert_eq!(translate_formula("of:=[.ZZ]"), "=[.ZZ]"); // no row -> malformed address
+        assert_eq!(translate_formula("of:=[.99]"), "=[.99]"); // no column -> malformed address
     }
 }

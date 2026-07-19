@@ -43,8 +43,10 @@ pub enum Code {
     /// A `=formula` cell depends on itself, directly or through a chain (demand-driven eval, B3) —
     /// a `#REF!`-class refusal. The evaluator refuses the cycle instead of hanging / overflowing.
     Cycle,
-    /// A `=formula` body that charlie-ast cannot parse into an expression (demand-driven eval, B3).
-    /// A located refusal, never a silent drop: the cell resolves to `#NAME?`.
+    /// A `=formula` body that charlie-ast cannot parse into an expression. GRID6: this is a located,
+    /// per-cell LOAD-TIME error — the cell deserializes to a [`crate::Cell::LoadError`] that resolves
+    /// to a `#NAME?` error value (this code's `err_class`), never a silent drop and never a whole-file
+    /// failure; `check` reports it with its location and a non-zero exit.
     FormulaSyntax,
     /// A `=formula` cross-cell dependency CHAIN that is finite but deeper than the model's pull-depth
     /// bound (demand-driven eval, B3) — a `#NUM!`-class refusal. Distinct from [`Code::Cycle`]: the
@@ -193,6 +195,10 @@ impl Code {
             Code::Cycle => Some(ErrKind::Ref),
             Code::DepthLimit => Some(ErrKind::Num),
             Code::RangeTooLarge => Some(ErrKind::Num),
+            // GRID6: an unparseable/unsupported formula deserializes to a located error VALUE
+            // (`crate::Cell::LoadError`) that resolves to `#NAME?` — so this refusal DOES cite an AST
+            // error class (the cell is a value, unlike the purely-structural filename/dimension faults).
+            Code::FormulaSyntax => Some(ErrKind::Name),
             _ => None,
         }
     }
@@ -409,7 +415,8 @@ mod tests {
         // The eval-time GRID5 region mismatch surfaces as a `#SPILL!` cell value.
         assert_eq!(Code::DimensionMismatch.err_class(), Some(ErrKind::Spill));
         assert_eq!(Code::MalformedFilename.err_class(), None);
-        assert_eq!(Code::FormulaSyntax.err_class(), None);
+        // GRID6: an unparseable formula surfaces as a `#NAME?` error VALUE, so it cites a class.
+        assert_eq!(Code::FormulaSyntax.err_class(), Some(ErrKind::Name));
     }
 
     #[test]

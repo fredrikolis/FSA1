@@ -88,6 +88,9 @@ enum CellKind {
     Literal,
     /// A formula cell (its verbatim source text).
     Formula(String),
+    /// A GRID6 load-error cell (an unparseable/unsupported formula) — its verbatim source text. It has
+    /// no parseable dependencies, so the trace shows it as a terminal error node.
+    LoadError(String),
 }
 
 /// The mutable state of one trace walk.
@@ -133,7 +136,9 @@ impl<'w> Tracer<'w> {
         let value = display_value(&val);
         let kind = self.cell_kind(key);
         let formula = match &kind {
-            CellKind::Formula(src) => Some(src.clone()),
+            // A formula shows its parsed source; a GRID6 load-error cell shows its verbatim (unparsed)
+            // source so a consumer sees exactly the text that failed to parse.
+            CellKind::Formula(src) | CellKind::LoadError(src) => Some(src.clone()),
             _ => None,
         };
 
@@ -237,6 +242,9 @@ impl<'w> Tracer<'w> {
         match kind {
             CellKind::Gap | CellKind::Blank => TraceStatus::Blank,
             CellKind::Literal => TraceStatus::Literal,
+            // GRID6: a load-error cell resolved to an error value (`#NAME?`) — report it as an Error
+            // terminal (it has no dependencies to descend).
+            CellKind::LoadError(_) => TraceStatus::Error,
             CellKind::Formula(_) => {
                 if self.cycle_members.contains(&key) {
                     TraceStatus::Cycle
@@ -273,6 +281,7 @@ impl<'w> Tracer<'w> {
             GridCell::Value(Value::Blank) => CellKind::Blank,
             GridCell::Value(_) => CellKind::Literal,
             GridCell::Formula { src, .. } => CellKind::Formula(src.clone()),
+            GridCell::LoadError { src, .. } => CellKind::LoadError(src.clone()),
         }
     }
 }

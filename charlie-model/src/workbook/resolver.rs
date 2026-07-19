@@ -48,6 +48,11 @@ impl Resolver for Workbook {
         let dc = cell.col - file.region.min_col;
         match file.grid.cell_at(dr, dc) {
             GridCell::Value(v) => v.clone(),
+            // GRID6: a load-error cell (an unparseable/unsupported formula) is read straight from the
+            // grid like a literal — it resolves to its located error value (VAL3, `#NAME?`), so an
+            // unparseable formula neither aborts the load nor crashes eval, and a formula that
+            // references it propagates that error ordinarily (CORE2).
+            GridCell::LoadError { diag, .. } => crate::grid::load_error_value(diag),
             // A formula cell that is neither in the results nor the memo was not planned — unreachable
             // in a proper demand (the plan is a superset of what eval reads). The debug_assert fails
             // loud in tests if a future planning change under-approximates deps (fail-fast); release

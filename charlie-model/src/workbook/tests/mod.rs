@@ -186,11 +186,24 @@ fn load_surfaces_overlap_and_bad_files() {
 }
 
 #[test]
-fn an_unparseable_formula_is_a_load_time_refusal_not_a_panic() {
-    // A formula is parsed at load (the grid holds a parsed `Expr`), so an unparseable formula is a
-    // located load-time refusal, never a panic.
-    let err = Workbook::from_tabs(&[("Sheet1", &[("A1", &file("=SUM("))])]).unwrap_err();
-    assert!(err.iter().any(|d| d.code == Code::FormulaSyntax), "{err:?}");
+fn an_unparseable_formula_is_a_located_error_cell_not_a_whole_file_refusal() {
+    // GRID6: an unparseable formula is a per-cell LOCATED ERROR VALUE, not a whole-file failure. The
+    // workbook LOADS; A1 resolves to `#NAME?`; B1 (which references A1) propagates the error (CORE2);
+    // C1 (unrelated) still evaluates; and `lint`/`check` reports A1 with a non-zero (error) severity.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[("A1", "=SUM("), ("B1", "=A1+1"), ("C1", "=7*6")],
+    );
+    assert_eq!(wb.value_at(0, 0, 0), Value::Error(ErrKind::Name)); // A1 the located error
+    assert_eq!(wb.value_at(0, 1, 0), Value::Error(ErrKind::Name)); // B1 propagates it (no crash)
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(42.0)); // C1 unrelated, still evaluates
+    let diags = wb.lint();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == Code::FormulaSyntax && d.code.severity() == crate::Severity::Error),
+        "check must report the load-error cell with an error severity: {diags:?}"
+    );
 }
 
 #[test]
@@ -591,6 +604,7 @@ impl<'w> NaiveOracle<'w> {
         let value = match file.grid.cell_at(0, 0) {
             GridCell::Formula { expr, .. } => eval(expr, self),
             GridCell::Value(v) => v.clone(),
+            GridCell::LoadError { diag, .. } => crate::grid::load_error_value(diag),
         };
         self.cur.set(prev);
         self.visiting.borrow_mut().remove(&key);
@@ -631,6 +645,9 @@ impl Resolver for NaiveOracle<'_> {
             let dc = cell.col - file.region.min_col;
             match file.grid.cell_at(dr, dc) {
                 GridCell::Value(v) => v.clone(),
+                // GRID6: a load-error cell resolves to its located error value, re-derived
+                // independently (parity with the engine's resolver arm).
+                GridCell::LoadError { diag, .. } => crate::grid::load_error_value(diag),
                 GridCell::Formula { expr, .. } => {
                     self.visiting.borrow_mut().insert(key);
                     let prev = self.cur.replace(id.0);

@@ -1,6 +1,7 @@
-// Concern: spell a format-neutral `SheetSource` as charlie grid FILE(S) — map each `SourceCell` to one grid-only TSV field (number→lossless literal that re-lexes bit-exact; date-serial→that same number; text→verbatim, force-text (`'`) or double-quote-escaped only when a bare spelling would re-lex as the wrong type or break the TSV grid; bool→TRUE/FALSE; error→its `#…!` literal; blank→empty field; formula→`=<translated>` via `translate`), and assemble the sheet's whole A1-anchored used rectangle as the DEFAULT single range file (`A1:<lastcol><lastrow>`, or the bare `A1` for a 1×1 sheet) whose grid fills the range exactly (GRID4), the content being pure grid with NO annotation/header line (GRID1) | Non-concern: reading the source (reader.rs), the OpenFormula→A1 rewrite itself (translate.rs), and WRITING files to disk (lib.rs owns the IO) | IO: (a `&SheetSource`) -> `Result<Vec<(filename, content)>, IngestError>`
-//! Serialize a neutral sheet to charlie grid files: [`sheet_files`]. The per-cell spelling
-//! ([`cell_field`]) is the inverse of charlie-model's TSV deserializer, verified by re-lexing.
+// Concern: spell a format-neutral `SheetSource` as charlie grid FILES — ONE FILE PER NON-BLANK CELL (CORE3: a cell is its own file, so an agent edits a tiny per-cell file directly with no write command), named by that cell's A1 coordinate (`A1`, `H3`), whose content is that single cell spelled as one grid-only field: number→lossless literal that re-lexes bit-exact; date-serial→that same number; text→verbatim, force-text (`'`) or double-quote-escaped only when a bare spelling would re-lex as the wrong type or break the TSV grid; bool→TRUE/FALSE; error→its `#…!` literal; formula→`=<translated>` via `translate` (preserved VERBATIM even when untranslatable, so a single unsupported formula becomes a per-cell GRID6 error at load rather than aborting the import). A BLANK source cell produces NO file (a gap reads blank). Each file's content is pure grid with NO annotation/header line and is a 1×1 grid filling its bare-`A1` range exactly (GRID1/GRID4) | Non-concern: reading the source (reader.rs), the OpenFormula→A1 rewrite itself (translate.rs), and WRITING files to disk (lib.rs owns the IO) | IO: (a `&SheetSource`) -> `Result<Vec<(filename, content)>, IngestError>`
+//! Serialize a neutral sheet to charlie grid files: [`sheet_files`] emits one file per non-blank cell,
+//! named by its A1 coordinate (CORE3). The per-cell spelling ([`cell_field`]) is the inverse of
+//! charlie-model's TSV deserializer, verified by re-lexing.
 
 use charlie_ast::a1::format_cell;
 use charlie_ast::{ErrKind, Value};
@@ -10,31 +11,26 @@ use crate::error::IngestError;
 use crate::source::{SheetSource, SourceCell};
 use crate::translate::translate_formula;
 
-/// Turn one neutral sheet into its charlie grid file(s): the default mapping is the whole used
-/// rectangle as ONE range file. An empty sheet yields no files (an empty tab folder). The filename is
-/// the closed range `A1:<lastcol><lastrow>`, or the bare cell `A1` for a 1×1 sheet (a `1×1` range name
-/// like `A1:A1` is illegal — filename.rs `DegenerateRange`).
+/// Turn one neutral sheet into its charlie grid files: ONE FILE PER NON-BLANK CELL, named by that
+/// cell's A1 coordinate (`A1`, `H3`, `D2`), whose content is the single cell's literal or `=formula`
+/// (CORE3: a cell is its own file, edited directly). A BLANK source cell produces NO file — a gap
+/// reads blank. An empty sheet yields no files (an empty tab folder). Row-major order, so the returned
+/// files are in reading order. Each file is a 1×1 grid filling its bare-`A1` range exactly (GRID4).
 pub fn sheet_files(sheet: &SheetSource) -> Result<Vec<(String, String)>, IngestError> {
-    if sheet.is_empty() {
-        return Ok(Vec::new());
-    }
-    let filename = if sheet.rows == 1 && sheet.cols == 1 {
-        "A1".to_string()
-    } else {
-        format!("A1:{}", format_cell(sheet.cols - 1, sheet.rows - 1))
-    };
-
-    let mut lines = Vec::with_capacity(sheet.rows as usize);
+    let mut files = Vec::new();
     for row in 0..sheet.rows {
-        let mut fields = Vec::with_capacity(sheet.cols as usize);
         for col in 0..sheet.cols {
             let cell = &sheet.cells[(row * sheet.cols + col) as usize];
-            fields.push(cell_field(cell, &sheet.name, col, row)?);
+            // A blank cell has no file (a gap reads blank) — this is what makes the on-disk layout
+            // sparse and each remaining file a single editable cell.
+            if matches!(cell, SourceCell::Blank) {
+                continue;
+            }
+            let content = cell_field(cell, &sheet.name, col, row)?;
+            files.push((format_cell(col, row), content));
         }
-        lines.push(fields.join("\t"));
     }
-    // Pure grid, no annotation/header line (GRID1); rows are newline-separated (the TSV deserializer).
-    Ok(vec![(filename, lines.join("\n"))])
+    Ok(files)
 }
 
 /// Spell one source cell as a single TSV field. `col`/`row` are zero-based (for the located refusal an
@@ -57,8 +53,10 @@ pub fn cell_field(
         SourceCell::Error(k) => Ok(error_literal(*k)),
         SourceCell::Text(s) => text_field(s)
             .ok_or_else(|| IngestError::at_cell(sheet, format_cell(col, row), text_reason(s))),
-        SourceCell::Formula(raw) => translate_formula(raw)
-            .map_err(|reason| IngestError::at_cell(sheet, format_cell(col, row), reason)),
+        // A formula is translated to charlie's Excel-A1 grammar, preserved VERBATIM when untranslatable
+        // (translate never fails now — GRID6 flags an unparseable cell at load, not here), so a single
+        // unsupported formula never aborts the import.
+        SourceCell::Formula(raw) => Ok(translate_formula(raw)),
     }
 }
 
@@ -193,7 +191,8 @@ mod tests {
     }
 
     #[test]
-    fn a_single_cell_sheet_is_named_a1_not_a1_a1() {
+    fn a_single_cell_sheet_is_one_a1_file() {
+        // CORE3: the one non-blank cell becomes its own file named `A1` (a bare cell, never `A1:A1`).
         let sheet = SheetSource {
             name: "S".to_string(),
             rows: 1,
@@ -205,8 +204,9 @@ mod tests {
     }
 
     #[test]
-    fn a_rectangle_fills_its_range_exactly() {
-        // 2x2 with a blank: A1=1, B1 blank, A2 formula, B2 text.
+    fn each_non_blank_cell_is_its_own_a1_named_file_and_a_blank_makes_no_file() {
+        // CORE3: 2x2 with A1=1, B1 blank, A2 formula, B2 text -> THREE per-cell files (B1 has none),
+        // each named by its A1 coordinate in row-major reading order.
         let sheet = SheetSource {
             name: "S".to_string(),
             rows: 2,
@@ -221,7 +221,28 @@ mod tests {
         let files = sheet_files(&sheet).unwrap();
         assert_eq!(
             files,
-            vec![("A1:B2".to_string(), "1\t\n=A1+1\tx".to_string())]
+            vec![
+                ("A1".to_string(), "1".to_string()),
+                ("A2".to_string(), "=A1+1".to_string()),
+                ("B2".to_string(), "x".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_untranslatable_formula_is_preserved_verbatim_as_a_per_cell_file_grid6() {
+        // GRID6/CORE3: an untranslatable formula (a 3-D range) still gets its own file, preserved
+        // verbatim as `=<body>` — the import succeeds; charlie's loader flags the cell at load.
+        let sheet = SheetSource {
+            name: "S".to_string(),
+            rows: 1,
+            cols: 1,
+            cells: vec![SourceCell::Formula("of:=[Sheet1.A1:Sheet2.B2]".to_string())],
+        };
+        let files = sheet_files(&sheet).unwrap();
+        assert_eq!(
+            files,
+            vec![("A1".to_string(), "=[Sheet1.A1:Sheet2.B2]".to_string())]
         );
     }
 }

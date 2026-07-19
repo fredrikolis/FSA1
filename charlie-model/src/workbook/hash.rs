@@ -19,6 +19,9 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 const TAG_BLANK: u8 = 0;
 const TAG_LITERAL: u8 = 1;
 const TAG_FORMULA: u8 = 2;
+/// GRID6 load-error cell content tag — folded first so an unparseable-formula cell can never collide
+/// with a `#NAME?` literal or a parsed formula sharing its bytes.
+const TAG_LOAD_ERROR: u8 = 3;
 
 /// A per-cell computation digest — the ENG7 hash. PRIVATE to the engine (ENG3 containment): it appears
 /// in no other module's surface and is never re-exported. The public accessor
@@ -86,6 +89,15 @@ fn literal_hash(v: &Value) -> CompHash {
             h.finish()
         }
     }
+}
+
+/// The digest of a GRID6 load-error cell — over its verbatim source bytes (VAL1: content, not address),
+/// tagged distinctly so it never collides with a parsed formula or a literal of the same bytes.
+fn load_error_hash(src: &str) -> CompHash {
+    let mut h = Fnv::new();
+    h.write(&[TAG_LOAD_ERROR]);
+    h.write(src.as_bytes());
+    h.finish()
 }
 
 /// Fold one [`Value`]'s content into `h` deterministically: a discriminant byte then the payload bytes.
@@ -222,7 +234,11 @@ impl Workbook {
         let GridCell::Formula { src, expr } = cell else {
             let h = match cell {
                 GridCell::Value(v) => Some(literal_hash(v)),
-                GridCell::Formula { .. } => unreachable!("matched a literal in the else arm"),
+                // GRID6: a load-error cell has fixed, deterministic content (its verbatim source) and
+                // no dependencies — hash it like a leaf over that source text, so editing the file
+                // between a load error and a valid formula (or a `#NAME?` literal) mints a new hash.
+                GridCell::LoadError { src, .. } => Some(load_error_hash(src)),
+                GridCell::Formula { .. } => unreachable!("matched a formula in the else arm"),
             };
             memo.insert(key, h);
             return (h, false);

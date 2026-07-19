@@ -164,9 +164,10 @@ impl Workbook {
         let file = &self.tabs[id.0 as usize].files[id.1];
         match file.grid.cell_at(dr, dc) {
             GridCell::Formula { expr, .. } => cell_scalar(eval(expr, self)),
-            // `compute_formula` is only reached for a formula node; a literal is total-passed-through
-            // defensively rather than panicking.
+            // `compute_formula` is only reached for a formula node; a literal / GRID6 load-error cell is
+            // total-passed-through defensively (its located error value) rather than panicking.
             GridCell::Value(v) => v.clone(),
+            GridCell::LoadError { diag, .. } => crate::grid::load_error_value(diag),
         }
     }
 
@@ -186,8 +187,11 @@ impl Workbook {
         let cols = region.max_col - region.min_col + 1;
         let value = match file.grid.cell_at(0, 0) {
             GridCell::Formula { expr, .. } => eval(expr, self),
-            // Defensive: an array region is always a formula file (`parse_file` guarantees it).
+            // Defensive: an array region is always a formula file (`parse_file` guarantees a lone
+            // `=formula` — a load-error / literal single cell fills its 1x1 range instead, never a
+            // region — but stay total for either).
             GridCell::Value(v) => v.clone(),
+            GridCell::LoadError { diag, .. } => crate::grid::load_error_value(diag),
         };
         let region_shape = Shape { rows, cols };
         let fill: Value = match &value {

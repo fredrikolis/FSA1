@@ -589,7 +589,7 @@ fn cmd_import(fmt: Format, rest: &[String]) -> u8 {
     match charlie_ingest::import_file(Path::new(&src), Path::new(&dest)) {
         Ok(report) => {
             let text_lines = format!(
-                "imported {src} -> {dest} ({} tab(s), {} range file(s) written)\n\
+                "imported {src} -> {dest} ({} tab(s), {} cell file(s) written)\n\
                  \n\
                  next:\n  \
                  charlie-cli render {dest}          # draw the first tab\n  \
@@ -729,7 +729,7 @@ COMMANDS:
   sample   Write a live tutorial workbook into <dir>, then report. Refuses to overwrite a non-empty
            directory.
   import   Convert a real spreadsheet file (.ods or .xlsx) into a charlie workbook the engine reads.
-           Each sheet becomes a tab folder of grid-only range file(s). Refuses a non-empty destination.
+           Each non-blank cell becomes its own A1-named grid file. Refuses a non-empty destination.
 
 EXAMPLES:
   charlie-cli sample ./demo && charlie-cli render ./demo
@@ -964,12 +964,14 @@ USAGE:
 DESCRIPTION:
   Convert a real spreadsheet file — an OpenDocument (.ods) or an Excel (.xlsx) workbook, dispatched by
   extension — into a charlie workbook the format-blind engine renders and evaluates. Each sheet becomes
-  a tab folder; the sheet's used rectangle becomes one grid-only range file (A1:<lastcol><lastrow>).
-  Cell values map to charlie's value model (a date-typed cell becomes its Excel serial); formulas are
-  translated to charlie's Excel-A1 grammar (an xlsx formula is already Excel-A1). Refuses to overwrite a
-  non-empty destination (never clobbers). Every failure is a located diagnostic (sheet!cell) — an
-  untranslatable formula, an unrepresentable value, or an unsupported source format is refused, never
-  silently wrong.
+  a tab folder; each non-blank cell becomes its OWN grid file named by its A1 coordinate (a blank cell
+  makes no file), so an agent edits a single tiny cell file directly. Cell values map to charlie's value
+  model (a date-typed cell becomes its Excel serial); formulas are translated to charlie's Excel-A1
+  grammar (an xlsx formula is already Excel-A1), and a formula charlie cannot parse is preserved verbatim
+  and flagged as a located error at load (check reports it), not aborted. Refuses to overwrite a
+  non-empty destination (never clobbers); a failed import cleans up its partial output. Every failure is
+  a located diagnostic (sheet!cell) — an unrepresentable value or an unsupported source format is
+  refused, never silently wrong.
 
 ARGUMENTS:
   <src>                  (required) The source spreadsheet to read — a .ods or .xlsx file.
@@ -987,7 +989,7 @@ EXIT CODES:
   0   Success (workbook written)
   1   I/O failure (source unreadable, or a destination write failed)
   2   Invalid arguments
-  3   Validation error (an untranslatable formula, unrepresentable value, bad date/sheet name, or an unsupported source format)
+  3   Validation error (an unrepresentable value, bad date/sheet name, or an unsupported source format)
   4   Conflict (<dest> exists and is non-empty — refused, nothing written)
   24  Not found (no such source file)
 

@@ -619,8 +619,8 @@ fn import_ods_then_render_and_eval_the_converted_workbook() {
         "success envelope:\n{out}"
     );
     assert!(
-        out.contains("\"files\":2"),
-        "two range files written:\n{out}"
+        out.contains("\"files\":5"),
+        "five per-cell files written (Sheet1: A1,A2,A3,B1; Sheet2: A1):\n{out}"
     );
 
     // The converted workbook computes the Excel values through the format-blind engine.
@@ -696,8 +696,8 @@ fn import_xlsx_then_eval_the_converted_workbook() {
     ]);
     assert_eq!(code, 0, "xlsx import should succeed:\n{out}");
     assert!(
-        out.contains("\"files\":2"),
-        "two range files written:\n{out}"
+        out.contains("\"files\":5"),
+        "five per-cell files written (Sheet1: A1,A2,A3,B1; Sheet2: A1):\n{out}"
     );
 
     let a3 = run(&[
