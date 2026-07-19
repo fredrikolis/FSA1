@@ -231,26 +231,62 @@ fn emit_empty_tab(fmt: Format, wb: &Workbook, sheet: u32) -> u8 {
     0
 }
 
-/// `charlie-cli check <path>` — lint the workbook and render the diagnostics. Exits non-zero if any
-/// error-severity diagnostic fires (a workbook that won't even load is itself the failure).
+/// `charlie-cli check <path> [--tab <name>] [--range <A1:B2>] [--cell <A1>]` — lint the workbook and
+/// render the diagnostics. Exits non-zero if any error-severity diagnostic fires (a workbook that
+/// won't even load is itself the failure). READ-ONLY: writes no authoritative cell/tab/file (CORE3);
+/// like the other read commands it may still populate the derived `.cache/` (FS3).
+///
+/// A scope (`--tab` plus `--range` as on `render`, or `--cell` as on `trace`) narrows the report to the
+/// diagnostics whose location falls within that tab/range — so an agent can validate only the cells IT
+/// authored on an import that carries pre-existing (GRID6) error cells elsewhere. A `Tab!`-qualified
+/// range/cell names its own tab, as `trace`'s `--cell` does (`render`'s `--range` is not qualifiable —
+/// so a `Tab!`-qualified `--range` is `check`'s own extension). Scoped, `check` exits
+/// 0 iff nothing in scope is faulty (even when the wider workbook has errors). Unscoped, it is the
+/// whole-workbook check, unchanged.
 fn cmd_check(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
+    let mut tab: Option<String> = None;
+    let mut range: Option<String> = None;
+    let mut cell: Option<String> = None;
     let mut no_cache = false;
-    for arg in rest {
-        let (flag, _) = split_flag(arg);
-        if flag == "--no-cache" {
-            no_cache = true;
-            continue;
-        }
-        if flag.starts_with('-') {
-            return bad_arg(fmt, &format!("unknown flag {flag:?}"));
-        }
-        if path.replace(arg.clone()).is_some() {
-            return bad_arg(fmt, "check takes exactly one <path>");
+
+    let mut it = rest.iter();
+    while let Some(arg) = it.next() {
+        let (flag, inline) = split_flag(arg);
+        match flag {
+            "--tab" => match take_value(inline, &mut it) {
+                Some(v) => tab = Some(v),
+                None => return bad_arg(fmt, "--tab needs a tab name"),
+            },
+            "--range" => match take_value(inline, &mut it) {
+                Some(v) => range = Some(v),
+                None => return bad_arg(fmt, "--range needs an A1 range like A3:G8 (or Tab!A3:G8)"),
+            },
+            "--cell" => match take_value(inline, &mut it) {
+                Some(v) => cell = Some(v),
+                None => return bad_arg(fmt, "--cell needs a cell address like C3 (or Tab!C3)"),
+            },
+            "--no-cache" => no_cache = true,
+            f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
+            _ => {
+                if path.replace(arg.clone()).is_some() {
+                    return bad_arg(fmt, "check takes exactly one <path>");
+                }
+            }
         }
     }
     let Some(path) = path else {
         return bad_arg(fmt, "check needs a <path> to a workbook directory");
+    };
+    if range.is_some() && cell.is_some() {
+        return bad_arg(fmt, "choose at most one of --range / --cell");
+    }
+
+    // Build the scope from --tab plus an optional --range (a rectangle) or --cell (a single cell). A
+    // sheet-qualified value (`Tab!A1`) names its own tab, overriding --tab (mirroring `trace`).
+    let scope = match build_check_scope(fmt, tab, range, cell) {
+        Ok(scope) => scope,
+        Err(code) => return code,
     };
 
     // Load-time refusals (overlap, literal dimension mismatch, bad filename) surface from the loader;
@@ -264,14 +300,74 @@ fn cmd_check(fmt: Format, rest: &[String]) -> u8 {
             let msg = format!("cannot read {path:?}: {e}");
             return fail(fmt, ErrorCode::Io, &msg);
         }
-        Ok(Err(load_diags)) => load_diags,
+        // The workbook would not even load: filter the structural refusals best-effort on their loc
+        // alone (a bare-filename loc has no tab, so it is not excluded on the tab axis — the structure
+        // is broken anyway). No workbook exists to validate a scope tab against.
+        Ok(Err(load_diags)) => load_diags
+            .into_iter()
+            .filter(|d| {
+                let (loc_tab, region) = charlie_model::scope::loc_target(&d.loc);
+                scope.includes(loc_tab, region)
+            })
+            .collect(),
         Ok(Ok(mut wb)) => {
             apply_no_cache(&mut wb, no_cache);
-            wb.lint()
+            // A scope naming a tab absent from a workbook that DID load is a not-found refusal
+            // (fail-fast, mirroring render/trace) — an agent's typo should surface, not silently pass.
+            if let Some(name) = scope.tab()
+                && wb.tab_index(name).is_none()
+            {
+                let msg = format!(
+                    "no tab named {name:?} in {path:?} (tabs: {:?})",
+                    wb.sheet_names()
+                );
+                return fail(fmt, ErrorCode::NotFound, &msg);
+            }
+            wb.lint_scoped(&scope)
         }
     };
 
     output::emit_diagnostics(fmt, &diags)
+}
+
+/// Assemble the `check` [`Scope`] from `--tab` and an optional `--range`/`--cell`. A `Tab!`-qualified
+/// range/cell names its own tab (overriding `--tab`); a `--cell` value must be a single cell, a
+/// `--range` value any canonical A1 rectangle. With none of the three, the scope is unscoped (the
+/// whole-workbook check). Errors are returned as an exit code (bad-args).
+fn build_check_scope(
+    fmt: Format,
+    tab: Option<String>,
+    range: Option<String>,
+    cell: Option<String>,
+) -> Result<charlie_model::Scope, u8> {
+    // The single A1 spec (a range or a cell) and whether it must be exactly one cell.
+    let (raw, single) = match (range, cell) {
+        (Some(r), None) => (Some(r), false),
+        (None, Some(c)) => (Some(c), true),
+        (None, None) => (None, false),
+        (Some(_), Some(_)) => unreachable!("range+cell rejected before build_check_scope"),
+    };
+
+    let Some(raw) = raw else {
+        // Tab-only (or fully unscoped) — no rectangle.
+        return Ok(charlie_model::Scope::new(tab, None));
+    };
+
+    // A sheet-qualified `Tab!A1`/`Tab!A1:B2` names its own tab, overriding --tab.
+    let (scope_tab, a1) = match raw.split_once('!') {
+        Some((t, a)) => (Some(t.to_string()), a.to_string()),
+        None => (tab, raw),
+    };
+
+    let rect = match parse_viewport(&a1) {
+        Ok(r) => r,
+        Err(msg) => return Err(bad_arg(fmt, &msg)),
+    };
+    if single && (rect.min_col != rect.max_col || rect.min_row != rect.max_row) {
+        let msg = format!("--cell takes a single cell like C3, not a range ({a1:?})");
+        return Err(bad_arg(fmt, &msg));
+    }
+    Ok(charlie_model::Scope::new(scope_tab, Some(rect)))
 }
 
 /// `charlie-cli eval <path> --formula '=<formula>' [--tab <name>]` — evaluate an ad-hoc formula against
@@ -703,7 +799,7 @@ const GLOBAL_HELP: &str = r#"charlie-cli — render and lint a filesystem spread
 
 USAGE:
   charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions]
-  charlie-cli check  <path>
+  charlie-cli check  <path> [--tab <name>] [--range <A1:B2>] [--cell <A1>]
   charlie-cli eval   <path> --formula '=<formula>' [--tab <name>]
   charlie-cli trace  <path> --cell <A1> [--tab <name>] [--dependents] [--depth <N>]
   charlie-cli sample <dir>
@@ -722,7 +818,9 @@ COMMANDS:
            row-number gutter. JSON: {columns, rows}. Default mode is --values.
   check    Lint the workbook — overlap, dimension-mismatch, and cycle diagnostics. Text: an ASCII
            table pointing at the offending file(s). JSON: a diagnostics[] array. Exits non-zero if
-           any error-severity diagnostic.
+           any error-severity diagnostic. Scope it with --tab/--range/--cell to report ONLY the
+           diagnostics inside that tab/range (exits 0 if that scope is clean) — validate just the
+           cells you authored on an import that carries unrelated pre-existing error cells.
   eval     Evaluate an ad-hoc --formula against the loaded workbook and emit its value. Read-only.
   trace    Report a cell's upstream dependencies (or downstream consumers with --dependents) as a
            tree; each node carries its value and computation hash. Read-only.
@@ -730,6 +828,15 @@ COMMANDS:
            directory.
   import   Convert a real spreadsheet file (.ods or .xlsx) into a charlie workbook the engine reads.
            Each non-blank cell becomes its own A1-named grid file. Refuses a non-empty destination.
+
+AUTHORING (there is NO write command by design — the filesystem IS the write surface):
+  You author and edit a workbook by writing the A1-named cell files DIRECTLY on disk with ordinary
+  file tools; a cell is its own file (its name is its A1 range, its content is its grid). charlie-cli
+  only reads: render/check/eval/trace verify what you wrote. To add =SUM(A1:A2) at H3 on Sheet1:
+    mkdir -p ./budget/Sheet1
+    printf '=SUM(A1:A2)' > ./budget/Sheet1/H3     # the file name IS the cell address
+    charlie-cli check ./budget --cell Sheet1!H3    # scoped validation of just that cell
+  Then `render`/`check` to verify. See `charlie-cli --guide` for the filename + body grammar.
 
 EXAMPLES:
   charlie-cli sample ./demo && charlie-cli render ./demo
@@ -803,20 +910,35 @@ SEE ALSO:
 const CHECK_HELP: &str = r#"charlie-cli check — lint a filesystem spreadsheet
 
 USAGE:
-  charlie-cli check <path> [--no-cache] [--format <text|json>]
+  charlie-cli check <path> [--tab <name>] [--range <A1:B2>] [--cell <A1>] [--no-cache] [--format <text|json>]
 
 DESCRIPTION:
   Lint the workbook: overlap, dimension-mismatch, cycle, and the load-time filename refusals.
-  Exits non-zero if any error-severity diagnostic fires.
+  Exits non-zero if any error-severity diagnostic fires. READ-ONLY — check writes no authoritative
+  cell/tab/file; like the other read commands it may still populate the derived .cache/.
+
+  SCOPE (--tab plus --range as on render, or --cell as on trace): report ONLY the diagnostics whose location
+  falls within that tab/range, and exit 0 iff nothing in scope is faulty — even when the wider
+  workbook has errors. This lets an agent validate just the cells IT authored on an import that
+  carries pre-existing (GRID6) error cells elsewhere. A file-level diagnostic (no single cell, e.g. a
+  whole-tab overlap) is reported whenever its tab is in scope. Unscoped check is the whole workbook.
 
 ARGUMENTS:
   <path>            (required) The workbook directory.
+  --tab <name>      (optional) Restrict the report to this tab.
+  --range <A1:B2>   (optional) Restrict to diagnostics whose cell region intersects this rectangle
+                    (canonical A1). May be sheet-qualified (Tab!A1:B2), overriding --tab — following
+                    trace's --cell convention (render's --range is not qualifiable; this is check's own).
+  --cell <A1>       (optional) Restrict to a single cell. May be sheet-qualified (Tab!A1). Mutually
+                    exclusive with --range.
   --no-cache        (optional) Bypass the persistent result cache (.cache/) — no reads or writes.
   --format <fmt>    (optional) text (default, ASCII table) or json (the machine envelope).
 
 EXAMPLES:
   charlie-cli check ./budget
   charlie-cli check ./budget --format json
+  charlie-cli check ./budget --cell Sheet1!H3      # validate just the cell you authored
+  charlie-cli check ./budget --tab Sheet1 --range A1:D20
 
 OUTPUT (--format json):
   A clean workbook: {"status":"success","data":{"diagnostics":[]}}
@@ -832,11 +954,11 @@ OUTPUT (--format json):
   Each diagnostic carries a stable `code`, `severity`, `message`, structured `help` remediation, and `location`.
 
 EXIT CODES:
-  0   Success (no error-severity diagnostics)
+  0   Success (no error-severity diagnostics in scope)
   1   I/O failure
-  2   Invalid arguments
-  3   Validation error (an error-severity diagnostic, or the workbook would not load)
-  24  Not found (no such workbook directory)
+  2   Invalid arguments (unknown flag, non-canonical range, or both --range and --cell)
+  3   Validation error (an in-scope error-severity diagnostic, or the workbook would not load)
+  24  Not found (no such workbook directory, or no such scope tab)
 
 SEE ALSO:
   charlie-cli render     Draw a workbook

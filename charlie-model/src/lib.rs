@@ -1,4 +1,4 @@
-// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename->closed-range parser (`filename`, FS2), the TSV DESERIALIZER and the GRID it produces (`grid`, GRID1/GRID2), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula strings for the CLI to draw, the canonical live TUTORIAL workbook as data (`sample`, what `charlie-cli sample` writes out), and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling each formula cell through `charlie_ast::eval`, memoized and cycle-safe; `parse_file` ties the filename+deserializer into one loaded `ParsedFile` (its declared range and its grid), enforcing GRID4 (the grid fills the range exactly); `Workbook` resolves cells to `Value`s on demand and additionally exposes `Workbook::eval_formula`, the AD-HOC `=formula` evaluator (the `charlie-cli eval` entry) returning a `FormulaOutcome` so the CLI branches its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
+// Concern: charlie-model — the filesystem SPREADSHEET model, exposed as: the filename->closed-range parser (`filename`, FS2), the TSV DESERIALIZER and the GRID it produces (`grid`, GRID1/GRID2), the overlap detector (`overlap`), the single-sourced diagnostic registry (`diagnostic`), the RENDER MODEL (`render`) that turns a viewport into a plain-data ASCII grid of value/formula strings for the CLI to draw, the canonical live TUTORIAL workbook as data (`sample`, what `charlie-cli sample` writes out), the check-SCOPING predicate (`scope`, the `Scope` that filters `check`'s diagnostics to a tab/range), and (`workbook`) the DEMAND-DRIVEN evaluation engine that loads a sheet-directory and implements `charlie_ast::Resolver` over it — pulling each formula cell through `charlie_ast::eval`, memoized and cycle-safe; `parse_file` ties the filename+deserializer into one loaded `ParsedFile` (its declared range and its grid), enforcing GRID4 (the grid fills the range exactly); `Workbook` resolves cells to `Value`s on demand and additionally exposes `Workbook::eval_formula`, the AD-HOC `=formula` evaluator (the `charlie-cli eval` entry) returning a `FormulaOutcome` so the CLI branches its exit code without depending on `charlie-ast` | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval; the model only DRIVES it via the Resolver), xlsx serde, and the CLI surface (charlie-cli) | IO: (a filename + file contents) -> `Result<ParsedFile, Diagnostic>`; (a sheet-directory) -> a `Workbook` that resolves cells to `Value`s on demand
 //! # charlie-model — the filesystem spreadsheet model
 //!
 //! **CHARTER.** `charlie-model` owns the on-disk encoding: a tab is a folder and a file's *name* is a
@@ -22,6 +22,7 @@ pub mod grid;
 pub mod overlap;
 pub mod render;
 pub mod sample;
+pub mod scope;
 pub mod workbook;
 
 pub use diagnostic::{Applicability, ByteSpan, Code, Diagnostic, Fix, Loc, Severity};
@@ -33,6 +34,7 @@ pub use render::{
     viewport_cell_count,
 };
 pub use sample::sample_workbook;
+pub use scope::Scope;
 pub use workbook::{CellSource, Direction, FormulaOutcome, TraceNode, TraceStatus, Workbook};
 
 use charlie_ast::Shape;

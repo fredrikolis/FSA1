@@ -22,9 +22,18 @@ FILE BODY — a TSV grid, one cell per coordinate
   The grid must fill the declared range exactly (B2:D9 ⇒ 8×3 rows×cols, else dimension error).
   No drag-fill: write one explicit formula per cell (=B2*C2, =B3*C3, …).
 
+AUTHORING — the filesystem IS the write surface; there is NO write command
+  Author/edit by writing the A1-named cell files DIRECTLY with ordinary file tools. A cell is its own
+  file: its name is its A1 range, its content is its grid. charlie-cli only READS (render/check/eval).
+    mkdir -p budget/Sheet1
+    printf '=SUM(A1:A2)' > budget/Sheet1/H3       # the file name IS the cell address
+    charlie-cli check budget --cell Sheet1!H3      # scoped validation of just that cell
+  Then render/check to verify. Repair a rejected cell by editing its file and re-checking.
+
 COMMANDS
   charlie-cli render <dir> [--tab NAME] [--range A1:D9] [--values|--functions]
-  charlie-cli check  <dir>                 lint (overlap · dimension · cycle); non-zero on error
+  charlie-cli check  <dir> [--tab NAME] [--range A1:B2] [--cell A1]   lint; non-zero on error
+                                          scope to a tab/range to check ONLY the cells you authored
   charlie-cli eval   <dir> --formula '=SUM(A1:A5)'   evaluate an ad-hoc formula against the workbook
   charlie-cli sample <dir>                 write a live tutorial workbook to play with
 

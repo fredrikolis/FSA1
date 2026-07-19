@@ -392,7 +392,7 @@ impl Workbook {
 
     /// The located refusals accumulated during evaluation so far (cycles, depth limits, over-large
     /// ranges, spills). A stored formula's UNPARSEABLE body is not here — GRID6 makes it a load-time
-    /// per-cell error surfaced by [`Workbook::grid_load_errors`]. Snapshot — call after driving cells.
+    /// per-cell error surfaced by [`Workbook::lint`]'s load-error scan. Snapshot — call after driving cells.
     pub fn eval_diagnostics(&self) -> Vec<Diagnostic> {
         self.diagnostics.borrow().clone()
     }
@@ -499,16 +499,60 @@ impl Workbook {
     /// Lint the whole workbook: report every located fault a loaded workbook can still carry, in file
     /// order first then eval order. Two sources:
     /// * GRID6 LOAD-ERROR cells — an unparseable/unsupported formula deserialized to a located error
-    ///   value (VAL3) rather than aborting the load; [`Workbook::grid_load_errors`] collects them so
-    ///   `check` reports each with its location and a non-zero exit (never a silent drop).
+    ///   value (VAL3) rather than aborting the load; the load-error scan in
+    ///   [`lint_located`](Workbook::lint_located) collects them so `check` reports each with its
+    ///   location and a non-zero exit (never a silent drop).
     /// * EVAL-time refusals — cycles, over-deep chains (`#NUM!`-class), over-large ranges, and
     ///   formula-result dimension mismatches (`#SPILL!`-class) — surfaced by driving every cell.
     ///
     /// Structural load-time refusals (overlap, literal dimension mismatch, bad filenames) abort the
     /// load itself and surface from the loader's `Err`, not here.
     pub fn lint(&self) -> Vec<Diagnostic> {
-        // GRID6 load-error cells first — a per-cell located refusal that did not abort the load.
-        let mut diags = self.grid_load_errors();
+        self.lint_located().into_iter().map(|(_, d)| d).collect()
+    }
+
+    /// Lint, but keep only the diagnostics whose location falls within `scope` (CLI1) — the
+    /// `charlie-cli check --tab/--range/--cell` surface. An unscoped [`Scope`] returns the full
+    /// [`lint`](Workbook::lint) verbatim (whole-workbook check, unchanged). A scoped one filters on each
+    /// diagnostic's TRUE tab (resolved here, since a bare-filename GRID6 loc is ambiguous across tabs,
+    /// [`Loc::Body`]) and its cell region (from its loc); a file-level diagnostic with no cell region is
+    /// kept iff its tab is in scope (see [`Scope::includes`]). Read-only, exactly like `lint`.
+    pub fn lint_scoped(&self, scope: &crate::scope::Scope) -> Vec<Diagnostic> {
+        let located = self.lint_located();
+        if !scope.is_scoped() {
+            return located.into_iter().map(|(_, d)| d).collect();
+        }
+        located
+            .into_iter()
+            .filter(|(sheet, d)| {
+                // The loc supplies the region; the TRUE tab is the file's enclosing tab (the loc alone
+                // cannot disambiguate a bare filename across tabs), so pass the resolved tab name.
+                let (_loc_tab, region) = crate::scope::loc_target(&d.loc);
+                scope.includes(Some(&self.tab_name(*sheet)), region)
+            })
+            .map(|(_, d)| d)
+            .collect()
+    }
+
+    /// [`lint`](Workbook::lint), but each diagnostic paired with the 0-based index of the tab it belongs
+    /// to. The pairing resolves the ambiguity a bare-filename loc cannot express: a GRID6 load error is
+    /// located as `Body{file}` (no tab), yet the same address can exist on two tabs — here the enclosing
+    /// tab is known from the iteration, so [`lint_scoped`](Workbook::lint_scoped) can filter on the true
+    /// tab. Order matches `lint`: GRID6 load-error cells first (tab -> file -> row-major), then the
+    /// deduped eval-time refusals.
+    fn lint_located(&self) -> Vec<(u32, Diagnostic)> {
+        // GRID6 load-error cells first — a per-cell located refusal that did not abort the load. The
+        // enclosing tab index is known here (the loc's `Body{file}` is not tab-qualified).
+        let mut out: Vec<(u32, Diagnostic)> = Vec::new();
+        for (s, tab) in self.tabs.iter().enumerate() {
+            for file in &tab.files {
+                for cell in &file.grid.cells {
+                    if let GridCell::LoadError { diag, .. } = cell {
+                        out.push((s as u32, diag.clone()));
+                    }
+                }
+            }
+        }
         // Snapshot the regions first so no `&self.tabs` borrow is held across the `value` pulls.
         let regions: Vec<(u32, Rect)> = self
             .tabs
@@ -528,25 +572,14 @@ impl Workbook {
         // only guards the rare case where two adjacent drives surface the identical located refusal.
         let mut eval = self.eval_diagnostics();
         eval.dedup();
-        diags.extend(eval);
-        diags
-    }
-
-    /// The located refusals of every GRID6 load-error cell in the workbook (an `=formula` that could
-    /// not be deserialized), in tab → file → row-major cell order. Each is the diagnostic the
-    /// deserializer attached to the cell (a [`Code::FormulaSyntax`] located on the offending file), so
-    /// `check` reports the fault with its location and every other cell still loads and evaluates
-    /// (GRID6). Empty for a workbook with no unparseable cells.
-    fn grid_load_errors(&self) -> Vec<Diagnostic> {
-        let mut out = Vec::new();
-        for tab in &self.tabs {
-            for file in &tab.files {
-                for cell in &file.grid.cells {
-                    if let GridCell::LoadError { diag, .. } = cell {
-                        out.push(diag.clone());
-                    }
-                }
-            }
+        // An eval-time refusal is anchored on a `TabFile`/`Tab` loc that names its tab (plan/resolver),
+        // so resolve the sheet index from that name (a fallback of 0 for the rare unnamed anchor).
+        for d in eval {
+            let sheet = match &d.loc {
+                Loc::TabFile { tab, .. } | Loc::Tab { tab } => self.tab_index(tab).unwrap_or(0),
+                _ => 0,
+            };
+            out.push((sheet, d));
         }
         out
     }

@@ -167,6 +167,221 @@ fn check_a_grid5_shape_mismatch_reports_a_dimension_error() {
     assert!(out.contains("array formula"), "the located message:\n{out}");
 }
 
+/// Recursively collect the AUTHORITATIVE files under `root` (relative paths), excluding the reserved
+/// `.cache/` — the only place `check` (like the other read commands) may write derived data (FS3). A
+/// read-only command must leave this set unchanged.
+fn authoritative_files(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().is_some_and(|n| n == ".cache") {
+                    continue;
+                }
+                walk(&p, base, out);
+            } else {
+                out.push(p.strip_prefix(base).unwrap().to_string_lossy().into_owned());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out.sort();
+    out
+}
+
+#[test]
+fn check_range_reports_only_in_scope_and_exits_zero_when_scope_is_clean() {
+    // D1 carries a pre-existing GRID6 load error (an unparseable `=SUM(`); H3 is a valid formula the
+    // agent authored. A scope over H3's neighbourhood is CLEAN (exit 0) even though the wider workbook
+    // has the D1 error, while a scope over D1 reports it (exit 3) and the unscoped check reports it too.
+    let fx = Fixture::new("scope-range");
+    fx.file("Sheet1", "D1", "=SUM(") // unrelated pre-existing error cell (out of scope below)
+        .file("Sheet1", "A1", "1")
+        .file("Sheet1", "A2", "2")
+        .file("Sheet1", "H3", "=SUM(A1:A2)"); // the cell the agent authored (clean)
+
+    // In scope over H3's neighbourhood: clean, exit 0, and D1's error is NOT reported.
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--range", "G1:H5"]);
+    assert_eq!(
+        code, 0,
+        "a clean scope exits 0 despite the D1 error:\n{out}"
+    );
+    assert!(
+        !out.contains("formula-syntax"),
+        "D1 is out of scope:\n{out}"
+    );
+    assert!(
+        out.contains("no diagnostics"),
+        "clean in-scope report:\n{out}"
+    );
+
+    // Scoped over the faulty D1: the error IS reported, exit 3.
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--range", "D1:D1"]);
+    assert_eq!(code, 3, "the in-scope D1 error is exit 3:\n{out}");
+    assert!(
+        out.contains("formula-syntax"),
+        "D1's error is in scope:\n{out}"
+    );
+
+    // Unscoped: unchanged — the D1 error is reported, exit 3.
+    let (code, out) = run(&["check", fx.path().to_str().unwrap()]);
+    assert_eq!(code, 3, "the unscoped check is unchanged:\n{out}");
+    assert!(
+        out.contains("formula-syntax"),
+        "unscoped reports D1:\n{out}"
+    );
+}
+
+#[test]
+fn check_cell_scopes_to_a_single_cell() {
+    // A single-cell scope: the clean authored cell exits 0; the faulty cell exits 3.
+    let fx = Fixture::new("scope-cell");
+    fx.file("Sheet1", "D1", "=SUM(")
+        .file("Sheet1", "H3", "=1+1");
+
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--cell", "H3"]);
+    assert_eq!(code, 0, "the clean authored cell exits 0:\n{out}");
+    assert!(!out.contains("formula-syntax"), "D1 out of scope:\n{out}");
+
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--cell", "D1"]);
+    assert_eq!(code, 3, "the faulty cell in scope exits 3:\n{out}");
+    assert!(out.contains("formula-syntax"), "D1 in scope:\n{out}");
+
+    // A range value passed to --cell is refused (bad args).
+    let (code, _) = run(&["check", fx.path().to_str().unwrap(), "--cell", "A1:B2"]);
+    assert_eq!(code, 2, "--cell rejects a range");
+}
+
+#[test]
+fn check_sheet_qualified_cell_selects_the_named_tab() {
+    // The SAME address `D1` exists on two tabs: clean on Beta, faulty on Alpha. A sheet-qualified
+    // `--cell Beta!D1` must resolve the TRUE tab (a bare-filename GRID6 loc is ambiguous across tabs)
+    // and exit 0, while `Alpha!D1` exits 3.
+    let fx = Fixture::new("scope-qualified");
+    fx.file("Alpha", "D1", "=SUM(") // faulty D1 on Alpha
+        .file("Beta", "D1", "=1+1"); // clean D1 on Beta
+
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--cell", "Beta!D1"]);
+    assert_eq!(
+        code, 0,
+        "Beta!D1 is clean; Alpha's error is out of scope:\n{out}"
+    );
+    assert!(
+        !out.contains("formula-syntax"),
+        "Alpha out of scope:\n{out}"
+    );
+
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--cell", "Alpha!D1"]);
+    assert_eq!(code, 3, "Alpha!D1 is the faulty cell:\n{out}");
+    assert!(out.contains("formula-syntax"), "Alpha!D1 in scope:\n{out}");
+
+    // A tab-only scope narrows to the whole tab.
+    let (code, _) = run(&["check", fx.path().to_str().unwrap(), "--tab", "Beta"]);
+    assert_eq!(code, 0, "the clean Beta tab exits 0");
+    let (code, _) = run(&["check", fx.path().to_str().unwrap(), "--tab", "Alpha"]);
+    assert_eq!(code, 3, "the faulty Alpha tab exits 3");
+
+    // A scope tab absent from a loaded workbook is a not-found refusal (exit 24).
+    let (code, _) = run(&["check", fx.path().to_str().unwrap(), "--tab", "Nope"]);
+    assert_eq!(code, 24, "an unknown scope tab is not-found");
+}
+
+#[test]
+fn check_scoped_on_an_unloadable_workbook_freezes_the_best_effort_region_filter() {
+    // FREEZE the load-failed + scoped decision (cmd_check's `Ok(Err(load_diags))` arm). A GRID4 literal
+    // dimension mismatch on the A1:D9 file ABORTS the load (the workbook won't load at ALL) — unlike a
+    // per-cell GRID6 error, which loads with an error cell (covered above). The aborting refusal's loc
+    // parses to the region A1:D9 from its filename, so a scope that MISSES that region suppresses it: a
+    // scoped `check` reads green (exit 0) on a globally-unloadable import. This is the documented
+    // best-effort "only my cells" relaxation of the unscoped "a workbook that won't load is itself the
+    // failure" contract — the branch carries real filter logic, so pin the decided behavior either way.
+    let fx = Fixture::new("scope-loadfail");
+    fx.file("Sheet1", "A1:D9", "one literal in a 9x4 range") // GRID4 dimension mismatch -> load aborts
+        .file("Sheet1", "H3", "=1+1"); // the cell "the agent authored" (never reached: load aborts)
+
+    // Out of scope (the sharp edge): the aborting fault sits in A1:D9; a scope elsewhere hides it.
+    for scope in [["--range", "Z1:Z2"], ["--cell", "H3"]] {
+        let (code, out) = run(&["check", fx.path().to_str().unwrap(), scope[0], scope[1]]);
+        assert_eq!(code, 0, "an out-of-scope load failure reads green:\n{out}");
+        assert!(
+            !out.contains("dimension-mismatch"),
+            "the fault is out of scope:\n{out}"
+        );
+    }
+
+    // In scope (A1:B2 intersects A1:D9): the same aborting fault is reported, exit 3.
+    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--range", "A1:B2"]);
+    assert_eq!(code, 3, "an in-scope load failure is exit 3:\n{out}");
+    assert!(
+        out.contains("dimension-mismatch"),
+        "the in-scope fault is reported:\n{out}"
+    );
+
+    // Unscoped: unchanged — a workbook that won't load is itself the failure, exit 3.
+    let (code, out) = run(&["check", fx.path().to_str().unwrap()]);
+    assert_eq!(code, 3, "the unscoped load failure is unchanged:\n{out}");
+    assert!(
+        out.contains("dimension-mismatch"),
+        "unscoped reports the fault:\n{out}"
+    );
+}
+
+#[test]
+fn check_scope_never_suppresses_a_region_less_load_refusal() {
+    // The load-failed filter's tab axis is asymmetric (the counterpart to the region suppression above):
+    // a refusal whose loc carries NO parseable region — a malformed filename yields a `Loc::File` whose
+    // name does not parse, so `loc_target` returns (None, None) — rides through EVERY scope's rect and
+    // tab filter. So a truly structural refusal is ALWAYS surfaced, even under a scope that would hide a
+    // region-bearing fault. Pin that guarantee: the bad-filename load abort reports under any scope.
+    let fx = Fixture::new("scope-loadfail-noregion");
+    fx.file("Sheet1", "A1:B2:C3", "1"); // more than one `:` -> malformed-filename -> load aborts
+
+    for args in [
+        vec!["check", fx.path().to_str().unwrap()],
+        vec!["check", fx.path().to_str().unwrap(), "--range", "Z1:Z2"],
+        vec!["check", fx.path().to_str().unwrap(), "--cell", "Y9"],
+    ] {
+        let (code, out) = run(&args);
+        assert_eq!(
+            code, 3,
+            "a region-less load refusal is never suppressed:\n{out}"
+        );
+        assert!(
+            out.contains("malformed-filename"),
+            "the refusal surfaces:\n{out}"
+        );
+    }
+}
+
+#[test]
+fn check_is_read_only_and_writes_no_authoritative_file() {
+    // check (scoped or not) writes NO authoritative cell/tab/file (CORE3): the authoritative file set
+    // is identical before and after. (It may still populate the derived `.cache/`, FS3 — excluded.)
+    let fx = Fixture::new("scope-readonly");
+    fx.file("Sheet1", "D1", "=SUM(")
+        .file("Sheet1", "A1", "1")
+        .file("Sheet1", "H3", "=A1+1");
+
+    let before = authoritative_files(fx.path());
+    for args in [
+        vec!["check", fx.path().to_str().unwrap()],
+        vec!["check", fx.path().to_str().unwrap(), "--cell", "H3"],
+        vec!["check", fx.path().to_str().unwrap(), "--range", "A1:H3"],
+        vec!["check", fx.path().to_str().unwrap(), "--tab", "Sheet1"],
+    ] {
+        let _ = run(&args);
+    }
+    let after = authoritative_files(fx.path());
+    assert_eq!(
+        before, after,
+        "check must not create, modify, or delete any authoritative file"
+    );
+}
+
 #[test]
 fn eval_computes_a_sum_against_the_workbook() {
     // A range SUM over literal cells: the ad-hoc formula pulls A1:A3 through the model.
