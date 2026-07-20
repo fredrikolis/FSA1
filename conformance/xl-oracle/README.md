@@ -55,8 +55,10 @@ expected value is **not** hard-coded; it is computed live from the reference. Ca
 & operator precedence · SUM/AVERAGE/IF/IFS/ROUND · VLOOKUP/INDEX-MATCH/HLOOKUP ·
 PMT/NPV/IRR/XIRR/FV · STDEV/MEDIAN/LARGE/PERCENTILE · LEFT/RIGHT/CONCAT/SUBSTITUTE/TEXT ·
 DATE/EOMONTH/WEEKDAY/YEARFRAC · SUMPRODUCT & an array literal `{…}` · error cases (`#DIV/0!`,
-`#N/A`) · and an `edge` set of notorious Excel-semantics gotchas (left-associative `^`, `MOD` of a
-negative, round-half-away-from-zero, text→number coercion, boolean-array coercion).
+`#N/A`) · a `whole_range` set of whole-column/row references (`SUM`/`SUMIF`/`COUNTIF`/`COUNTA(A:A)`,
+`SUM(1:1)`, and a mixed `VLOOKUP(x, A:D, n)`, each bound to the used region) · and an `edge` set of
+notorious Excel-semantics gotchas (left-associative `^`, `MOD` of a negative, round-half-away-from-zero,
+text→number coercion, boolean-array coercion).
 
 ## Triage rule (lib-gap vs charlie-bug)
 

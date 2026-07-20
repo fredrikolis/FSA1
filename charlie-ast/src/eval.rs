@@ -1,4 +1,4 @@
-// Concern: the tree-walking EVALUATOR — `Expr` + a `&dyn Resolver` -> a first-class `Value`, with full left-to-right error propagation (an operand `Error` short-circuits to that error), the operator semantics (arithmetic/`%`/`^`/`&` concat/the six comparisons) applied ELEMENT-WISE with Excel array broadcasting (a scalar and a multi-cell array, or two equal-shaped arrays, zip cell-by-cell via `binary_broadcast`/`unop_scalar` — the `--(cond)` / `(condA)*(condB)` SUMPRODUCT idioms — instead of demoting an array in operator position to `#VALUE!`), the numeric/boolean/text COERCION rules, reference & range resolution through the `Resolver` (a range materializes its borrowed `ArrayView` into an owned `Value::Array`), and the deferred identity/`#CALC!` handling of the reserved `@`/`#` nodes; errors are values, never panics | Non-concern: PARSING text into an `Expr` (parser.rs) and the per-FUNCTION semantics (func.rs owns the registry impls; this module only dispatches a `Call` to them) | IO: (an `&Expr`, an `&dyn Resolver`) -> a `Value`
+// Concern: the tree-walking EVALUATOR — `Expr` + a `&dyn Resolver` -> a first-class `Value`, with full left-to-right error propagation (an operand `Error` short-circuits to that error), the operator semantics (arithmetic/`%`/`^`/`&` concat/the six comparisons) applied ELEMENT-WISE with Excel array broadcasting (a scalar and a multi-cell array, or two equal-shaped arrays, zip cell-by-cell via `binary_broadcast`/`unop_scalar` — the `--(cond)` / `(condA)*(condB)` SUMPRODUCT idioms — instead of demoting an array in operator position to `#VALUE!`), the numeric/boolean/text COERCION rules, reference & range resolution through the `Resolver` (a range materializes its borrowed `ArrayView` into an owned `Value::Array`), the deferred identity/`#CALC!` handling of the reserved `@`/`#` nodes, and the bounds-blind `#REF!` fallback for a `WholeRange` (an unbound whole-column/row ref that reached eval un-clamped — the model closes it to a `Range` before eval); errors are values, never panics | Non-concern: PARSING text into an `Expr` (parser.rs) and the per-FUNCTION semantics (func.rs owns the registry impls; this module only dispatches a `Call` to them) | IO: (an `&Expr`, an `&dyn Resolver`) -> a `Value`
 //! The evaluator: [`EvalCtx`] and [`eval`]. Synchronous over a pre-loaded [`Resolver`] (no lazy
 //! per-cell I/O — see the resolver contract). Every failure is a first-class [`Value::Error`]; the
 //! evaluator never panics and never returns a [`crate::Diag`] (refusals are a parse-time concern).
@@ -113,6 +113,11 @@ impl<'r> EvalCtx<'r> {
             Expr::Lit(v) => v.clone(),
             Expr::Ref(r) => self.eval_ref(r),
             Expr::Range(rn) => self.eval_range(rn),
+            // A whole-column / whole-row reference is axis-unbounded; closing its open axis needs a
+            // sheet extent this bounds-blind engine does not have. charlie-model rewrites it to a
+            // bounded `Range` before eval (like a name or a forged ref), so reaching here means an
+            // unbound one slipped through — a located-free `#REF!`, never a panic (fail-fast).
+            Expr::WholeRange(_) => Value::Error(ErrKind::Ref),
             Expr::Unary(op, inner) => self.eval_unary(*op, inner),
             Expr::Binary(op, l, r) => self.eval_binary(*op, l, r),
             Expr::Call(fid, args) => func::dispatch(*fid, self, args),

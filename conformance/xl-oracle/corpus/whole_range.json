@@ -1,0 +1,97 @@
+[
+  {
+    "name": "wr_sum_whole_column",
+    "category": "whole_range",
+    "inputs": {
+      "A1": 1,
+      "A2": 2,
+      "A3": 3,
+      "A4": 4
+    },
+    "formula": "=SUM(A:A)"
+  },
+  {
+    "name": "wr_sumif_whole_column",
+    "category": "whole_range",
+    "inputs": {
+      "A1": 4,
+      "A2": 7,
+      "A3": 9
+    },
+    "formula": "=SUMIF(A:A,\">6\")"
+  },
+  {
+    "name": "wr_countif_whole_column",
+    "category": "whole_range",
+    "inputs": {
+      "A1": 4,
+      "A2": 7,
+      "A3": 9
+    },
+    "formula": "=COUNTIF(A:A,\">6\")"
+  },
+  {
+    "name": "wr_counta_whole_column",
+    "category": "whole_range",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30
+    },
+    "formula": "=COUNTA(A:A)"
+  },
+  {
+    "name": "wr_sumif_with_sumrange_whole_columns",
+    "category": "whole_range",
+    "inputs": {
+      "A1": "x",
+      "A2": "y",
+      "A3": "x",
+      "B1": 10,
+      "B2": 20,
+      "B3": 30
+    },
+    "formula": "=SUMIF(A:A,\"x\",B:B)"
+  },
+  {
+    "name": "wr_average_whole_column",
+    "category": "whole_range",
+    "inputs": {
+      "A1": 2,
+      "A2": 4,
+      "A3": 6
+    },
+    "formula": "=AVERAGE(A:A)",
+    "tol": 1e-09
+  },
+  {
+    "name": "wr_sum_whole_row",
+    "category": "whole_range",
+    "inputs": {
+      "A1": 1,
+      "B1": 2,
+      "C1": 3,
+      "D1": 4
+    },
+    "formula": "=SUM(1:1)"
+  },
+  {
+    "name": "wr_vlookup_over_whole_columns",
+    "category": "whole_range",
+    "inputs": {
+      "A1": 10,
+      "B1": 1,
+      "C1": 2,
+      "D1": 100,
+      "A2": 20,
+      "B2": 3,
+      "C2": 4,
+      "D2": 200,
+      "A3": 30,
+      "B3": 5,
+      "C3": 6,
+      "D3": 300
+    },
+    "formula": "=VLOOKUP(30,A:D,4,FALSE)"
+  }
+]

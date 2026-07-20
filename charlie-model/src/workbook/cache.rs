@@ -241,7 +241,9 @@ fn expr_has_volatile(expr: &Expr) -> bool {
         }
         Expr::Unary(_, e) | Expr::ImplicitIntersect(e) | Expr::SpillRef(e) => expr_has_volatile(e),
         Expr::Binary(_, a, b) => expr_has_volatile(a) || expr_has_volatile(b),
-        Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) => false,
+        // A whole-column/row reference is bound to a `Range` at load, and a reference is never
+        // volatile regardless — so `false` (a leaf, like `Ref`/`Range`).
+        Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) | Expr::WholeRange(_) => false,
     }
 }
 

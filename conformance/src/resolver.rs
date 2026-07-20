@@ -160,7 +160,9 @@ fn collect_ranges(expr: &Expr, lookup: &impl Fn(&str) -> Option<SheetId>, out: &
                 collect_ranges(a, lookup, out);
             }
         }
-        Expr::Lit(_) | Expr::Ref(_) => {}
+        // A whole-column/row reference is unbound here (the model closes it to a `Range` at load);
+        // it names no concrete rectangle, so a bounds-blind grade reads nothing for it.
+        Expr::Lit(_) | Expr::Ref(_) | Expr::WholeRange(_) => {}
     }
 }
 

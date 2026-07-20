@@ -15,6 +15,7 @@ expr =
   Lit(value)
   Ref(refnode)
   Range(rangenode)
+  WholeRange(wholerangenode)  # A:A / 1:1 / Sheet!B:B — bound to used region by the model
   Unary(unop, expr)
   Binary(binop, expr, expr)
   Call(funcid, expr*)

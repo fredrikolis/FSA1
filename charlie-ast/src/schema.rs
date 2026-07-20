@@ -88,6 +88,7 @@ const EXPR_VARIANTS: &[&str] = &[
     "Lit(value)",
     "Ref(refnode)",
     "Range(rangenode)",
+    "WholeRange(wholerangenode)  # A:A / 1:1 / Sheet!B:B — bound to used region by the model",
     "Unary(unop, expr)",
     "Binary(binop, expr, expr)",
     "Call(funcid, expr*)",
@@ -137,6 +138,7 @@ fn variant_guards(v: &Value, e: &Expr, k: &ErrKind, u: &UnOp, b: &BinOp) {
         Expr::Lit(_)
         | Expr::Ref(_)
         | Expr::Range(_)
+        | Expr::WholeRange(_)
         | Expr::Unary(..)
         | Expr::Binary(..)
         | Expr::Call(..)
@@ -198,7 +200,7 @@ mod tests {
         // any listed-but-removed variant breaks these counts).
         assert_eq!(VALUE_VARIANTS.len(), 6);
         assert_eq!(ERRKIND_VARIANTS.len(), 9);
-        assert_eq!(EXPR_VARIANTS.len(), 8);
+        assert_eq!(EXPR_VARIANTS.len(), 9);
         assert_eq!(UNOP_VARIANTS.len(), 3);
         assert_eq!(BINOP_VARIANTS.len(), 12);
     }

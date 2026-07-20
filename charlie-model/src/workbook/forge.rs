@@ -25,7 +25,8 @@ pub(super) fn expr_has_forger(expr: &Expr) -> bool {
         Expr::Call(id, args) => is_forger(*id) || args.iter().any(expr_has_forger),
         Expr::Unary(_, e) | Expr::ImplicitIntersect(e) | Expr::SpillRef(e) => expr_has_forger(e),
         Expr::Binary(_, a, b) => expr_has_forger(a) || expr_has_forger(b),
-        Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) => false,
+        // A whole-column/row reference holds no call, so it can hold no forger (a leaf here).
+        Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) | Expr::WholeRange(_) => false,
     }
 }
 

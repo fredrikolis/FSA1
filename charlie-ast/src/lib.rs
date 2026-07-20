@@ -62,7 +62,9 @@ pub use func::{FuncDef, serial_from_ymd};
 pub use lexer::{Token, TokenKind, tokenize};
 pub use node::NodeId;
 pub use parser::parse;
-pub use refs::{CellRef, RangeNode, RangeRef, RefNode, SheetId, SheetName};
+pub use refs::{
+    CellRef, RangeAxis, RangeNode, RangeRef, RefNode, SheetId, SheetName, WholeRangeNode,
+};
 pub use resolver::{
     PINNED_NOW_SERIAL, Resolver, UNIX_EPOCH_SERIAL, system_now_secs, unix_secs_to_serial,
 };

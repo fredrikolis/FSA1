@@ -160,7 +160,7 @@ fn collect_calls(expr: &charlie_ast::Expr, out: &mut std::collections::HashSet<S
             collect_calls(r, out);
         }
         Expr::ImplicitIntersect(inner) | Expr::SpillRef(inner) => collect_calls(inner, out),
-        Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) => {}
+        Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) | Expr::WholeRange(_) => {}
     }
 }
 

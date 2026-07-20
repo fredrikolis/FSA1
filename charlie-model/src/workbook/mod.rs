@@ -1,4 +1,4 @@
-// Concern: the TWO-PASS evaluation engine's ROOT (ENG3) — the `Workbook` struct + its PUBLIC surface (load via `from_tabs`/`load_dir`; demand-driven reads `value_at`/`values_at`; the render surface `sheet_names`/`used_region`/`source_at`; `lint`; the ad-hoc `eval_formula` returning a `FormulaOutcome`; `CellSource`) and the demand ORCHESTRATION that sequences the two passes, plus the shared structural helpers (`covering`/`tab_name`/`file_name`/`refuse`) and engine invariants (`MAX_PULL_DEPTH`/`MAX_RANGE_CELLS`) the passes reuse; the LOADER also separates FS4 NAME entries from cell/grid files (reading a symlink's target or a ref-file's content off disk in `load_dir`, since the pure `names` module is filesystem-blind), builds the `NameTable`, and RESOLVES each formula's name tokens to A1/expr at load (a source rewrite, keeping the engine A1-only, ENG1); the passes themselves live in the private sibling submodules — `plan` (the `DepGraph`/`PlanNode` graph + PLAN pass), `evaluate` (the EVALUATE pass), `resolver` (the `Resolver` impl + range-materialization `Arena`) — none of whose engine types escape this module (ENG3 containment: `DepGraph`/`PlanNode`/`Arena` are `pub(super)` at most, re-exported by no one) | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), the name-table LOGIC + rewrite (the `names` module owns it), xlsx serde, the CLI render surface, and the PLAN/EVALUATE/resolver pass bodies (the submodules own them) | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a demanded cell / a viewport of cells) -> `Value`s, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
+// Concern: the TWO-PASS evaluation engine's ROOT (ENG3) — the `Workbook` struct + its PUBLIC surface (load via `from_tabs`/`load_dir`; demand-driven reads `value_at`/`values_at`; the render surface `sheet_names`/`used_region`/`source_at`; `lint`; the ad-hoc `eval_formula` returning a `FormulaOutcome`; `CellSource`) and the demand ORCHESTRATION that sequences the two passes, plus the shared structural helpers (`covering`/`tab_name`/`file_name`/`refuse`) and engine invariants (`MAX_PULL_DEPTH`/`MAX_RANGE_CELLS`) the passes reuse; the LOADER also separates FS4 NAME entries from cell/grid files (reading a symlink's target or a ref-file's content off disk in `load_dir`, since the pure `names` module is filesystem-blind), builds the `NameTable`, and RESOLVES each formula's name tokens to A1/expr at load (a source rewrite, keeping the engine A1-only, ENG1); after all tabs load it also BINDS every whole-column/row reference (`A:A`/`1:1`/`Sheet!B:B`) to a bounded `Range` by clamping its open axis to the target sheet's used region (`bind_whole_ranges`, and the ad-hoc `eval_formula` twin `bind_whole_ranges_in` -> `bound_whole_range`) — the same A1-only load-time source rewrite; the passes themselves live in the private sibling submodules — `plan` (the `DepGraph`/`PlanNode` graph + PLAN pass), `evaluate` (the EVALUATE pass), `resolver` (the `Resolver` impl + range-materialization `Arena`) — none of whose engine types escape this module (ENG3 containment: `DepGraph`/`PlanNode`/`Arena` are `pub(super)` at most, re-exported by no one) | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), the name-table LOGIC + rewrite (the `names` module owns it), xlsx serde, the CLI render surface, and the PLAN/EVALUATE/resolver pass bodies (the submodules own them) | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a demanded cell / a viewport of cells) -> `Value`s, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
 //! Two-pass evaluation (ENG3): [`Workbook`] loads a sheet-directory and implements [`Resolver`] over
 //! it. A demand (one cell via [`Workbook::value_at`], a viewport via [`Workbook::values_at`], or an
 //! ad-hoc formula via [`Workbook::eval_formula`]) runs a PLAN pass that builds one private dependency
@@ -24,8 +24,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use charlie_ast::{
-    CellRef, Expr, Resolver, SheetId, Value, eval, eval_at, parse, system_now_secs,
-    unix_secs_to_serial,
+    CellRef, Expr, RangeAxis, RangeNode, Resolver, SheetId, Value, WholeRangeNode, eval, eval_at,
+    parse, system_now_secs, unix_secs_to_serial,
 };
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -398,7 +398,7 @@ impl Workbook {
                     })
                 })
             });
-            Ok(Workbook {
+            let mut wb = Workbook {
                 tabs: out_tabs,
                 names: name_table,
                 has_array_regions,
@@ -417,7 +417,13 @@ impl Workbook {
                 cache: None,
                 #[cfg(test)]
                 eval_count: Cell::new(0),
-            })
+            };
+            // Close every whole-column/row reference to a bounded range against the used region of
+            // the sheet it targets (ENG5: the engine stays A1-only; a source rewrite at load, like
+            // the FS4 name rewrite and forger rewrite). Runs after ALL tabs load, so a cross-sheet
+            // `Other!A:A` sees `Other`'s extent.
+            wb.bind_whole_ranges();
+            Ok(wb)
         } else {
             Err(diags)
         }
@@ -529,6 +535,10 @@ impl Workbook {
             };
             Diagnostic::new(Code::FormulaSyntax, loc, message)
         })?;
+        // Close any whole-column/row reference to a bounded range against the used region (the ad-hoc
+        // twin of the load-time bind), so `eval "=SUM(A:A)"` matches a stored `=SUM(A:A)`.
+        let mut expr = expr;
+        self.bind_whole_ranges_in(&mut expr, sheet);
         // PLAN + EVALUATE the ad-hoc formula's dependency cone, then evaluate it — exactly the two
         // passes a stored formula rides (the shared [`Workbook::eval_root_expr`] core, which also runs
         // the forge Pass 0 so a dependency that is itself a forger cell resolves to its static form
@@ -594,6 +604,44 @@ impl Workbook {
             max_col: acc.max_col.max(f.region.max_col),
             max_row: acc.max_row.max(f.region.max_row),
         }))
+    }
+
+    /// Rewrite every whole-column/row reference in every stored formula to a bounded [`Expr::Range`],
+    /// clamping its open axis to the used region of the sheet it targets. A load-time source rewrite
+    /// (like the FS4 name rewrite and the forger rewrite) that keeps the engine A1-only (ENG5); runs
+    /// once, after all tabs exist, so a cross-sheet `Other!A:A` sees `Other`'s extent. See
+    /// [`bound_whole_range`] for the per-node clamp rule.
+    fn bind_whole_ranges(&mut self) {
+        let (regions, names) = self.whole_range_binding_context();
+        for (home, tab) in self.tabs.iter_mut().enumerate() {
+            for file in &mut tab.files {
+                for cell in &mut file.grid.cells {
+                    if let GridCell::Formula { expr, .. } = cell {
+                        bind_whole_range_expr(expr, home as u32, &regions, &names);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The per-sheet used regions (by index) and sheet names — the two lookups `bind_whole_range_expr`
+    /// needs to close a whole reference against its target sheet. Shared by the load-time
+    /// [`bind_whole_ranges`] and the ad-hoc [`bind_whole_ranges_in`] (DRY); cheap — `used_region` is a
+    /// fold over each tab's file rects.
+    fn whole_range_binding_context(&self) -> (Vec<Option<Rect>>, Vec<String>) {
+        let regions = (0..self.tabs.len() as u32)
+            .map(|s| self.used_region(s))
+            .collect();
+        let names = self.tabs.iter().map(|t| t.name.clone()).collect();
+        (regions, names)
+    }
+
+    /// Bind whole-column/row references in an AD-HOC expression whose home sheet is `sheet` — the
+    /// [`eval_formula`](Workbook::eval_formula) analogue of the load-time [`bind_whole_ranges`], so an
+    /// ad-hoc `=SUM(A:A)` clamps to the used region exactly as a stored formula does.
+    fn bind_whole_ranges_in(&self, expr: &mut Expr, sheet: u32) {
+        let (regions, names) = self.whole_range_binding_context();
+        bind_whole_range_expr(expr, sheet, &regions, &names);
     }
 
     /// A read-only view of the file that covers `(col,row)` on `sheet` — its name, declared region,
@@ -818,6 +866,88 @@ impl Workbook {
         self.current_file.set(prev_file);
         self.finish_pass();
         value
+    }
+}
+
+/// Recursively rewrite each [`Expr::WholeRange`] under `expr` to a bounded [`Expr::Range`] via
+/// [`bound_whole_range`]. `home` is the sheet an unqualified whole reference targets; `regions` is
+/// each sheet's used region by index; `names` maps a sheet name to that index.
+fn bind_whole_range_expr(expr: &mut Expr, home: u32, regions: &[Option<Rect>], names: &[String]) {
+    match expr {
+        Expr::WholeRange(w) => {
+            *expr = Expr::Range(bound_whole_range(w, home, regions, names));
+        }
+        Expr::Unary(_, e) | Expr::ImplicitIntersect(e) | Expr::SpillRef(e) => {
+            bind_whole_range_expr(e, home, regions, names);
+        }
+        Expr::Binary(_, a, b) => {
+            bind_whole_range_expr(a, home, regions, names);
+            bind_whole_range_expr(b, home, regions, names);
+        }
+        Expr::Call(_, args) => {
+            for a in args {
+                bind_whole_range_expr(a, home, regions, names);
+            }
+        }
+        Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) => {}
+    }
+}
+
+/// Close one whole-column/row reference to a bounded [`RangeNode`]: keep the bounded axis it named
+/// and clamp its OPEN axis to the used region of the sheet it targets, running `0..=region-max` on
+/// that axis. For aggregation this is identical to Excel's full-column/row extent — blanks past the
+/// used region contribute nothing (`SUM`/`COUNT`/`COUNTIF`/… over the used range is Excel-exact). An
+/// EMPTY target sheet (no used region) closes to a single blank line (a `0`/empty aggregate, as Excel
+/// gives for an empty column). An UNKNOWN target sheet keeps its name on the range, so it resolves to
+/// `#REF!` at eval — matching Excel's `NoSuchSheet!A:A`. The synthesized open-axis corners are marked
+/// relative (`$`-anchoring is irrelevant: the engine resolves refs as absolute addresses, VAL1).
+///
+/// DELIBERATE v1 DIVERGENCE (tracked, tested): because the open axis is clamped to the USED region,
+/// an EXTENT-sensitive function over a whole reference reports the used extent, not Excel's full
+/// 1,048,576 rows / 16,384 columns — `ROWS(A:A)`/`COLUMNS(1:1)`/`COUNTBLANK(A:A)` return used-region
+/// counts. This is out of the aggregation-parity scope this feature targets (binding to the full
+/// extent would blow the `MAX_RANGE_CELLS` materialization guard the aggregation path relies on); the
+/// divergence is pinned by `tests::whole_range` so it can never drift silently.
+fn bound_whole_range(
+    w: &WholeRangeNode,
+    home: u32,
+    regions: &[Option<Rect>],
+    names: &[String],
+) -> RangeNode {
+    let target = match &w.sheet {
+        None => Some(home as usize),
+        Some(name) => names.iter().position(|n| n == name.as_str()),
+    };
+    let region = target.and_then(|t| regions.get(t).copied().flatten());
+    // The open axis's far corner: the region's max on that axis, else 0 (empty/unknown sheet).
+    let open_hi = match (region, w.axis) {
+        (Some(rect), RangeAxis::Columns) => rect.max_row,
+        (Some(rect), RangeAxis::Rows) => rect.max_col,
+        (None, _) => 0,
+    };
+    match w.axis {
+        RangeAxis::Columns => RangeNode {
+            start_col: w.start,
+            end_col: w.end,
+            start_row: 0,
+            end_row: open_hi,
+            start_col_abs: w.start_abs,
+            end_col_abs: w.end_abs,
+            start_row_abs: false,
+            end_row_abs: false,
+            sheet: w.sheet.clone(),
+        },
+        RangeAxis::Rows => RangeNode {
+            start_row: w.start,
+            end_row: w.end,
+            start_col: 0,
+            end_col: open_hi,
+            start_row_abs: w.start_abs,
+            end_row_abs: w.end_abs,
+            start_col_abs: false,
+            end_col_abs: false,
+            sheet: w.sheet.clone(),
+        },
     }
 }
 

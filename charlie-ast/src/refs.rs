@@ -1,4 +1,4 @@
-// Concern: the A1 REFERENCE layer, split cleanly across the syntax/semantics seam (ast-standards PART 6) — the SYNTACTIC AST reference nodes `RefNode`/`RangeNode` (which carry the parsed sheet NAME `SheetName` as written, plus their `$`-absolute flags: `RefNode`'s `col_abs`/`row_abs` and `RangeNode`'s per-corner `start_col_abs`/`start_row_abs`/`end_col_abs`/`end_row_abs`, which distinguish `A1`/`$A$1` for round-trip and equality), and the RESOLVED coordinate types `SheetId`/`CellRef`/`RangeRef` the `Resolver` receives (a sheet handle + zero-based col/row); `RefNode`/`RangeNode` carry a `SheetName`, `CellRef`/`RangeRef` carry a `SheetId`, and `resolve` is the one place a name becomes an id | Non-concern: mapping a sheet NAME to a `SheetId` or reading a cell's value (the `Resolver` impl in charlie-model does that; `resolve` only threads a caller-supplied lookup) and rendering coordinates back to A1 text (later) | IO: none — coordinate types
+// Concern: the A1 REFERENCE layer, split cleanly across the syntax/semantics seam (ast-standards PART 6) — the SYNTACTIC AST reference nodes `RefNode`/`RangeNode` (which carry the parsed sheet NAME `SheetName` as written, plus their `$`-absolute flags: `RefNode`'s `col_abs`/`row_abs` and `RangeNode`'s per-corner `start_col_abs`/`start_row_abs`/`end_col_abs`/`end_row_abs`, which distinguish `A1`/`$A$1` for round-trip and equality) and the axis-unbounded `WholeRangeNode` (`A:A`/`1:1`/`Sheet!B:B` — one bounded axis + a `RangeAxis` naming the open one, which charlie-model closes to a bounded `RangeNode` before eval, since this crate is bounds-blind), and the RESOLVED coordinate types `SheetId`/`CellRef`/`RangeRef` the `Resolver` receives (a sheet handle + zero-based col/row); `RefNode`/`RangeNode`/`WholeRangeNode` carry a `SheetName`, `CellRef`/`RangeRef` carry a `SheetId`, and `resolve` is the one place a name becomes an id | Non-concern: mapping a sheet NAME to a `SheetId` or reading a cell's value (the `Resolver` impl in charlie-model does that; `resolve` only threads a caller-supplied lookup), CLAMPING a `WholeRangeNode`'s open axis to a sheet's used bounds (charlie-model owns the extent), and rendering coordinates back to A1 text (later) | IO: none — coordinate types
 //! Reference layer: the syntactic [`RefNode`]/[`RangeNode`] (parsed, name-carrying) and the resolved
 //! [`SheetId`]/[`CellRef`]/[`RangeRef`] (what the [`crate::Resolver`] is asked to read).
 //!
@@ -172,6 +172,47 @@ impl RangeNode {
     }
 }
 
+/// Which axis of a whole-column / whole-row reference is UNBOUNDED — the axis charlie-ast cannot
+/// close on its own, because it has no sheet extent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RangeAxis {
+    /// Whole COLUMNS (`A:A`, `B:D`): the columns are bounded, the ROWS run open.
+    Columns,
+    /// Whole ROWS (`1:1`, `2:5`): the rows are bounded, the COLUMNS run open.
+    Rows,
+}
+
+/// The AST node for a WHOLE-COLUMN / WHOLE-ROW reference (`A:A`, `B:D`, `1:1`, `Sheet1!A:A`) — the
+/// *syntactic* form of an axis-unbounded range, the open-ended analogue of [`RangeNode`].
+///
+/// charlie-ast is **bounds-blind**: it has no sheet extent, so it cannot close the open axis here.
+/// The node therefore carries ONLY the bounded axis (`axis` says which one, `start`/`end` are its
+/// zero-based endpoints, normalized `start <= end`); the open axis has no coordinates at all. The
+/// filesystem model (charlie-model) clamps the open axis to the target sheet's *used region* at load,
+/// rewriting this node into an ordinary bounded [`RangeNode`] before the two-pass engine runs —
+/// exactly as a defined name or a forged `INDIRECT`/`OFFSET` reference resolves to a static reference
+/// first. Consequently the engine never *evaluates* a `WholeRangeNode`; a bounds-blind
+/// [`crate::eval`] that meets one unbound treats it as `#REF!`.
+///
+/// The sheet **name** (`sheet`) qualifies the whole reference (`Sheet1!A:A`), carried verbatim as
+/// syntax like [`RangeNode::sheet`]. Each bounded endpoint keeps its `$`-anchor flag (`$A:$A`,
+/// `$1:$3`) so the form round-trips; they are **meaning** and participate in equality.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WholeRangeNode {
+    /// Which axis is unbounded (and thus which axis `start`/`end` describe).
+    pub axis: RangeAxis,
+    /// The bounded-axis endpoints, zero-based, normalized `start <= end`: columns for
+    /// [`RangeAxis::Columns`] (`A:D` → `0..=3`), rows for [`RangeAxis::Rows`] (`2:5` → `1..=4`).
+    pub start: u32,
+    pub end: u32,
+    /// A `$` anchored the `start` endpoint (`$A:A`, `$1:1`).
+    pub start_abs: bool,
+    /// A `$` anchored the `end` endpoint (`A:$A`, `1:$1`).
+    pub end_abs: bool,
+    /// The sheet name qualifying the whole reference (`Sheet1!A:A`), or `None` for same-sheet.
+    pub sheet: Option<SheetName>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +343,42 @@ mod tests {
         assert_eq!(inverted.normalized(), canonical);
         // Idempotent: an already-canonical range is unchanged.
         assert_eq!(canonical.normalized(), canonical);
+    }
+
+    #[test]
+    fn whole_range_carries_only_the_bounded_axis_and_its_open_axis_is_syntax() {
+        // `A:D` — whole columns A..D, rows open; the bounded axis is the columns.
+        let cols = WholeRangeNode {
+            axis: RangeAxis::Columns,
+            start: 0,
+            end: 3,
+            start_abs: false,
+            end_abs: false,
+            sheet: None,
+        };
+        // `1:1` — a single whole row; a different axis is a different reference.
+        let row = WholeRangeNode {
+            axis: RangeAxis::Rows,
+            start: 0,
+            end: 0,
+            start_abs: false,
+            end_abs: false,
+            sheet: None,
+        };
+        assert_ne!(cols.axis, row.axis);
+        // The `$`-anchor is meaning: `$A:$A` differs from `A:A`.
+        let abs = WholeRangeNode {
+            start_abs: true,
+            end_abs: true,
+            ..cols.clone()
+        };
+        assert_ne!(cols, abs);
+        // The sheet name is carried verbatim (exact-equality syntax).
+        let there = WholeRangeNode {
+            sheet: Some(SheetName::new("Data")),
+            ..cols.clone()
+        };
+        assert_ne!(cols, there);
     }
 
     #[test]

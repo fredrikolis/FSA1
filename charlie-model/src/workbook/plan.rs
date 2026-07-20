@@ -220,6 +220,10 @@ impl Workbook {
                     // Over the bound: left unexpanded; `Resolver::range` refuses it at evaluate.
                 }
             }
+            // A whole-column/row reference is bound to a concrete `Range` at load
+            // ([`Workbook::bind_whole_ranges`]), so it never reaches the dep walk; contribute no
+            // dependency if an unbound one somehow does (a bounds-blind `#REF!` has no cells).
+            Expr::WholeRange(_) => {}
             Expr::Unary(_, e) => self.collect_deps(e, home, out),
             Expr::Binary(_, a, b) => {
                 self.collect_deps(a, home, out);

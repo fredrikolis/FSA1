@@ -13,6 +13,9 @@ mod forge;
 // The FS4 NAME fitness pins (symlink + ref-file representations, scope, refusals, write-through) live
 // in their own submodule — they need a real temp-dir workbook with symlinks, so `load_dir`.
 mod names;
+// The whole-column/row reference pins (`A:A`/`1:1`/`Sheet!B:B` bound to the used region at load) live
+// in their own submodule, keeping this behavioral file under the per-file line budget.
+mod whole_range;
 
 /// A file's content is exactly its grid (GRID1) — no annotation line. This helper owns the body
 /// string so the `&file("…")` call sites hand an owned contents to the loader.

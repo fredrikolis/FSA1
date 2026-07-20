@@ -1,4 +1,4 @@
-// Concern: the PRATT PARSER — a `&[Token]` stream -> an `Expr`, applying the exact Excel precedence ladder (`:` range > space-intersection > `,` union > unary `-`/`+` > `%` > `^` > `*`/`/` > `+`/`-` > `&` concat > the six comparisons), folding a STATIC `ref:ref` into `Expr::Range` (carrying a sheet qualifier onto the range), folding a `{…}` ARRAY LITERAL of constants (rows via `;`, columns via `,`) into an `Expr::Lit` of an `array` Value — a ragged or non-constant literal is a located `MalformedArray` refusal, building a first-class SHEET-QUALIFIED reference from a `SheetBang` token (`Sheet1!A1` / `'Quoted'!A1` via `parse_sheet_qualified` → a sheet-tagged `RefNode`/`RangeNode`, while 3D/multi-sheet stays a reserved refusal), parsing-and-PRESERVING the reserved `@`(`ImplicitIntersect`)/`#`(`SpillRef`) nodes, resolving a function name + checking arity against the registry (so eval trusts arity — DbC) then running the row's OPTIONAL per-function static-argument `validate` (TEXT's unsupported-LITERAL-format `UnsupportedFormat` refusal — a non-literal format is accepted and deferred to eval), and turning every recognized-but-reserved or malformed construct into a LOCATED refusal; nesting past a depth bound (and a total-size bound) is a diagnostic, never a stack overflow | Non-concern: tokenizing (lexer.rs) and evaluating (eval.rs); this module builds the tree and never touches a `Resolver` | IO: (a formula `&str`, via `parse`) -> `Result<Expr, Diag>`
+// Concern: the PRATT PARSER — a `&[Token]` stream -> an `Expr`, applying the exact Excel precedence ladder (`:` range > space-intersection > `,` union > unary `-`/`+` > `%` > `^` > `*`/`/` > `+`/`-` > `&` concat > the six comparisons), folding a STATIC `ref:ref` into `Expr::Range` (carrying a sheet qualifier onto the range), folding a WHOLE-column/row reference (`A:A`/`$A:$A`/`1:1`/`Sheet!A:A`, endpoints that lex as bare column/row words rather than cell refs) into an axis-unbounded `Expr::WholeRange` (a cross-axis or malformed endpoint is a located refusal; the model closes the open axis), folding a `{…}` ARRAY LITERAL of constants (rows via `;`, columns via `,`) into an `Expr::Lit` of an `array` Value — a ragged or non-constant literal is a located `MalformedArray` refusal, building a first-class SHEET-QUALIFIED reference from a `SheetBang` token (`Sheet1!A1` / `'Quoted'!A1` via `parse_sheet_qualified` → a sheet-tagged `RefNode`/`RangeNode`, while 3D/multi-sheet stays a reserved refusal), parsing-and-PRESERVING the reserved `@`(`ImplicitIntersect`)/`#`(`SpillRef`) nodes, resolving a function name + checking arity against the registry (so eval trusts arity — DbC) then running the row's OPTIONAL per-function static-argument `validate` (TEXT's unsupported-LITERAL-format `UnsupportedFormat` refusal — a non-literal format is accepted and deferred to eval), and turning every recognized-but-reserved or malformed construct into a LOCATED refusal; nesting past a depth bound (and a total-size bound) is a diagnostic, never a stack overflow | Non-concern: tokenizing (lexer.rs) and evaluating (eval.rs); this module builds the tree and never touches a `Resolver` | IO: (a formula `&str`, via `parse`) -> `Result<Expr, Diag>`
 //! The Pratt (precedence-climbing) parser: [`parse`] a formula string into an [`Expr`].
 //!
 //! DbC: this is the one defended boundary (ast-standards PART 5). It never panics; a hole is a
@@ -7,11 +7,12 @@
 //! nesting recursion, and [`MAX_TOKENS`] caps total size so a huge *flat* left-associative chain can
 //! neither be built nor recursively dropped into a stack overflow (ast-standards PART 9).
 
+use crate::a1::parse_a1;
 use crate::diag::{Diag, DiagCode, Span};
 use crate::expr::{BinOp, Expr, UnOp};
 use crate::func;
 use crate::lexer::{Token, TokenKind, tokenize};
-use crate::refs::{RangeNode, RefNode, SheetName};
+use crate::refs::{RangeAxis, RangeNode, RefNode, SheetName, WholeRangeNode};
 use crate::value::{Shape, Value};
 
 /// Maximum nesting depth (parens / prefix operators / call arguments). Beyond this the parser
@@ -105,6 +106,17 @@ impl<'t> Parser<'t> {
         Span::at(self.tokens.last().map_or(self.end, |t| t.span.end))
     }
 
+    /// The token one past the cursor (LL(2) lookahead) — used to detect a whole reference's `:`
+    /// while its left endpoint is still the current token.
+    fn peek_next(&self) -> Option<&'t Token> {
+        self.tokens.get(self.pos + 1)
+    }
+
+    /// Is the next token the `:` range operator?
+    fn peek_is_colon(&self) -> bool {
+        matches!(self.peek().map(|t| &t.kind), Some(TokenKind::Colon))
+    }
+
     /// Precedence-climbing core. `min_bp` is the caller's binding-power floor. Depth is bounded here
     /// (every nesting path routes through `parse_expr`), so the guard is single-sourced.
     fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, Diag> {
@@ -191,7 +203,16 @@ impl<'t> Parser<'t> {
         };
         let span = tok.span;
         match &tok.kind {
-            TokenKind::Num(n) => Ok(Expr::Lit(Value::Number(*n))),
+            // A bare number is a numeric literal — UNLESS it is the left endpoint of a whole-row
+            // range (`1:1`, `2:5`): an integer followed by `:` opens a whole-row reference.
+            TokenKind::Num(n) => {
+                if self.peek_is_colon()
+                    && let Some(ep) = row_endpoint_from_num(*n)
+                {
+                    return self.parse_whole_range(ep, None);
+                }
+                Ok(Expr::Lit(Value::Number(*n)))
+            }
             TokenKind::Str(s) => Ok(Expr::Lit(Value::Text(s.clone()))),
             TokenKind::Bool(b) => Ok(Expr::Lit(Value::Bool(*b))),
             TokenKind::Err(k) => Ok(Expr::Lit(Value::Error(*k))),
@@ -235,12 +256,21 @@ impl<'t> Parser<'t> {
             }
             TokenKind::LBrace => self.parse_array_literal(span),
             TokenKind::Func(name) => self.parse_call(name.clone(), span),
-            // A bare defined-name is recognized but reserved.
-            TokenKind::Name(n) => Err(Diag::new(
-                DiagCode::ReservedName,
-                span,
-                format!("`{n}` is a defined name — reserved in v1"),
-            )),
+            // A bare defined-name is recognized but reserved — UNLESS it is the left endpoint of a
+            // whole-column/row range: a pure column (`A`, `$A`) or absolute-row (`$1`) word followed
+            // by `:` opens a whole reference (`A:A`, `$A:$A`, `$1:$1`).
+            TokenKind::Name(n) => {
+                if self.peek_is_colon()
+                    && let Some(ep) = word_endpoint(n)
+                {
+                    return self.parse_whole_range(ep, None);
+                }
+                Err(Diag::new(
+                    DiagCode::ReservedName,
+                    span,
+                    format!("`{n}` is a defined name — reserved in v1"),
+                ))
+            }
             // A cross-sheet prefix `Name!` qualifies the cell reference that must follow it. The
             // sheet NAME is carried as syntax onto the `RefNode`; resolving it to a `SheetId` is a
             // `Resolver` (eval-time) act (ast-standards PART 6: no semantics baked into syntax).
@@ -265,6 +295,21 @@ impl<'t> Parser<'t> {
     /// `Sheet1!SUM(..)`, `Sheet1!` at end-of-input) is a located refusal — the qualified target must
     /// be an A1 cell.
     fn parse_sheet_qualified(&mut self, name: String) -> Result<Expr, Diag> {
+        // A sheet-qualified WHOLE reference: `Sheet1!A:A`, `Sheet1!1:1`. The endpoint word/number is
+        // followed by `:`; classify it and hand the sheet name to the whole-range parser. Anything
+        // else (a plain `Sheet1!A1`, possibly the left corner of `Sheet1!A1:B2`) falls to the
+        // single-cell path below, where the existing `:` fold carries the qualifier onto the range.
+        if matches!(self.peek_next().map(|t| &t.kind), Some(TokenKind::Colon)) {
+            let ep = match self.peek().map(|t| &t.kind) {
+                Some(TokenKind::Name(w)) => word_endpoint(w),
+                Some(TokenKind::Num(n)) => row_endpoint_from_num(*n),
+                _ => None,
+            };
+            if let Some(ep) = ep {
+                self.advance(); // consume the endpoint token; `:` is next
+                return self.parse_whole_range(ep, Some(SheetName::new(name)));
+            }
+        }
         match self.advance() {
             Some(Token {
                 kind:
@@ -290,6 +335,52 @@ impl<'t> Parser<'t> {
                     format!("the sheet prefix `{name}!` must be followed by a cell reference"),
                 ))
             }
+        }
+    }
+
+    /// Parse a whole-column / whole-row range whose already-classified LEFT endpoint (`first`) was
+    /// just consumed and whose next token is the `:` (the caller guarantees both). `sheet` carries an
+    /// optional `Sheet!` qualifier. Consumes the `:` and the RIGHT endpoint, which must be the SAME
+    /// axis as the left (`A:A`, not `A:1`); a missing, malformed, or cross-axis endpoint is a located
+    /// refusal. The bounded axis is normalized `start <= end`, each endpoint keeping its `$`-anchor.
+    fn parse_whole_range(
+        &mut self,
+        first: Endpoint,
+        sheet: Option<SheetName>,
+    ) -> Result<Expr, Diag> {
+        self.advance(); // the `:` (guaranteed by the caller)
+        let Some(rtok) = self.advance() else {
+            return Err(Diag::new(
+                DiagCode::UnexpectedEof,
+                self.eof_span(),
+                "a whole-column/row `:` needs a closing endpoint (e.g. `A:A`, `1:1`)",
+            ));
+        };
+        let rspan = rtok.span;
+        let second = match &rtok.kind {
+            TokenKind::Name(w) => word_endpoint(w),
+            TokenKind::Num(n) => row_endpoint_from_num(*n),
+            _ => None,
+        };
+        let Some(second) = second else {
+            return Err(Diag::new(
+                DiagCode::UnexpectedToken,
+                rspan,
+                "a whole-column/row reference needs a matching endpoint, e.g. `A:A` or `1:1`",
+            ));
+        };
+        match (first, second) {
+            (Endpoint::Col { idx: a, abs: aa }, Endpoint::Col { idx: b, abs: bb }) => {
+                Ok(whole_range_node(RangeAxis::Columns, a, aa, b, bb, sheet))
+            }
+            (Endpoint::Row { idx: a, abs: aa }, Endpoint::Row { idx: b, abs: bb }) => {
+                Ok(whole_range_node(RangeAxis::Rows, a, aa, b, bb, sheet))
+            }
+            _ => Err(Diag::new(
+                DiagCode::UnexpectedToken,
+                rspan,
+                "a whole reference mixes a column and a row endpoint (`A:1`); use `A:A` or `1:1`",
+            )),
         }
     }
 
@@ -572,6 +663,74 @@ fn fold_range(lhs: Expr, rhs: Expr, span: Span) -> Result<Expr, Diag> {
     }))
 }
 
+/// A classified LEFT/RIGHT endpoint of a whole-column/row range — the bounded-axis coordinate a bare
+/// column word (`A`, `$A`), a bare row (`1`), or an absolute-row word (`$1`) contributes.
+enum Endpoint {
+    /// A whole-COLUMN endpoint: a zero-based column index + its `$`-anchor.
+    Col { idx: u32, abs: bool },
+    /// A whole-ROW endpoint: a zero-based row index + its `$`-anchor.
+    Row { idx: u32, abs: bool },
+}
+
+/// Classify an identifier-shaped [`TokenKind::Name`] as a whole-range endpoint: an optional leading
+/// `$`, then EITHER all letters (a column, `A`/`$AB`) OR all digits (an absolute row, `$1`). A bare
+/// row (`1`, no `$`) lexes as a number, not a name, so a digits-only word here always had a `$`.
+/// Anything else (a genuine defined name like `Foo`, a mixed `A1`, an overflowing column) is `None`.
+fn word_endpoint(w: &str) -> Option<Endpoint> {
+    let (abs, rest) = match w.strip_prefix('$') {
+        Some(r) => (true, r),
+        None => (false, w),
+    };
+    if rest.is_empty() {
+        return None;
+    }
+    if rest.bytes().all(|c| c.is_ascii_alphabetic()) {
+        // Reuse the shared A1 grammar (case-insensitive column, overflow-guarded) by closing the
+        // address with a throwaway row; only the column index is kept.
+        let a = parse_a1(&format!("{rest}1")).ok()?;
+        Some(Endpoint::Col { idx: a.col, abs })
+    } else if rest.bytes().all(|c| c.is_ascii_digit()) {
+        let n: u32 = rest.parse().ok()?;
+        (n >= 1).then(|| Endpoint::Row { idx: n - 1, abs })
+    } else {
+        None
+    }
+}
+
+/// Classify a bare [`TokenKind::Num`] as a whole-ROW endpoint: a positive integer row (`1:1`, `2:5`).
+/// A non-integer or out-of-`u32` value is not a row (`None`), so it stays a numeric literal.
+fn row_endpoint_from_num(n: f64) -> Option<Endpoint> {
+    (n.fract() == 0.0 && (1.0..=f64::from(u32::MAX)).contains(&n)).then(|| Endpoint::Row {
+        idx: n as u32 - 1,
+        abs: false,
+    })
+}
+
+/// Build a normalized [`Expr::WholeRange`] from two same-axis endpoints, putting the bounded axis in
+/// `start <= end` order and carrying each endpoint's `$`-anchor with the corner it lands on.
+fn whole_range_node(
+    axis: RangeAxis,
+    a: u32,
+    a_abs: bool,
+    b: u32,
+    b_abs: bool,
+    sheet: Option<SheetName>,
+) -> Expr {
+    let (start, start_abs, end, end_abs) = if a <= b {
+        (a, a_abs, b, b_abs)
+    } else {
+        (b, b_abs, a, a_abs)
+    };
+    Expr::WholeRange(WholeRangeNode {
+        axis,
+        start,
+        end,
+        start_abs,
+        end_abs,
+        sheet,
+    })
+}
+
 // --- the precedence ladder (binding powers) --------------------------------------------------
 // Higher = binds tighter. Left-associative binary ops use (n, n+1); the whole ladder, tightest
 // last, is: comparisons < & < +/- < */ < ^ < % (postfix) < unary -/+ (prefix) < : (range).
@@ -722,6 +881,102 @@ mod tests {
             eval(&parse("=SUM(B2:A1)").unwrap(), &g),
             Value::Number(10.0)
         );
+    }
+
+    #[test]
+    fn whole_column_and_row_refs_parse_to_wholerange_nodes() {
+        use crate::refs::RangeAxis;
+        // `A:A` -> whole columns A..A, axis Columns.
+        match parse("=SUM(A:A)").unwrap() {
+            Expr::Call(_, args) => match &args[0] {
+                Expr::WholeRange(w) => {
+                    assert_eq!(w.axis, RangeAxis::Columns);
+                    assert_eq!((w.start, w.end), (0, 0));
+                    assert!(!w.start_abs && !w.end_abs);
+                    assert!(w.sheet.is_none());
+                }
+                other => panic!("expected a WholeRange, got {other:?}"),
+            },
+            other => panic!("expected a Call, got {other:?}"),
+        }
+        // `B:D` -> columns 1..3, normalized; `$A:$C` carries the anchors.
+        match parse("=B:D").unwrap() {
+            Expr::WholeRange(w) => assert_eq!((w.axis, w.start, w.end), (RangeAxis::Columns, 1, 3)),
+            other => panic!("expected a WholeRange, got {other:?}"),
+        }
+        match parse("=$A:$C").unwrap() {
+            Expr::WholeRange(w) => assert!(w.start_abs && w.end_abs),
+            other => panic!("expected a WholeRange, got {other:?}"),
+        }
+        // `1:1` -> whole row 1; `2:5` -> rows 1..4; `$3:$1` normalizes to rows 0..2.
+        match parse("=1:1").unwrap() {
+            Expr::WholeRange(w) => assert_eq!((w.axis, w.start, w.end), (RangeAxis::Rows, 0, 0)),
+            other => panic!("expected a WholeRange, got {other:?}"),
+        }
+        match parse("=SUM(2:5)").unwrap() {
+            Expr::Call(_, args) => match &args[0] {
+                Expr::WholeRange(w) => {
+                    assert_eq!((w.axis, w.start, w.end), (RangeAxis::Rows, 1, 4))
+                }
+                other => panic!("expected a WholeRange, got {other:?}"),
+            },
+            other => panic!("expected a Call, got {other:?}"),
+        }
+        // Mixed anchoring: `$3:1` -> rows 0..2; the anchor rides with the corner it lands on, so
+        // `$3` (abs, row 2) normalizes to `end` and the un-anchored `1` (row 0) to `start`.
+        match parse("=$3:1").unwrap() {
+            Expr::WholeRange(w) => {
+                assert_eq!((w.start, w.end), (0, 2));
+                assert!(!w.start_abs && w.end_abs);
+            }
+            other => panic!("expected a WholeRange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sheet_qualified_whole_refs_carry_the_sheet_name() {
+        use crate::refs::RangeAxis;
+        match parse("=SUM(Data!A:A)").unwrap() {
+            Expr::Call(_, args) => match &args[0] {
+                Expr::WholeRange(w) => {
+                    assert_eq!(w.axis, RangeAxis::Columns);
+                    assert_eq!(w.sheet.as_ref().map(SheetName::as_str), Some("Data"));
+                }
+                other => panic!("expected a WholeRange, got {other:?}"),
+            },
+            other => panic!("expected a Call, got {other:?}"),
+        }
+        match parse("=Sheet1!1:1").unwrap() {
+            Expr::WholeRange(w) => {
+                assert_eq!(w.axis, RangeAxis::Rows);
+                assert_eq!(w.sheet.as_ref().map(SheetName::as_str), Some("Sheet1"));
+            }
+            other => panic!("expected a WholeRange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_whole_refs_are_located_refusals_never_panic() {
+        // A cross-axis pairing (`A:1`) is a refusal, not a WholeRange.
+        assert_eq!(parse_err("=A:1"), DiagCode::UnexpectedToken);
+        assert_eq!(parse_err("=1:A"), DiagCode::UnexpectedToken);
+        // A dangling colon has no closing endpoint.
+        assert_eq!(parse_err("=A:"), DiagCode::UnexpectedEof);
+        // A genuine bare defined name (no `:`) is still reserved, not misread as a column.
+        assert_eq!(parse_err("=Foo"), DiagCode::ReservedName);
+        // But two column-shaped words around a `:` ARE a whole-column range (Excel-faithful: any
+        // all-letter token is a column, case-insensitive), even multi-letter ones — the model
+        // clamps them to the used region like any other whole-column ref.
+        assert!(matches!(parse("=Foo:Bar"), Ok(Expr::WholeRange(_))));
+        // A non-integer row is not a whole-row endpoint — the `:` fold then refuses the literal pair.
+        assert_eq!(parse_err("=1.5:2"), DiagCode::ReservedDynamicRange);
+    }
+
+    #[test]
+    fn a_bounds_blind_eval_of_a_whole_range_is_ref() {
+        // charlie-ast has no sheet extent, so an UNBOUND whole reference is `#REF!` here (the model
+        // rewrites it to a bounded range before eval; see eval.rs).
+        assert_eq!(run("=SUM(A:A)"), Value::Error(ErrKind::Ref));
     }
 
     #[test]
