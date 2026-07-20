@@ -1,46 +1,41 @@
-<!-- Concern: the repo's public orientation — what charlie-cli is, its current status, and the target crate architecture | Non-concern: how work is done here (posture, the commit gate, delegation — CLAUDE.md owns those) and the formula-engine internals (charlie-ast owns those) | IO: none -->
+<!-- Concern: the repo's public orientation — what charlie-cli is, its status, and the crate architecture | Non-concern: how work is done here (posture, the commit gate, delegation — CLAUDE.md owns those), the contract (SPEC.md), and the command/flag surface (charlie-cli --help owns that) | IO: none -->
 # charlie
 
-**Production Rust workspace for `charlie-cli`** — a spreadsheet whose storage and edit surface
-is a plain filesystem (tabs = folders, cells/ranges = annotated files), rendered and linted from
-the terminal. Named for Charles Simonyi, the creator of Excel.
+**Production Rust workspace for `charlie-cli`** — a command-line tool that renders, lints, and
+evaluates a spreadsheet stored as a plain **filesystem**: tabs are folders, cells and ranges are
+files named by their A1 range. The spreadsheet *is* the filesystem; `charlie-cli` reads and computes
+it — it is not itself a spreadsheet. Named for Charles Simonyi.
 
 ## Status
 
-Build-out, **unreleased**. Three crates have landed — `charlie-ast` (the formula-language contract
-surface), `charlie-model` (the filesystem spreadsheet model), and `charlie-cli` (the thin
-render/lint binary) — realizing the `cli -> model -> ast` firewall end-to-end. Contracts are still
-ours to break freely until a real consumer exists. Code lands only when a bet is proven in the
-`project-charlie` workspace and a prod-native plan graduates. See `CLAUDE.md` for posture and the
-commit gate.
+Build-out, **unreleased**. Five crates realize a `cli → model → ast` firewall: `charlie-ast` (the
+formula language), `charlie-model` (the filesystem spreadsheet model), `charlie-ingest`
+(`.xlsx`/`.ods` import), `charlie-cli` (the thin binary), and `conformance` (Excel-parity grading).
+Contracts are ours to break until a real consumer exists. See `CLAUDE.md` for posture and the commit
+gate, and `SPEC.md` for the contract.
 
-## Using the CLI
-
-The binary is `charlie-cli` (crate `charlie-cli`). Run it stack-natively:
+## Using it
 
 ```
-cargo run -p charlie-cli -- render <workbook-dir> [--tab <name>] [--range <A3:G8>] [--values|--functions]
-cargo run -p charlie-cli -- check  <workbook-dir>
-cargo run -p charlie-cli -- --help      # the full surface (source-owned; never re-enumerated here)
+cargo run -p charlie-cli -- --guide     # the on-disk model + authoring, in one screen
+cargo run -p charlie-cli -- --help      # the command / flag / exit-code surface (source-owned)
+cargo run -p charlie-cli -- sample ./demo && cargo run -p charlie-cli -- tree ./demo
 ```
 
-`render` draws a tab (or a sub-range) as an ASCII table with a column-letter header and a
-row-number gutter — `--values` (default, demand-driven: only the viewport's cone evaluates) or
-`--functions` (formula text). `check` lints the
-workbook (overlap, dimension-mismatch, cycle) as an ASCII table pointing at the offending file(s)
-and exits non-zero on any error-severity diagnostic. The authoritative flag/exit-code list lives in
-`charlie-cli --help`, not this README.
+`charlie-cli` renders (`render`, `tree`), lints (`check`), evaluates (`eval`), traces dependencies
+(`trace`), and imports (`import`) a workbook. The authoritative surface lives in `--help` and
+`--guide` — this README stays short on purpose, so it can't go stale.
 
-## Architecture (target)
+## Architecture
 
-- `charlie-ast` — the formula language: AST + parser + evaluator. Source-free core, provenance in
-  side-channels, located refusals. No knowledge of the filesystem. (`ast-standards.md`)
-- `charlie-model` — the filesystem spreadsheet model: tabs, ranges, overlap detection, on-demand
-  evaluation. Consumes `charlie-ast` through a narrow trait; nothing of xlsx.
-- `charlie-cli` — the thin binary: `render`, `check`, and friends. ASCII table output.
-- (later) `charlie-xlsx` — import/export serde. Not part of the core.
+- `charlie-ast` — the formula language: AST + parser + evaluator. No filesystem knowledge.
+- `charlie-model` — the filesystem spreadsheet model: tabs, ranges, overlap, demand-driven eval, the
+  persistent result cache. Consumes `charlie-ast` through a narrow trait.
+- `charlie-ingest` — `.xlsx` / `.ods` import (the format firewall; `calamine` is confined here).
+- `charlie-cli` — the thin binary; text output.
+- `conformance` — the Excel-parity grading harness.
 
 ## Context
 
-This repo is the graduation target of the outer `project-charlie` product-manager workspace.
-Coding standards live in `~/.knowledge-base/coding-standards/`.
+Graduation target of the `charlie-cli-pm` product-manager workspace. Coding standards live in
+`~/.knowledge-base/coding-standards/`.

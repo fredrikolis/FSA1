@@ -1,5 +1,5 @@
 // Concern: charlie-cli — the THIN binary shell (`charlie-cli render` / `check` / `eval` / `trace` / `tree` / `sample` / `import` / `--guide`): parse argv, drive `charlie-model` (load a workbook, ask for a render grid, a lint report, or an ad-hoc `=formula`'s value; or WRITE the model's tutorial workbook to disk for `sample`) or `charlie-ingest` (CONVERT an `.ods`/`.xlsx` into a workbook for `import`), and hand the structured outcome to the `output` layer — which renders it as its human ASCII table / scalar / prose on stdout (text is the sole output form) — then set the exit code an agent branches on (0 clean · 1 I/O failure · 2 bad args · 3 error-severity diagnostics or error-valued eval or an untranslatable import · 4 target-dir conflict · 24 path not found); it holds NO spreadsheet logic — the demand-driven eval, value spelling, diagnostics, and the sample CONTENT all live in the model, the ODS/xlsx conversion in `charlie-ingest`, the guide text in `guide`, comfy-table drawing in `ascii`, and the text emitters + `ErrorCode`/exit mapping in `output` | Non-concern: WHAT a cell computes to or WHY a diagnostic fires (charlie-model owns the render model + lint + ad-hoc formula eval + sample content, charlie-ingest owns the ODS/xlsx import + the format firewall), the formula language (charlie-ast), and the text rendering itself (`output` owns the emitters, `ascii` the tables) | IO: (argv, a workbook directory on disk, a `.ods`/`.xlsx` source) -> a render grid / lint report / scalar value / sample-write / imported workbook, rendered by `output` as text to stdout + an exit code; a freshly-written sample or imported workbook tree on disk; operational errors to stderr
-//! `charlie-cli` — render and lint a filesystem spreadsheet. The binary is a thin consumer of
+//! `charlie-cli` — render, lint, and evaluate a spreadsheet stored as a filesystem. The binary is a thin consumer of
 //! `charlie-model`: it parses arguments, calls the model's `render`/`lint`/`eval` surface, and hands
 //! the returned plain-data outcome to the [`output`] layer, which renders it as a human ASCII table /
 //! scalar / prose on stdout. Text is the sole output form. All spreadsheet logic stays in the model
@@ -720,7 +720,7 @@ fn print_help(cmd: Option<&str>) {
     print!("{text}");
 }
 
-const GLOBAL_HELP: &str = r#"charlie-cli — render and lint a filesystem spreadsheet (tabs = folders, cells/ranges = files)
+const GLOBAL_HELP: &str = r#"charlie-cli — render, lint, and evaluate a spreadsheet stored as a filesystem (tabs = folders, cells/ranges = files)
 
 USAGE:
   charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions]

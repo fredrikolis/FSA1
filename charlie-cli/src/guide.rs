@@ -3,7 +3,7 @@
 //! scannable, facts not prose. Deeper rationale lives in the governing code; the contract is `SPEC.md`.
 
 /// The terse guide, printed verbatim by `charlie-cli --guide`.
-pub const GUIDE: &str = r#"charlie-cli — a spreadsheet that IS a filesystem. Terse guide; the contract is SPEC.md.
+pub const GUIDE: &str = r#"charlie-cli renders a spreadsheet that IS a filesystem. Terse guide; the contract is SPEC.md.
 
 STRUCTURE
   workbook/ = a directory.  Tab = a sub-folder.  Cell/range = a file inside a tab.
