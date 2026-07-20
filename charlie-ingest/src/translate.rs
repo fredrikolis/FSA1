@@ -165,13 +165,12 @@ fn rewrite_body(body: &str, res: &Resolution, sheet: &str, row: u32) -> Result<S
                             out.push('('); // `TRUE(<args>)` is not niladic; keep the `(`
                         }
                     }
-                } else if !after_bang {
-                    // A bare identifier: resolve it as a defined name, else keep it verbatim.
-                    match res.name_target(&ident, sheet) {
-                        Some(target) => out.push_str(target),
-                        None => out.push_str(&ident),
-                    }
                 } else {
+                    // A bare identifier: a defined NAME or a plain word — kept VERBATIM. Defined names
+                    // are no longer inlined at import (HARD RULE 2); they are emitted as on-disk FS4
+                    // entries and resolved at LOAD (an unknown name token loads as a located `#NAME?`).
+                    // `after_bang` (the tail after a `!`) is likewise verbatim, so a name colliding with
+                    // a sheet qualifier is never mangled (the `[`-table branch above still uses it).
                     out.push_str(&ident);
                 }
             }
@@ -379,8 +378,9 @@ mod tests {
         assert_eq!(ok("of:=[.99]"), "=[.99]"); // no column -> malformed address
     }
 
-    /// A small workbook resolution: a `Sales` table (A1:C4, cols Region/Q1/Q2) on `Data`, plus a
-    /// workbook name `TaxRate` -> `Data!$H$1` — enough to exercise the token-boundary rules.
+    /// A small workbook resolution: a `Sales` table (A1:C4, cols Region/Q1/Q2) on `Data`. Defined NAMES
+    /// are no longer resolved by `translate` (they are emitted as FS4 entries and resolved at load), so
+    /// the resolution carries only the TABLE geometry.
     fn ctx() -> Resolution {
         let mut r = Resolution::empty();
         r.add_table(
@@ -391,7 +391,6 @@ mod tests {
             1,
             0,
         );
-        r.add_name("TaxRate", None, "Data!$H$1");
         r
     }
 
@@ -400,9 +399,10 @@ mod tests {
     }
 
     #[test]
-    fn resolves_names_and_structured_refs_to_a1() {
-        // A defined name -> its A1 target; a structured column -> the data body; @Col -> this row.
-        assert_eq!(tr("TaxRate*100", 0), "=Data!$H$1*100");
+    fn resolves_structured_refs_to_a1_but_leaves_names_verbatim() {
+        // A defined name is LEFT VERBATIM (resolved at load, FS4); a structured column -> the data body;
+        // @Col -> this row.
+        assert_eq!(tr("TaxRate*100", 0), "=TaxRate*100");
         assert_eq!(tr("SUM(Sales[Q1])", 0), "=SUM(B2:B4)");
         assert_eq!(
             tr("SUM(Sales[[#Headers],[Amount]])", 0),
@@ -441,34 +441,27 @@ mod tests {
     }
 
     #[test]
-    fn a_sheet_qualifier_lhs_is_never_resolved_as_a_defined_name() {
-        // HARD RULE 5: an identifier that is itself a SHEET qualifier (immediately followed by `!`) is
-        // pushed verbatim — a defined name that collides with a sheet name must never be substituted
-        // INTO the LHS of a cross-sheet reference (which would silently corrupt a correct formula).
-        let mut r = Resolution::empty();
-        r.add_name("Data", None, "Zzz!$A$1"); // a defined name colliding with the sheet name `Data`
+    fn a_sheet_qualified_reference_passes_through_unchanged() {
+        // A cross-sheet reference is copied verbatim (translate no longer substitutes names, so neither
+        // the `Sheet!` qualifier nor the address after the `!` is ever rewritten).
+        let r = Resolution::empty();
         let tr = |raw: &str| translate_formula_ctx(raw, &r, "Sheet1", 0);
-        assert_eq!(tr("Data!A1"), "=Data!A1"); // the qualifier is untouched, not `=Zzz!$A$1!A1`
+        assert_eq!(tr("Data!A1"), "=Data!A1");
         assert_eq!(tr("SUM(Data!A1:A3)"), "=SUM(Data!A1:A3)");
-        // The RHS after the `!` was already guarded; both ends now hold.
         assert_eq!(tr("Data!Data"), "=Data!Data");
     }
 
     #[test]
-    fn a_quoted_sheet_name_is_copied_atomically_not_walked_as_names() {
-        // HARD RULE 5: a single-quoted sheet name is copied through the closing quote, so its interior
-        // words are never walked as bare identifiers and resolved as defined names — even when a word
-        // inside the quoted name collides with a real defined name.
-        let mut r = Resolution::empty();
-        r.add_name("Report", None, "Zzz!$A$1"); // collides with a word inside `'Annual Report'`
-        r.add_name("Data", None, "Zzz!$B$1"); // collides with a word inside `'It''s Data'`
+    fn a_quoted_sheet_name_is_copied_atomically() {
+        // A single-quoted sheet name is copied through the closing quote (its interior words are never
+        // walked as bare identifiers), honouring the `''` escape.
+        let r = Resolution::empty();
         let tr = |raw: &str| translate_formula_ctx(raw, &r, "Sheet1", 0);
         assert_eq!(tr("'Annual Report'!A1"), "='Annual Report'!A1");
         assert_eq!(
             tr("SUM('Annual Report'!A1:A3)"),
             "=SUM('Annual Report'!A1:A3)"
         );
-        // The `''` escape inside a quoted sheet name is preserved (a literal apostrophe in the name).
         assert_eq!(tr("'It''s Data'!A1"), "='It''s Data'!A1");
         // An unterminated quoted sheet name is untranslatable -> kept verbatim as `=<body>` (GRID6).
         assert_eq!(tr("'Annual Report!A1"), "='Annual Report!A1");

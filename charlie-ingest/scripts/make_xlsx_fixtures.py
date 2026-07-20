@@ -1,4 +1,4 @@
-# Concern: AUTHOR the committed .xlsx test corpus for charlie-ingest — emit a small set of real Excel (OOXML) spreadsheets (via openpyxl) MIRRORING the .ods corpus (every value type, a SUM/formula chain, a cross-sheet reference, date cells, blanks, VLOOKUP/IF) PLUS an xlsx-only reference-resolution fixture (`resolution.xlsx`: a worksheet TABLE with structured references `Sales[Q1]`/`Sales[@Q1]`/`Sales[[#Headers],[Q1]]` and workbook DEFINED NAMES `TaxRate`/`AllQ1`, with hand-verified expected values) — so the same import->eval assertions hold and the importer's name/table -> A1 resolution is proven end-to-end. An xlsx formula is stored in Excel-A1 already (no `of:=`/`[.A1]`), and an openpyxl-written formula carries NO cached value (charlie re-evaluates), so these files exercise the reader's format-blind path, translate's near-noop-for-xlsx behaviour, and the resolver | Non-concern: the Rust importer/translation under test (src/**) and running the tests (the .xlsx artifacts this writes are committed; the venv that runs this is gitignored); the .ods corpus (make_fixtures.py owns that) | IO: () -> writes tests/fixtures/*.xlsx next to this script's parent crate
+# Concern: AUTHOR the committed .xlsx test corpus for charlie-ingest — emit a small set of real Excel (OOXML) spreadsheets (via openpyxl) MIRRORING the .ods corpus (every value type, a SUM/formula chain, a cross-sheet reference, date cells, blanks, VLOOKUP/IF) PLUS an xlsx-only reference-resolution fixture (`resolution.xlsx`: a worksheet TABLE with structured references `Sales[Q1]`/`Sales[@Q1]`/`Sales[[#Headers],[Q1]]` and workbook DEFINED NAMES `TaxRate`/`AllQOne`, with hand-verified expected values) — so the same import->eval assertions hold and the importer's name/table -> A1 resolution is proven end-to-end. An xlsx formula is stored in Excel-A1 already (no `of:=`/`[.A1]`), and an openpyxl-written formula carries NO cached value (charlie re-evaluates), so these files exercise the reader's format-blind path, translate's near-noop-for-xlsx behaviour, and the resolver | Non-concern: the Rust importer/translation under test (src/**) and running the tests (the .xlsx artifacts this writes are committed; the venv that runs this is gitignored); the .ods corpus (make_fixtures.py owns that) | IO: () -> writes tests/fixtures/*.xlsx next to this script's parent crate
 """Regenerate the committed .xlsx fixture corpus. Run from a venv with openpyxl installed:
 
     python3 -m venv .fixture-venv && .fixture-venv/bin/pip install openpyxl
@@ -88,8 +88,9 @@ def make_resolution():
         F3 =Sales[@Q1]               -> B3 = 20   (this-row, formula on row 3)
         G2 =Sales[[#Headers],[Q1]]   -> B1 = "Q1" (the header cell)
         H2 =TaxRate*100              -> Data!$H$1 * 100 = 0.2*100 = 20
-        H3 =SUM(AllQ1)               -> SUM(Data!$B$2:$B$4) = 60
-    Defined names: TaxRate -> Data!$H$1 (a cell), AllQ1 -> Data!$B$2:$B$4 (a range). openpyxl writes no
+        H3 =SUM(AllQOne)             -> SUM(Data!$B$2:$B$4) = 60
+    Defined names: TaxRate -> Data!$H$1 (a cell), AllQOne -> Data!$B$2:$B$4 (a range; a
+    valid FS4 identifier, unlike `AllQ1` which parses as an A1 address). openpyxl writes no
     cached values, so charlie re-evaluates every formula from the resolved A1 the importer produced.
     """
     from openpyxl.workbook.defined_name import DefinedName
@@ -117,9 +118,9 @@ def make_resolution():
     t["G2"] = "=Sales[[#Headers],[Q1]]"
     t["H1"] = 0.2
     t["H2"] = "=TaxRate*100"
-    t["H3"] = "=SUM(AllQ1)"
+    t["H3"] = "=SUM(AllQOne)"
     wb.defined_names.add(DefinedName("TaxRate", attr_text="Data!$H$1"))
-    wb.defined_names.add(DefinedName("AllQ1", attr_text="Data!$B$2:$B$4"))
+    wb.defined_names.add(DefinedName("AllQOne", attr_text="Data!$B$2:$B$4"))
     write(wb, "resolution.xlsx")
 
 

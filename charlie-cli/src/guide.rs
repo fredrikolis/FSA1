@@ -22,6 +22,18 @@ FILE BODY — a TSV grid, one cell per coordinate
   The grid must fill the declared range exactly (B2:D9 ⇒ 8×3 rows×cols, else dimension error).
   No drag-fill: write one explicit formula per cell (=B2*C2, =B3*C3, …).
 
+NAMES — a named cell/range/formula, by an identifier (not an A1 address)
+  A name is an entry in its SCOPE folder: a tab folder = sheet-scoped, the workbook root = workbook-
+  scoped (a sheet-scoped name shadows a workbook one of the same identifier). Reference it in a
+  formula by its identifier: =SUM(Days), =total*2.
+    single cell → a SYMLINK to the cell file:            ln -s B5 Sheet1/total
+    a range     → two corner symlinks .begin / .end:     ln -s A2 Sheet1/Days.begin
+                                                         ln -s A366 Sheet1/Days.end
+    a formula/constant → a regular file holding =expr:    printf '=Base*1.05' > Sheet1/Rate
+                                                         printf '3.14' > Sheet1/Pi
+  A name's identifier must NOT parse as an A1 address (rename Q1); a range needs BOTH corners.
+  Editing through a symlink writes its cell (CORE3). Distribution is a tar (it preserves symlinks).
+
 AUTHORING — the filesystem IS the write surface; there is NO write command
   Author/edit by writing the A1-named cell files DIRECTLY with ordinary file tools. A cell is its own
   file: its name is its A1 range, its content is its grid. charlie-cli only READS (render/check/eval).

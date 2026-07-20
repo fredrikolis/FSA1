@@ -67,6 +67,10 @@ pub enum Code {
     /// A trace (CLI2) target names a tab index outside the workbook's sheets — a located refusal
     /// (CORE2) rather than a panic. Structural (no cell value), so it cites no `ErrKind` class.
     CellOutOfRange,
+    /// An FS4 name entry cannot be represented as a name: its identifier parses as an A1 address, a
+    /// range has a lone/inverted/cross-sheet corner, or an identifier is defined twice in one scope.
+    /// A load-time structural refusal (like a malformed filename) — no cell value, so no `ErrKind`.
+    NameRefusal,
 }
 
 impl Code {
@@ -88,6 +92,7 @@ impl Code {
         Code::DepthLimit,
         Code::RangeTooLarge,
         Code::CellOutOfRange,
+        Code::NameRefusal,
     ];
 
     /// The stable kebab-case code string a consumer switches on and a diagnostic renders as
@@ -110,6 +115,7 @@ impl Code {
             Code::DepthLimit => "depth-limit",
             Code::RangeTooLarge => "range-too-large",
             Code::CellOutOfRange => "cell-out-of-range",
+            Code::NameRefusal => "name-refusal",
         }
     }
 
@@ -134,6 +140,9 @@ impl Code {
             Code::DepthLimit => "a formula dependency chain must not exceed the pull-depth bound",
             Code::RangeTooLarge => "a referenced range must not exceed the materialization bound",
             Code::CellOutOfRange => "a traced tab index must be within the workbook's sheets",
+            Code::NameRefusal => {
+                "a name must be identified by an identifier, not an A1 address, with matched range corners"
+            }
         }
     }
 
@@ -190,6 +199,9 @@ impl Code {
             }
             Code::CellOutOfRange => {
                 "trace a cell in an existing tab: pick a tab index within the workbook's sheet list"
+            }
+            Code::NameRefusal => {
+                "rename the name entry so its identifier is not an A1 address; give a range name both a `.begin` and a `.end` corner on the same sheet with begin above-left of end"
             }
         }
     }
@@ -404,7 +416,7 @@ mod tests {
     #[test]
     fn registry_is_self_consistent() {
         // Every variant appears in ALL exactly once, and code strings are unique.
-        assert_eq!(Code::ALL.len(), 16);
+        assert_eq!(Code::ALL.len(), 17);
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();
         codes.sort_unstable();
         let before = codes.len();

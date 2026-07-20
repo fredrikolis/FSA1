@@ -838,6 +838,15 @@ AUTHORING (there is NO write command by design — the filesystem IS the write s
     charlie-cli check ./budget --cell Sheet1!H3    # scoped validation of just that cell
   Then `render`/`check` to verify. See `charlie-cli --guide` for the filename + body grammar.
 
+NAMES (a named cell/range/formula, referenced in a formula by its identifier):
+  A name lives in its SCOPE folder — a tab folder is sheet-scoped, the workbook root is workbook-scoped
+  (a sheet-scoped name shadows a workbook one). A single cell / range is a SYMLINK to the cell file(s)
+  (`.begin`/`.end` name a range's two corners); a computed name is a regular file holding `=ref/expr`:
+    ln -s B5 ./budget/Sheet1/total                 # =total resolves to Sheet1!B5 (write-through)
+    ln -s A2 ./budget/Sheet1/Days.begin; ln -s A366 ./budget/Sheet1/Days.end   # =SUM(Days)
+    printf '=Base*1.05' > ./budget/Sheet1/Rate     # a named formula (a cell not at a coordinate)
+  A name's identifier must NOT parse as an A1 address; distribute the tree as a tar (it keeps symlinks).
+
 EXAMPLES:
   charlie-cli sample ./demo && charlie-cli render ./demo
   charlie-cli import book.xlsx ./book && charlie-cli render ./book

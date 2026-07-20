@@ -5,16 +5,6 @@
 
 use charlie_ast::a1::{format_cell, parse_a1};
 
-/// One resolvable defined name: its spelling, its scope (`None` = workbook-global, `Some(sheet)` =
-/// sheet-local — which shadows a workbook name on that sheet), and its already-A1 target string
-/// (`Sheet!$B$1`, `$A$1:$B$2`, …). Only names whose target is a real cell/range ref are stored.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct NameEntry {
-    name: String,
-    scope: Option<String>,
-    target: String,
-}
-
 /// One table's geometry, in 0-based ABSOLUTE grid coordinates, everything a structured reference needs.
 /// The rectangle `(c0,r0)..=(c1,r1)` is the table's FULL `ref` (header rows + data body + totals rows);
 /// `header_rows`/`totals_rows` slice it into regions. `columns` are the header names in left-to-right
@@ -32,12 +22,13 @@ struct TableGeom {
     totals_rows: u32,
 }
 
-/// The workbook's neutral name + table resolution context. Built by the reader, queried by `translate`.
-/// Empty for a source with neither (or a format whose names are not resolved) — then every lookup misses
-/// and tokens pass through verbatim (loading as `#NAME?` if truly unresolvable).
+/// The workbook's neutral TABLE resolution context. Built by the reader, queried by `translate` to
+/// resolve `Table[…]` structured references INLINE at import. Empty for a source with no tables — then
+/// every lookup misses and a structured-ref token passes through verbatim (loading as `#NAME?` if truly
+/// unresolvable). Defined NAMES are no longer inlined here — they are emitted as on-disk FS4 entries
+/// (`names` module) and resolved at LOAD (HARD RULE 2).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Resolution {
-    names: Vec<NameEntry>,
     tables: Vec<TableGeom>,
 }
 
@@ -70,24 +61,7 @@ impl Resolution {
 
     /// True when there is nothing to resolve (lets the reader/translator skip work).
     pub fn is_empty(&self) -> bool {
-        self.names.is_empty() && self.tables.is_empty()
-    }
-
-    /// Register a defined name from a `(name, scope, target-formula)` triple, KEEPING it only if the
-    /// target is a plain cell/range ref (optionally `Sheet!`-qualified, `$`-anchored). A built-in
-    /// (`_xlnm.*`), a constant (`{…}`), a formula-name (`MATCH(…)`), a union (`A1,B1`) or an external
-    /// ref is dropped — its token then stays verbatim and loads as a located `#NAME?` (HARD RULE 5).
-    pub fn add_name(&mut self, name: &str, scope: Option<String>, target: &str) {
-        if name.starts_with("_xlnm.") || name.is_empty() {
-            return;
-        }
-        if let Some(t) = classify_target(target) {
-            self.names.push(NameEntry {
-                name: name.to_string(),
-                scope,
-                target: t,
-            });
-        }
+        self.tables.is_empty()
     }
 
     /// Register a table from its raw parts. A `ref` that does not parse as a rectangle is dropped
@@ -122,21 +96,6 @@ impl Resolution {
         self.tables
             .iter()
             .any(|t| t.name.eq_ignore_ascii_case(ident))
-    }
-
-    /// The A1 target of a defined name, resolving scope: a sheet-local name on `cur_sheet` shadows a
-    /// workbook-global one; names are Excel case-insensitive. `None` -> the token is not a resolvable
-    /// name (stays verbatim).
-    pub fn name_target(&self, name: &str, cur_sheet: &str) -> Option<&str> {
-        self.names
-            .iter()
-            .find(|n| n.name.eq_ignore_ascii_case(name) && n.scope.as_deref() == Some(cur_sheet))
-            .or_else(|| {
-                self.names
-                    .iter()
-                    .find(|n| n.name.eq_ignore_ascii_case(name) && n.scope.is_none())
-            })
-            .map(|n| n.target.as_str())
     }
 
     /// Resolve a structured reference `table[inner]` to a plain A1 string (`Sheet!`-qualified only when
@@ -322,39 +281,6 @@ impl TableGeom {
             format!("{}!{a1}", sheet_ref(&self.sheet))
         }
     }
-}
-
-/// Keep a name's target ONLY if it is a plain cell/range reference, returning it verbatim (already
-/// charlie-A1). Rejects a constant/formula/union/external target (see [`Resolution::add_name`]).
-fn classify_target(target: &str) -> Option<String> {
-    let t = target.trim();
-    if t.is_empty() {
-        return None;
-    }
-    // Split the (optional) sheet qualifier from the address at the LAST `!`.
-    let (sheet, addr) = match t.rsplit_once('!') {
-        Some((s, a)) => (Some(s.trim()), a),
-        None => (None, t),
-    };
-    // The address must be a pure cell/range ref: a formula/constant/union carries one of these chars
-    // (or a space), a plain address never does. `$` anchors are fine; `parse_a1` enforces the rest.
-    if addr.contains(['{', '}', '(', ')', ',', ' ', '#']) {
-        return None;
-    }
-    let addr_ok = match addr.split_once(':') {
-        Some((l, r)) => parse_a1(l).is_ok() && parse_a1(r).is_ok(),
-        None => parse_a1(addr).is_ok(),
-    };
-    if !addr_ok {
-        return None;
-    }
-    // A sheet qualifier (bare or `'quoted'`, so spaces are fine) must not itself be a formula/union.
-    if let Some(s) = sheet
-        && (s.is_empty() || s.contains(['{', '}', '(', ')', ',']))
-    {
-        return None;
-    }
-    Some(t.to_string())
 }
 
 /// Parse a table `ref` (`A1:B89`, or a single `A1`) into `(c0,r0,c1,r1)` 0-based absolute corners.
@@ -721,47 +647,5 @@ mod tests {
             r.resolve_structured("Rev", "Q1", "Data", 9).as_deref(),
             Some("B2:B4")
         );
-    }
-
-    #[test]
-    fn names_keep_only_real_refs_and_respect_scope() {
-        let mut r = Resolution::empty();
-        r.add_name("TaxRate", None, "Data!$H$1");
-        r.add_name("AllQ1", None, "Data!$B$2:$B$4");
-        // Unsupported targets are dropped -> stay #NAME?.
-        r.add_name("Days", None, "{0,1,2,3,4,5,6}");
-        r.add_name("Opt", None, "MATCH(X,Y,0)");
-        r.add_name("Union", None, "Sheet1!A1,Sheet1!B1");
-        r.add_name("_xlnm.Print_Area", None, "Sheet1!$A$1:$B$2");
-        assert_eq!(r.name_target("TaxRate", "Data"), Some("Data!$H$1"));
-        assert_eq!(r.name_target("allq1", "Data"), Some("Data!$B$2:$B$4")); // case-insensitive
-        assert_eq!(r.name_target("Days", "Data"), None);
-        assert_eq!(r.name_target("Opt", "Data"), None);
-        assert_eq!(r.name_target("Union", "Data"), None);
-        assert_eq!(r.name_target("_xlnm.Print_Area", "Data"), None);
-
-        // Scope: a sheet-local name shadows a workbook name of the same spelling on its sheet.
-        r.add_name("Rate", None, "Data!$A$1");
-        r.add_name("Rate", Some("Sheet2".into()), "Sheet2!$Z$9");
-        assert_eq!(r.name_target("Rate", "Sheet2"), Some("Sheet2!$Z$9"));
-        assert_eq!(r.name_target("Rate", "Data"), Some("Data!$A$1"));
-    }
-
-    #[test]
-    fn classify_target_accepts_refs_and_rejects_the_rest() {
-        assert_eq!(
-            classify_target("Calendar!$B$1").as_deref(),
-            Some("Calendar!$B$1")
-        );
-        assert_eq!(classify_target("$A$1:$B$2").as_deref(), Some("$A$1:$B$2"));
-        assert_eq!(
-            classify_target("'My Sheet'!$B$1").as_deref(),
-            Some("'My Sheet'!$B$1")
-        );
-        assert_eq!(classify_target("{1,2,3}"), None);
-        assert_eq!(classify_target("MATCH(x,y,0)"), None);
-        assert_eq!(classify_target("A1,B1"), None);
-        assert_eq!(classify_target("Sheet1!#REF!"), None);
-        assert_eq!(classify_target("$A:$A"), None); // whole-column: unsupported -> #NAME?
     }
 }

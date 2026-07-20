@@ -7,6 +7,9 @@ use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape};
 // a real temp-dir workbook and the eval-counter instrument), keeping this behavioral file well under
 // the per-file line budget.
 mod cache;
+// The FS4 NAME fitness pins (symlink + ref-file representations, scope, refusals, write-through) live
+// in their own submodule — they need a real temp-dir workbook with symlinks, so `load_dir`.
+mod names;
 
 /// A file's content is exactly its grid (GRID1) — no annotation line. This helper owns the body
 /// string so the `&file("…")` call sites hand an owned contents to the loader.

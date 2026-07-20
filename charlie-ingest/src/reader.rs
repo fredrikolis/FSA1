@@ -16,6 +16,7 @@ use charlie_ast::ErrKind;
 
 use crate::dates::{iso_datetime_to_serial, iso_duration_to_serial};
 use crate::error::{ErrorKind, IngestError};
+use crate::names::DefinedName;
 use crate::resolve::Resolution;
 use crate::source::{SheetSource, SourceBook, SourceCell};
 use crate::xlsx_meta;
@@ -68,10 +69,15 @@ pub fn read_file(path: &Path) -> Result<SourceBook, IngestError> {
     for name in &names {
         sheets.push(read_sheet(&mut wb, name)?);
     }
-    // Build the reference resolution (defined names + table geometry) that `translate` applies so the
-    // engine only ever sees A1 (HARD RULE 4). This is where names/tables are resolved — in ingest.
-    let resolution = build_resolution(path, &mut wb, &names)?;
-    Ok(SourceBook { sheets, resolution })
+    // Build the TABLE resolution (resolved INLINE by `translate`) and collect the workbook's DEFINED
+    // NAMES (emitted as on-disk FS4 entries and resolved at LOAD, HARD RULE 2) so the engine only ever
+    // sees A1 (HARD RULE 4).
+    let (resolution, defined_names) = build_resolution(path, &mut wb, &names)?;
+    Ok(SourceBook {
+        sheets,
+        resolution,
+        names: defined_names,
+    })
 }
 
 /// Build the workbook's [`Resolution`] from the source. For an xlsx this fuses two sources kept behind
@@ -83,9 +89,9 @@ fn build_resolution(
     path: &Path,
     wb: &mut Sheets<BufReader<File>>,
     sheet_order: &[String],
-) -> Result<Resolution, IngestError> {
+) -> Result<(Resolution, Vec<DefinedName>), IngestError> {
     let Sheets::Xlsx(x) = wb else {
-        return Ok(Resolution::empty());
+        return Ok((Resolution::empty(), Vec::new()));
     };
     // table displayName -> its sheet (via calamine). `load_tables` populates a possibly-empty table set;
     // if it errors we simply resolve no tables (their structured refs then load as located #NAME?).
@@ -112,18 +118,23 @@ fn build_resolution(
 
     let meta = xlsx_meta::read_meta(path)?;
     let mut res = Resolution::empty();
+    let mut defined_names = Vec::new();
     for n in meta.names {
         // localSheetId is a 0-based index into the workbook's sheet order. NOTE: `sheet_order` is
         // calamine's `sheet_names()`; this assumes it matches workbook.xml's 0-based sheet indexing. For
         // the common all-worksheet workbook it does. Were calamine ever to omit or reorder sheet types
         // (e.g. chart sheets), a sheet-local name could be attributed to the wrong sheet's scope — a
-        // wrong scope only ever narrows/mis-shadows a lookup, so a mis-scoped name simply fails to
-        // resolve and its token loads as a located #NAME? (HARD RULE 5), never a silently-wrong target.
+        // wrong scope only ever narrows/mis-shadows a lookup, so a mis-scoped name's entry lands in the
+        // wrong folder and its refs load as #NAME? (HARD RULE 5), never a silently-wrong target.
         let scope = n
             .local_sheet_id
             .and_then(|i| sheet_order.get(i as usize))
             .cloned();
-        res.add_name(&n.name, scope, &n.target);
+        defined_names.push(DefinedName {
+            name: n.name,
+            scope,
+            target: n.target,
+        });
     }
     for t in meta.tables {
         if let Some(sheet) = table_sheet.get(&t.name) {
@@ -137,7 +148,7 @@ fn build_resolution(
             );
         }
     }
-    Ok(res)
+    Ok((res, defined_names))
 }
 
 /// Read one sheet: fuse its value and formula ranges into an A1-anchored rectangle. Format-blind — it

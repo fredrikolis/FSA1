@@ -5,6 +5,7 @@
 
 use charlie_ast::ErrKind;
 
+pub use crate::names::DefinedName;
 pub use crate::resolve::Resolution;
 
 /// One source cell, already mapped off its concrete format into charlie's value vocabulary (VAL3) plus
@@ -50,11 +51,13 @@ impl SheetSource {
     }
 }
 
-/// A whole workbook as neutral sheets, in source order, plus the reference [`Resolution`] (defined
-/// names + table geometry) the serializer applies while translating each formula so the engine only
-/// ever sees A1. `resolution` is empty for a source with no names/tables (or a format not yet resolved).
+/// A whole workbook as neutral sheets, in source order, plus the reference [`Resolution`] (TABLE
+/// geometry, resolved INLINE while translating each formula) and the [`DefinedName`]s (FS4 names,
+/// EMITTED as on-disk entries and resolved at LOAD, not inline). `resolution`/`names` are empty for a
+/// source with no tables/names (or a format not yet resolved).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceBook {
     pub sheets: Vec<SheetSource>,
     pub resolution: Resolution,
+    pub names: Vec<DefinedName>,
 }

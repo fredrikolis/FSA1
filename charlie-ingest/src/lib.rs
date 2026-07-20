@@ -10,6 +10,7 @@
 
 mod dates;
 pub mod error;
+mod names;
 mod reader;
 mod resolve;
 mod serialize;
@@ -20,9 +21,11 @@ mod xlsx_meta;
 use std::path::Path;
 
 pub use error::{ErrorKind, IngestError};
+pub use names::DefinedName;
 pub use resolve::Resolution;
 pub use source::{SheetSource, SourceBook, SourceCell};
 
+use names::emit_names;
 use serialize::sheet_files;
 
 /// What an import wrote: the tab names (in source order) and the count of per-cell files written.
@@ -117,6 +120,10 @@ fn materialize(book: &SourceBook, dest: &Path) -> Result<ImportReport, IngestErr
         }
         tabs.push(sheet.name.clone());
     }
+    // FS4: emit the workbook's defined names as on-disk entries (symlinks for static cell/range,
+    // ref-files for formulas/constants) AFTER every cell file exists, so a name symlink resolves and a
+    // blank corner can be materialized. Names are resolved at LOAD, not inlined here (HARD RULE 2).
+    emit_names(dest, &book.names)?;
     Ok(ImportReport { tabs, files })
 }
 
@@ -180,6 +187,7 @@ mod tests {
                 },
             ],
             resolution: Resolution::empty(),
+            names: Vec::new(),
         }
     }
 
@@ -227,6 +235,7 @@ mod tests {
                 cells: vec![SourceCell::Number(7.0), SourceCell::Blank],
             }],
             resolution: Resolution::empty(),
+            names: Vec::new(),
         };
         let report = write_book(&book, &dest).unwrap();
         assert_eq!(

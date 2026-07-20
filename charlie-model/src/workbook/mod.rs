@@ -1,4 +1,4 @@
-// Concern: the TWO-PASS evaluation engine's ROOT (ENG3) — the `Workbook` struct + its PUBLIC surface (load via `from_tabs`/`load_dir`; demand-driven reads `value_at`/`values_at`; the render surface `sheet_names`/`used_region`/`source_at`; `lint`; the ad-hoc `eval_formula` returning a `FormulaOutcome`; `CellSource`) and the demand ORCHESTRATION that sequences the two passes, plus the shared structural helpers (`covering`/`tab_name`/`file_name`/`refuse`) and engine invariants (`MAX_PULL_DEPTH`/`MAX_RANGE_CELLS`) the passes reuse; the passes themselves live in the private sibling submodules — `plan` (the `DepGraph`/`PlanNode` graph + PLAN pass), `evaluate` (the EVALUATE pass), `resolver` (the `Resolver` impl + range-materialization `Arena`) — none of whose engine types escape this module (ENG3 containment: `DepGraph`/`PlanNode`/`Arena` are `pub(super)` at most, re-exported by no one) | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), xlsx serde, the CLI render surface, and the PLAN/EVALUATE/resolver pass bodies (the submodules own them) | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a demanded cell / a viewport of cells) -> `Value`s, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
+// Concern: the TWO-PASS evaluation engine's ROOT (ENG3) — the `Workbook` struct + its PUBLIC surface (load via `from_tabs`/`load_dir`; demand-driven reads `value_at`/`values_at`; the render surface `sheet_names`/`used_region`/`source_at`; `lint`; the ad-hoc `eval_formula` returning a `FormulaOutcome`; `CellSource`) and the demand ORCHESTRATION that sequences the two passes, plus the shared structural helpers (`covering`/`tab_name`/`file_name`/`refuse`) and engine invariants (`MAX_PULL_DEPTH`/`MAX_RANGE_CELLS`) the passes reuse; the LOADER also separates FS4 NAME entries from cell/grid files (reading a symlink's target or a ref-file's content off disk in `load_dir`, since the pure `names` module is filesystem-blind), builds the `NameTable`, and RESOLVES each formula's name tokens to A1/expr at load (a source rewrite, keeping the engine A1-only, ENG1); the passes themselves live in the private sibling submodules — `plan` (the `DepGraph`/`PlanNode` graph + PLAN pass), `evaluate` (the EVALUATE pass), `resolver` (the `Resolver` impl + range-materialization `Arena`) — none of whose engine types escape this module (ENG3 containment: `DepGraph`/`PlanNode`/`Arena` are `pub(super)` at most, re-exported by no one) | Non-concern: the formula LANGUAGE (charlie-ast owns lex/parse/eval), the filename/grid/overlap GRAMMAR (this reuses `parse_file`/`detect_overlaps`), the name-table LOGIC + rewrite (the `names` module owns it), xlsx serde, the CLI render surface, and the PLAN/EVALUATE/resolver pass bodies (the submodules own them) | IO: (a sheet-directory or in-memory tabs) -> a `Workbook`; then (a demanded cell / a viewport of cells) -> `Value`s, or (a tab index + an ad-hoc `=formula` string) -> a `Result<FormulaOutcome, Diagnostic>`, plus the eval-time located `Diagnostic`s it accumulates
 //! Two-pass evaluation (ENG3): [`Workbook`] loads a sheet-directory and implements [`Resolver`] over
 //! it. A demand (one cell via [`Workbook::value_at`], a viewport via [`Workbook::values_at`], or an
 //! ad-hoc formula via [`Workbook::eval_formula`]) runs a PLAN pass that builds one private dependency
@@ -28,6 +28,7 @@ use charlie_ast::{
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::grid::{Cell as GridCell, Grid};
+use crate::names::{NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename};
 use crate::overlap::{Rect, detect_overlaps};
 use crate::{ParsedFile, parse_file};
 
@@ -94,6 +95,10 @@ struct Tab {
 /// The file-level anchor for an eval-time refusal is keyed by this.
 type FileId = (u32, usize);
 
+/// One tab folder's contents as read from disk: its CELL/GRID `(filename, content)` files and its
+/// sheet-scoped FS4 name entries (in either representation).
+type TabParts = (Vec<(String, String)>, Vec<RawNameEntry>);
+
 /// The identity of one rendered cell: `(sheet index, zero-based col, zero-based row)`. Graph nodes,
 /// the per-cell memo, and the per-pass results/taint sets are keyed by this — each grid cell is a
 /// DISTINCT computation, so the graph and the caches are per cell, not per file.
@@ -112,6 +117,11 @@ type CellKey = (u32, u32, u32);
 #[derive(Debug)]
 pub struct Workbook {
     tabs: Vec<Tab>,
+    /// The workbook's FS4 name table (built at load). A stored formula's name tokens are already
+    /// resolved to A1 in the grid, but the AD-HOC [`Workbook::eval_formula`] parses a fresh formula, so
+    /// it consults this to resolve any name the caller writes (`=SUM(Days)`) — keeping ad-hoc eval and a
+    /// stored formula on the same name semantics. Empty when the workbook has no names.
+    names: NameTable,
     /// Whether ANY loaded file is a GRID5 array-formula region. The plan/dep passes only pay the
     /// per-coordinate "is this an array region?" redirect cost when this is `true`, so a workbook with
     /// no array regions (the overwhelming common case) plans exactly as it did before GRID5.
@@ -227,36 +237,36 @@ impl Workbook {
     /// directory is not a spreadsheet diagnostic).
     pub fn load_dir(root: &Path) -> std::io::Result<Result<Workbook, Vec<Diagnostic>>> {
         let mut tabs: Vec<(String, Vec<(String, String)>)> = Vec::new();
+        // FS4 name entries, in EITHER representation (symlink / ref-file), read here where the fs is
+        // present (the pure `names` module never touches the filesystem): workbook-scoped from the root,
+        // sheet-scoped from each tab folder.
+        let mut raw_names: Vec<RawNameEntry> = Vec::new();
         let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            let tab_name = entry.file_name().to_string_lossy().into_owned();
-            // FS3: the reserved `.cache/` sub-folder is NOT a tab — it holds the regenerable,
-            // non-authoritative ENG7 result cache. A workbook with `.cache/` present loads with the
-            // same tab set as without it (skip it here); every OTHER sub-folder is a tab (FS1).
-            if tab_name == ".cache" {
-                continue;
-            }
-            let mut files: Vec<(String, String)> = Vec::new();
-            let mut file_entries: Vec<_> =
-                std::fs::read_dir(entry.path())?.collect::<Result<_, _>>()?;
-            file_entries.sort_by_key(|e| e.file_name());
-            for f in file_entries {
-                if !f.file_type()?.is_file() {
+            let ft = entry.file_type()?;
+            let entry_name = entry.file_name().to_string_lossy().into_owned();
+            if ft.is_dir() {
+                // FS3: the reserved `.cache/` sub-folder is NOT a tab — it holds the regenerable,
+                // non-authoritative ENG7 result cache. Every OTHER sub-folder is a tab (FS1).
+                if entry_name == ".cache" {
                     continue;
                 }
-                let name = f.file_name().to_string_lossy().into_owned();
-                let contents = std::fs::read_to_string(f.path())?;
-                files.push((name, contents));
+                let (files, names) = read_tab_dir(root, &entry_name, &entry.path())?;
+                tabs.push((entry_name, files));
+                raw_names.extend(names);
+            } else if let Some(name) =
+                read_name_entry(root, NameScope::Workbook, &entry_name, &entry.path(), ft)?
+            {
+                // A root-level symlink or non-A1 regular file is a WORKBOOK-scoped name (FS4). A
+                // root-level A1-shaped regular file is neither a tab nor a name — ignored.
+                raw_names.push(name);
             }
-            tabs.push((tab_name, files));
         }
         // Attach the persistent ENG7 cache at `<root>/.cache/` (FS3). A load-time refusal keeps its
         // `Err`; only a workbook that loads gets a cache.
-        Ok(Workbook::from_owned(tabs).map(|wb| wb.with_cache_dir(root.join(".cache"))))
+        Ok(Workbook::from_dir_parts(tabs, raw_names)
+            .map(|wb| wb.with_cache_dir(root.join(".cache"))))
     }
 
     /// Attach the persistent result cache rooted at `dir` (`<workbook>/.cache/`). Consuming builder so
@@ -274,15 +284,51 @@ impl Workbook {
         self.cache = None;
     }
 
-    /// The shared loader over owned strings (so the fs and in-memory paths converge here).
+    /// The in-memory loader over owned strings: partitions each tab's files into cell/grid files and
+    /// sheet-scoped ref-file NAME entries (FS4 — an in-memory workbook has no symlinks, so only the
+    /// ref-file representation), builds the name table, and assembles. `load_dir` uses
+    /// [`Workbook::from_dir_parts`] instead (it has already separated names and read symlinks).
     fn from_owned(tabs: Vec<(String, Vec<(String, String)>)>) -> Result<Workbook, Vec<Diagnostic>> {
+        let mut cell_tabs = Vec::with_capacity(tabs.len());
+        let mut raw_names = Vec::new();
+        for (tab_name, files) in tabs {
+            let mut cells = Vec::new();
+            for (fname, contents) in files {
+                if is_cell_filename(&fname) {
+                    cells.push((fname, contents));
+                } else {
+                    // A non-A1 filename is a NAME entry in the ref-file representation (FS4).
+                    raw_names.push(RawNameEntry {
+                        scope: NameScope::Sheet(tab_name.clone()),
+                        entry_name: fname,
+                        form: NameRepr::RefFile { content: contents },
+                    });
+                }
+            }
+            cell_tabs.push((tab_name, cells));
+        }
+        Workbook::from_dir_parts(cell_tabs, raw_names)
+    }
+
+    /// Assemble a workbook from CELL/GRID files (already separated from names) plus the raw FS4 name
+    /// entries. Builds the name table (collecting its located refusals), then loads each cell file with
+    /// its formula name tokens RESOLVED to A1/expr against the table (the engine stays A1-only, ENG1) —
+    /// the resolution is a source rewrite at load, analogous to a deserializer normalization (GRID3).
+    fn from_dir_parts(
+        tabs: Vec<(String, Vec<(String, String)>)>,
+        raw_names: Vec<RawNameEntry>,
+    ) -> Result<Workbook, Vec<Diagnostic>> {
+        let (name_table, mut diags) = NameTable::build(raw_names);
         let mut out_tabs = Vec::with_capacity(tabs.len());
-        let mut diags = Vec::new();
         for (tab_name, files) in tabs {
             let mut loaded = Vec::new();
             let mut regions: Vec<(String, Rect)> = Vec::new();
             for (fname, contents) in files {
-                match parse_file(&fname, &contents) {
+                // Resolve name tokens in every `=formula` field to their A1/expr BEFORE deserializing,
+                // so the grid the engine sees carries only A1 (an unresolvable name stays verbatim and
+                // loads as a located `#NAME?`, GRID6/VAL3).
+                let resolved = name_table.rewrite_tsv(&contents, &tab_name);
+                match parse_file(&fname, &resolved) {
                     Ok(ParsedFile {
                         region,
                         declared_shape: _,
@@ -312,6 +358,7 @@ impl Workbook {
                 .any(|t| t.files.iter().any(|f| f.array_formula));
             Ok(Workbook {
                 tabs: out_tabs,
+                names: name_table,
                 has_array_regions,
                 now: system_now_serial(),
                 current_sheet: Cell::new(0),
@@ -408,20 +455,35 @@ impl Workbook {
     /// that yields a spreadsheet **error value** (`#DIV/0!`, `#REF!`, …) is [`FormulaOutcome::Error`]
     /// so a caller can exit non-zero, while any other value is [`FormulaOutcome::Value`].
     pub fn eval_formula(&self, sheet: u32, formula: &str) -> Result<FormulaOutcome, Diagnostic> {
-        let expr = parse(formula).map_err(|diag| {
-            Diagnostic::new(
-                Code::FormulaSyntax,
-                // Locate on the formula text over the refusal's 1-based byte-column span (a formula is
-                // a single line; line 1 mirrors the body-line convention).
-                Loc::body_span(
-                    formula,
-                    1,
-                    (diag.span.start as u32) + 1,
-                    1,
-                    (diag.span.end as u32) + 1,
-                ),
-                format!("cannot parse formula {formula:?}: {}", diag.message),
-            )
+        // Resolve any FS4 name the caller wrote (`=SUM(Days)`) to A1/expr against the ad-hoc home sheet,
+        // so ad-hoc eval and a stored formula share the same name semantics (the engine stays A1-only).
+        let resolved = self.names.rewrite_tsv(formula, &self.tab_name(sheet));
+        let expr = parse(&resolved).map_err(|diag| {
+            // The parser's byte span indexes the RESOLVED text. When a name expanded, that text is not
+            // what the caller typed, so a precise column would point into the expansion — instead anchor
+            // on the whole original formula and name the resolved form in the message. When no name
+            // expanded (`resolved == formula`, the common ad-hoc case) the span maps 1:1 onto the input.
+            let (loc, message) = if resolved == formula {
+                (
+                    Loc::body_span(
+                        formula,
+                        1,
+                        (diag.span.start as u32) + 1,
+                        1,
+                        (diag.span.end as u32) + 1,
+                    ),
+                    format!("cannot parse formula {formula:?}: {}", diag.message),
+                )
+            } else {
+                (
+                    Loc::body_span(formula, 1, 1, 1, formula.chars().count() as u32 + 1),
+                    format!(
+                        "cannot parse formula {formula:?} (names resolved to {resolved:?}): {}",
+                        diag.message
+                    ),
+                )
+            };
+            Diagnostic::new(Code::FormulaSyntax, loc, message)
         })?;
         // PLAN the ad-hoc formula's dependency cells (rooted at `sheet`, the ad-hoc home) into a graph,
         // then EVALUATE it — exactly the two passes a stored formula rides.
@@ -641,6 +703,91 @@ impl Workbook {
         file.array_formula
             .then_some((sheet, file.region.min_col, file.region.min_row))
     }
+}
+
+/// Read one tab folder into its CELL/GRID files and its sheet-scoped FS4 name entries (in either
+/// representation). A nested sub-folder is reserved (skipped); a symlink or a non-A1-named regular file
+/// is a name entry, an A1-named regular file is a cell file (entries sorted for deterministic order).
+fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabParts> {
+    let mut files = Vec::new();
+    let mut names = Vec::new();
+    let mut file_entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+    file_entries.sort_by_key(|e| e.file_name());
+    for f in file_entries {
+        let ft = f.file_type()?;
+        if ft.is_dir() {
+            continue; // nested folders are reserved (not sub-sheets)
+        }
+        let name = f.file_name().to_string_lossy().into_owned();
+        if ft.is_file() && is_cell_filename(&name) {
+            files.push((name, std::fs::read_to_string(f.path())?));
+        } else if let Some(entry) = read_name_entry(
+            root,
+            NameScope::Sheet(tab_name.to_string()),
+            &name,
+            &f.path(),
+            ft,
+        )? {
+            names.push(entry);
+        }
+    }
+    Ok((files, names))
+}
+
+/// Classify one filesystem entry as an FS4 name entry, or `None` when it is not a name (an A1-shaped
+/// regular file — a cell — or an unreadable kind). A symlink is the symlink representation (its target
+/// resolved here to `(sheet, cell)`); a non-A1 regular file is the ref-file representation (its content
+/// read — a degraded symlink lands here too).
+fn read_name_entry(
+    root: &Path,
+    scope: NameScope,
+    entry_name: &str,
+    path: &Path,
+    ft: std::fs::FileType,
+) -> std::io::Result<Option<RawNameEntry>> {
+    if ft.is_symlink() {
+        let (target_sheet, target_cell) = resolve_symlink_target(root, path)?;
+        return Ok(Some(RawNameEntry {
+            scope,
+            entry_name: entry_name.to_string(),
+            form: NameRepr::Symlink {
+                target_sheet,
+                target_cell,
+            },
+        }));
+    }
+    if ft.is_file() && !is_cell_filename(entry_name) {
+        return Ok(Some(RawNameEntry {
+            scope,
+            entry_name: entry_name.to_string(),
+            form: NameRepr::RefFile {
+                content: std::fs::read_to_string(path)?,
+            },
+        }));
+    }
+    Ok(None)
+}
+
+/// Resolve a name symlink to the `(sheet, cell-A1)` its target names — LEXICALLY (the target cell file
+/// need not exist yet for the reader), taking the target's filename as the cell and its parent folder's
+/// name as the sheet. A relative link is joined onto the link's own directory first.
+fn resolve_symlink_target(root: &Path, link_path: &Path) -> std::io::Result<(String, String)> {
+    let target = std::fs::read_link(link_path)?;
+    let joined = if target.is_absolute() {
+        target
+    } else {
+        link_path.parent().unwrap_or(root).join(target)
+    };
+    let cell = joined
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let sheet = joined
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok((sheet, cell))
 }
 
 /// The wall-clock "now" as an Excel date-time serial. The [`Workbook`] must STORE `now` (so
