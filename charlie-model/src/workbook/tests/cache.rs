@@ -1,4 +1,4 @@
-// Concern: the ENG7 persistent-cache + FS3 FITNESS pins — over a REAL temp-dir workbook loaded through `Workbook::load_dir` (the only path that attaches a `.cache/`): (a) SOUNDNESS, a `.cache`-deleted run yields byte-identical values to a warm-cache run across a multi-formula workbook incl. a GRID5 region; (b) REUSE, a warm re-run performs materially FEWER formula evals (the test-visible `eval_count` instrument, not just matching values); (c) INVALIDATION, editing an upstream cell makes the dependent reflect the edit (new hash) while an unrelated cached cell still HITS; (d) CYCLE, a cyclic cell is never written to `.cache/` (only the cacheable sibling is); (e) `--no-cache` (`disable_cache`) neither reads nor writes `.cache/`, with identical values; (f) FS3, a workbook with `.cache/` present loads with the correct tab set; (g) DEPTH SOUNDNESS, a warm run of a deep chain cannot short-circuit a pull-depth `#NUM!` refusal a cache-deleted run raises (a mid-chain cell cached clean when demanded shallowly is NOT served into a deeper demand — warm equals cold at the depth boundary); (h) VOLATILE, a TODAY/NOW cone is never written to `.cache/` and recomputes against the pinned clock (never served a stale instant) while a non-volatile sibling still HITS; (i) SERVE-AT-VARYING-DEPTH, a diamond/multi-root batch where a mid cell cached clean when demanded SHALLOW is cache-served at depth 0 and then reached DEEP through a long chain (the deep root dedups onto the served leaf) yields warm==cold values AND eval counts — locking the ENG7 soundness invariant (a served cell's cone is wholly in-bound, so serving prunes no `#NUM!` terminal) against a future reordering of the graph-dedup vs cache_serve steps | Non-concern: the cache codec internals (`workbook::cache` owns encode/decode + atomicity) and the in-memory behavioral pins (the parent `tests` module owns those) | IO: temp-dir workbook trees on disk -> asserted `Value`s / eval counts / on-disk `.cache/` state
+// Concern: the ENG4 persistent-cache + FS3 FITNESS pins — over a REAL temp-dir workbook loaded through `Workbook::load_dir` (the only path that attaches a `.cache/`): (a) SOUNDNESS, a `.cache`-deleted run yields byte-identical values to a warm-cache run across a multi-formula workbook incl. a GRID5 region; (b) REUSE, a warm re-run performs materially FEWER formula evals (the test-visible `eval_count` instrument, not just matching values); (c) INVALIDATION, editing an upstream cell makes the dependent reflect the edit (new hash) while an unrelated cached cell still HITS; (d) CYCLE, a cyclic cell is never written to `.cache/` (only the cacheable sibling is); (e) `--no-cache` (`disable_cache`) neither reads nor writes `.cache/`, with identical values; (f) FS3, a workbook with `.cache/` present loads with the correct tab set; (g) DEPTH SOUNDNESS, a warm run of a deep chain cannot short-circuit a pull-depth `#NUM!` refusal a cache-deleted run raises (a mid-chain cell cached clean when demanded shallowly is NOT served into a deeper demand — warm equals cold at the depth boundary); (h) VOLATILE, a TODAY/NOW cone is never written to `.cache/` and recomputes against the pinned clock (never served a stale instant) while a non-volatile sibling still HITS; (i) SERVE-AT-VARYING-DEPTH, a diamond/multi-root batch where a mid cell cached clean when demanded SHALLOW is cache-served at depth 0 and then reached DEEP through a long chain (the deep root dedups onto the served leaf) yields warm==cold values AND eval counts — locking the ENG4 soundness invariant (a served cell's cone is wholly in-bound, so serving prunes no `#NUM!` terminal) against a future reordering of the graph-dedup vs cache_serve steps | Non-concern: the cache codec internals (`workbook::cache` owns encode/decode + atomicity) and the in-memory behavioral pins (the parent `tests` module owns those) | IO: temp-dir workbook trees on disk -> asserted `Value`s / eval counts / on-disk `.cache/` state
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -85,7 +85,7 @@ fn a_soundness_cache_deleted_equals_warm_cache_across_a_grid5_workbook() {
     fs::remove_dir_all(base.join(".cache")).expect("delete .cache");
     let recomputed = tab_values(&load(&base), 0);
 
-    // VAL2/ENG7: deleting `.cache/` changes only performance, never values — byte-identical (Value
+    // VAL2/ENG4: deleting `.cache/` changes only performance, never values — byte-identical (Value
     // equality is bit-exact) across the cold, warm, and cache-deleted runs.
     assert_eq!(cold, warm, "warm-cache values must equal the cold run");
     assert_eq!(
@@ -186,7 +186,7 @@ fn d_a_cyclic_cell_is_never_written_to_the_cache() {
     assert_eq!(wb.value_at(0, 1, 0), Value::Error(ErrKind::Ref)); // B1
     assert_eq!(wb.value_at(0, 2, 0), Value::Number(2.0)); // C1
 
-    // ENG7: a cell with no computation hash (a reference cycle) is NEVER cached. Exactly ONE entry is
+    // ENG4: a cell with no computation hash (a reference cycle) is NEVER cached. Exactly ONE entry is
     // written — C1's — so both cyclic cells were skipped.
     assert_eq!(
         cache_entry_count(&base),
@@ -294,7 +294,7 @@ fn g_a_warm_run_cannot_short_circuit_a_pull_depth_refusal() {
     fs::remove_dir_all(base.join(".cache")).expect("delete .cache");
     let cold = load(&base).value_at(0, 0, 0);
 
-    // ENG7 fitness: a reused result equals recomputation from scratch. Warm MUST equal cold.
+    // ENG4 fitness: a reused result equals recomputation from scratch. Warm MUST equal cold.
     assert_eq!(
         warm, cold,
         "a warm run must not short-circuit the depth refusal a cache-deleted run raises"
@@ -322,7 +322,7 @@ fn h_a_volatile_cone_recomputes_against_the_clock_and_is_never_cached() {
     let wb1 = load(&base).with_now(t1);
     assert_eq!(wb1.value_at(0, 0, 0), Value::Number(t1)); // A1 = NOW() = t1
     assert_eq!(wb1.value_at(0, 1, 0), Value::Number(2.0)); // B1 = 1+1
-    // ENG7 soundness: a volatile cone is NEVER written to `.cache/` (the hash does not fold the clock,
+    // ENG4 soundness: a volatile cone is NEVER written to `.cache/` (the hash does not fold the clock,
     // so a cached instant could not equal a fresh recomputation). Exactly ONE entry exists — B1's.
     assert_eq!(
         cache_entry_count(&base),
@@ -357,7 +357,7 @@ fn h_a_volatile_cone_recomputes_against_the_clock_and_is_never_cached() {
 
 #[test]
 fn a_forging_cone_is_never_cached_but_its_non_forger_sibling_is() {
-    // ENG7 (ENG6 forging): a forger cone (INDIRECT/OFFSET) is VOLATILE — its resolved target depends on
+    // ENG4 (ENG6 forging): a forger cone (INDIRECT/OFFSET) is VOLATILE — its resolved target depends on
     // runtime values the computation hash does not fold — so it is never written to `.cache/`, while an
     // ordinary sibling still caches. B1 = SUM(OFFSET($A$1,0,0,3,1)) forges; C1 = 1+1 does not.
     let base = temp_base("forge");
@@ -410,7 +410,7 @@ fn i_a_served_mid_cell_is_reused_at_varying_depth_in_one_batch() {
     // cache-served across the depth boundary — it exercises only the fresh-walk refusal. This locks the
     // subtler DIAMOND interaction: a mid cell cached clean when demanded SHALLOW enters the shared
     // memo (served at depth 0), then the SAME cell is reached DEEP through the long chain in the same
-    // batch, where the deep root dedups onto the served leaf. The soundness invariant (ENG7/ENG3): a
+    // batch, where the deep root dedups onto the served leaf. The soundness invariant (ENG4/ENG3): a
     // served cell's cone is wholly in-bound, so serving it prunes no `#NUM!` terminal a cold run would
     // raise — warm equals cold whatever the batch composition, and the batch's SHARED-node value (the
     // deep root is computable BECAUSE the shallow root makes the mid cell a clean shared node) is
@@ -448,7 +448,7 @@ fn i_a_served_mid_cell_is_reused_at_varying_depth_in_one_batch() {
     let cold = wb3.values_at(&batch);
     let cold_evals = wb3.eval_count();
 
-    // ENG7 soundness: a reused result equals recomputation from scratch — warm equals cold for BOTH the
+    // ENG4 soundness: a reused result equals recomputation from scratch — warm equals cold for BOTH the
     // served mid cell and the deep root that reaches it, across the varying serve depth.
     assert_eq!(warm, cold, "warm batch must equal the cache-deleted batch");
     assert_eq!(

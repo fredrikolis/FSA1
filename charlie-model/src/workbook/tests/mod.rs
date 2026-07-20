@@ -1,9 +1,9 @@
-// Concern: the two-pass engine's BEHAVIORAL pins — demand-driven chains, cycle/self-reference/cross-sheet #REF! refusals, the explicit-grid VAL1 rule, diamond/deep-DAG compute-once, memoization stability, the pull-depth and range-materialization #NUM! bounds and their order-independence (depth-tainted values/ranges never poison a shallower demand), ad-hoc `eval_formula`, batch `values_at` sharing, the computation-hash (ENG7) determinism/sensitivity/cycle=None/VAL1/GRID5-anchor pins, the trace (CLI2) upstream/downstream/shared-dep-repeated/cycle/depth-cap/GRID5-region + out-of-range pins, and the NAIVE-oracle differential test proving the graph EQUALS a per-cell evaluation (over scalar chains AND GRID5 array-formula regions — the dep_key sharing that collapses region coordinates onto one anchor node) | Non-concern: the engine's internal graph shape/node-count/traversal order (asserted nowhere — only VALUES are graded, so a future parallel-execution refactor stays free) and the formula language itself (charlie-ast owns it) | IO: in-memory (and one temp-dir) `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `FormulaOutcome`s
+// Concern: the two-pass engine's BEHAVIORAL pins — demand-driven chains, cycle/self-reference/cross-sheet #REF! refusals, the explicit-grid VAL1 rule, diamond/deep-DAG compute-once, memoization stability, the pull-depth and range-materialization #NUM! bounds and their order-independence (depth-tainted values/ranges never poison a shallower demand), ad-hoc `eval_formula`, batch `values_at` sharing, the computation-hash (ENG4) determinism/sensitivity/cycle=None/VAL1/GRID5-anchor pins, the trace (CLI2) upstream/downstream/shared-dep-repeated/cycle/depth-cap/GRID5-region + out-of-range pins, and the NAIVE-oracle differential test proving the graph EQUALS a per-cell evaluation (over scalar chains AND GRID5 array-formula regions — the dep_key sharing that collapses region coordinates onto one anchor node) | Non-concern: the engine's internal graph shape/node-count/traversal order (asserted nowhere — only VALUES are graded, so a future parallel-execution refactor stays free) and the formula language itself (charlie-ast owns it) | IO: in-memory (and one temp-dir) `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `FormulaOutcome`s
 use super::*;
 
 use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape};
 
-// The ENG7 persistent-cache + FS3 fitness pins live in their own concern-scoped submodule (they need
+// The ENG4 persistent-cache + FS3 fitness pins live in their own concern-scoped submodule (they need
 // a real temp-dir workbook and the eval-counter instrument), keeping this behavioral file well under
 // the per-file line budget.
 mod cache;
@@ -1211,13 +1211,13 @@ fn differential_shape_mismatch_and_scalar_regions_agree_on_the_spill() {
 }
 
 // ------------------------------------------------------------------------------------------
-// Computation hash (the ENG7 primitive) — determinism, sensitivity, cycle=None, VAL1, GRID5.
+// Computation hash (the ENG4 primitive) — determinism, sensitivity, cycle=None, VAL1, GRID5.
 // ------------------------------------------------------------------------------------------
 
 #[test]
 fn computation_hash_is_deterministic() {
     // Two identical workbooks (and repeated calls) yield the SAME opaque digest — a deterministic,
-    // content-only function (ENG7). A clean cell has a hash.
+    // content-only function (ENG4). A clean cell has a hash.
     let build = || load_one_tab("Sheet1", &[("A1", "1"), ("B1", "=A1+1"), ("C1", "=B1*10")]);
     let a = build();
     let b = build();
@@ -1244,7 +1244,7 @@ fn computation_hash_is_sensitive_upstream_and_isolates_the_unrelated() {
 
 #[test]
 fn a_cyclic_cell_has_no_computation_hash() {
-    // A cell on a reference cycle has NO computation hash (ENG7), mirroring the plan's Cycle terminal;
+    // A cell on a reference cycle has NO computation hash (ENG4), mirroring the plan's Cycle terminal;
     // a clean literal alongside still hashes.
     let wb = load_one_tab("Sheet1", &[("A1", "=B1"), ("B1", "=A1"), ("C1", "7")]);
     assert_eq!(wb.computation_hash(0, 0, 0), None); // A1 (on the cycle)
@@ -1278,7 +1278,7 @@ fn a_region_members_hash_is_its_anchors() {
 
 #[test]
 fn a_cell_downstream_of_a_cycle_has_no_computation_hash() {
-    // A `None` propagates upward (ENG7): a clean formula D1 = C1 whose dependency C1 is on a reference
+    // A `None` propagates upward (ENG4): a clean formula D1 = C1 whose dependency C1 is on a reference
     // cycle (A1=B1, B1=A1, C1=A1) inherits the cycle's missing digest -> `None`, even though D1's own
     // text is a plain reference. An unrelated literal alongside still hashes.
     let wb = load_one_tab(
@@ -1299,7 +1299,7 @@ fn a_cell_downstream_of_a_cycle_has_no_computation_hash() {
 #[test]
 fn a_depth_tainted_cell_has_no_computation_hash() {
     // A chain deeper than [`MAX_PULL_DEPTH`] is depth-tainted: the digest walk hits the pull-depth
-    // bound and yields `None`, which propagates up to the requested top cell (ENG7, mirroring the
+    // bound and yields `None`, which propagates up to the requested top cell (ENG4, mirroring the
     // plan's DepthRefused terminal). The bottom literal, reached far shallower, still hashes.
     let len = (MAX_PULL_DEPTH as usize) + 64;
     let owned = chain_files(len);

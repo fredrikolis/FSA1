@@ -176,14 +176,14 @@ pub struct Workbook {
     /// Located refusals surfaced during evaluation (cycles, depth limits, over-large ranges, spills).
     /// Load-time refusals are returned by the loader; these accumulate as cells are planned/pulled.
     diagnostics: RefCell<Vec<Diagnostic>>,
-    /// The ENG7 PERSISTENT result cache under `<workbook>/.cache/`, or `None` when caching is off — an
+    /// The ENG4 PERSISTENT result cache under `<workbook>/.cache/`, or `None` when caching is off — an
     /// in-memory [`Workbook::from_tabs`] has no filesystem (ENG5), and `--no-cache` clears it
     /// ([`Workbook::disable_cache`]). Attached only by [`Workbook::load_dir`], which knows the root
     /// path. A contained optimization (ENG3/VAL2): deleting `.cache/` changes performance, never
     /// values (the `cache` sibling owns the read short-circuit + the atomic write).
     cache: Option<ResultCache>,
     /// A per-Workbook (i.e. per-invocation) count of formula EVALUATIONS actually performed — the
-    /// test-visible instrument proving ENG7 reuse (a warm-cache re-run performs materially fewer evals
+    /// test-visible instrument proving ENG4 reuse (a warm-cache re-run performs materially fewer evals
     /// because a cached subtree is served without evaluating). Incremented once per computed formula
     /// cell / array region; a cache hit adds nothing (the cell is never evaluated). `#[cfg(test)]`: the
     /// field, its increments, and its `eval_count()` reader compile ONLY under test, so a production
@@ -262,7 +262,7 @@ impl Workbook {
             let entry_name = entry.file_name().to_string_lossy().into_owned();
             if ft.is_dir() {
                 // FS3: the reserved `.cache/` sub-folder is NOT a tab — it holds the regenerable,
-                // non-authoritative ENG7 result cache. Every OTHER sub-folder is a tab (FS1).
+                // non-authoritative ENG4 result cache. Every OTHER sub-folder is a tab (FS1).
                 if entry_name == ".cache" {
                     continue;
                 }
@@ -277,7 +277,7 @@ impl Workbook {
                 raw_names.push(name);
             }
         }
-        // Attach the persistent ENG7 cache at `<root>/.cache/` (FS3). A load-time refusal keeps its
+        // Attach the persistent ENG4 cache at `<root>/.cache/` (FS3). A load-time refusal keeps its
         // `Err`; only a workbook that loads gets a cache.
         Ok(Workbook::from_dir_parts(tabs, raw_names)
             .map(|wb| wb.with_cache_dir(root.join(".cache"))))
@@ -290,7 +290,7 @@ impl Workbook {
         self
     }
 
-    /// Turn the persistent cache OFF for this workbook — the ENG4/ENG7 testing bypass behind the
+    /// Turn the persistent cache OFF for this workbook — the ENG4 testing bypass behind the
     /// `--no-cache` CLI flag. Bypasses BOTH the read short-circuit and the write (the cache field is
     /// the single gate both consult), so a `--no-cache` run neither reads nor writes `.cache/` and
     /// yields identical values (VAL2: no value ever derived from the cache).

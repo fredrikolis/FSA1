@@ -1,4 +1,4 @@
-// Concern: the ENG7 PERSISTENT RESULT CACHE — the content-addressed on-disk store under `<workbook>/.cache/` (FS3) keyed by the WF1 COMPUTATION HASH, plus the engine-side glue that lets a demand SHORT-CIRCUIT recompute on a hit: [`ResultCache`] serializes/reads one six-type [`Value`] per hash-named file (atomic temp-write + rename, ~/.knowledge-base persistent-storage Part 8) and is best-effort (a corrupt/absent/failed entry is a MISS, never a value source, VAL2); [`CacheScan`] carries the per-demand shared hash + volatility memos; [`Workbook::cache_serve`] (called from the PLAN pass after the memo check) computes a demanded cell's hash from its CONTENT cone alone and, on a hit, injects the value into the memo so the cell's dependency cone is never planned or evaluated (the reuse win), and [`Workbook::cacheable_hash`] gates cacheability — only a non-array-region formula cell (regions recompute) with a computation hash (no cycle/depth-tainted cell, ENG7) whose cone contains NO volatile function (TODAY/NOW read the clock, which the hash does not fold, so caching them would be unsound) is written/served | Non-concern: computing the hash itself (the `hash` sibling owns `computation_hash_with`/`HashMemo`), building the dep graph or evaluating (the `plan`/`evaluate` siblings; this only decides to skip them), the `.cache/`-is-not-a-tab loader carve-out (mod.rs `load_dir` owns FS3 enumeration), and any authoritative or derived record beyond keyed result VALUES (VAL2 — no deps/consumers persisted) | IO: (a computation-hash hex key) <-> a serialized `Value` file under `.cache/`, via atomic write + plain read; the cache lives only where `load_dir` attached it (never for an in-memory `from_tabs` workbook, ENG5)
+// Concern: the ENG4 PERSISTENT RESULT CACHE — the content-addressed on-disk store under `<workbook>/.cache/` (FS3) keyed by the WF1 COMPUTATION HASH, plus the engine-side glue that lets a demand SHORT-CIRCUIT recompute on a hit: [`ResultCache`] serializes/reads one six-type [`Value`] per hash-named file (atomic temp-write + rename, ~/.knowledge-base persistent-storage Part 8) and is best-effort (a corrupt/absent/failed entry is a MISS, never a value source, VAL2); [`CacheScan`] carries the per-demand shared hash + volatility memos; [`Workbook::cache_serve`] (called from the PLAN pass after the memo check) computes a demanded cell's hash from its CONTENT cone alone and, on a hit, injects the value into the memo so the cell's dependency cone is never planned or evaluated (the reuse win), and [`Workbook::cacheable_hash`] gates cacheability — only a non-array-region formula cell (regions recompute) with a computation hash (no cycle/depth-tainted cell, ENG4) whose cone contains NO volatile function (TODAY/NOW read the clock, which the hash does not fold, so caching them would be unsound) is written/served | Non-concern: computing the hash itself (the `hash` sibling owns `computation_hash_with`/`HashMemo`), building the dep graph or evaluating (the `plan`/`evaluate` siblings; this only decides to skip them), the `.cache/`-is-not-a-tab loader carve-out (mod.rs `load_dir` owns FS3 enumeration), and any authoritative or derived record beyond keyed result VALUES (VAL2 — no deps/consumers persisted) | IO: (a computation-hash hex key) <-> a serialized `Value` file under `.cache/`, via atomic write + plain read; the cache lives only where `load_dir` attached it (never for an in-memory `from_tabs` workbook, ENG5)
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
@@ -52,7 +52,7 @@ impl ResultCache {
     /// An explicit `fsync` before the rename is DELIBERATELY omitted (unlike Part 8's durability
     /// example): the cache is regenerable and non-authoritative (VAL2), so a crash-corrupted entry must
     /// be a clean MISS, never a wrong value — and durability buys nothing toward that. The integrity
-    /// property that DOES matter (ENG7: a hit equals recomputation) is enforced by `decode_value`'s
+    /// property that DOES matter (ENG4: a hit equals recomputation) is enforced by `decode_value`'s
     /// prepended PAYLOAD CHECKSUM, not by fsync: without it, an fsync-free rename can expose a
     /// same-length but zero-/garbage-filled entry that happens to decode cleanly (a 17-byte all-zero
     /// file decodes to `Number(0.0)`), silently serving `0.0` for a cell whose real value is not 0. The
@@ -93,7 +93,7 @@ impl CacheScan {
 }
 
 impl Workbook {
-    /// The PLAN-pass cache short-circuit (ENG7). If caching is on and `key` is a cacheable cell whose
+    /// The PLAN-pass cache short-circuit (ENG4). If caching is on and `key` is a cacheable cell whose
     /// computation hash HITS the cache, inject the cached value straight into the memo and return
     /// `true` — the caller then treats the cell as a resolved leaf, so its dependency cone is NEVER
     /// planned or evaluated (a cached subtree is not recomputed — the whole efficiency point). A miss,
@@ -102,7 +102,7 @@ impl Workbook {
     /// results), so `finish_pass` never re-writes it.
     ///
     /// `depth` is the cell's PLAN depth (from [`Workbook::plan_visit`]). It gates soundness against the
-    /// pull-depth bound (ENG7): a cached value is served ONLY when the cell's cone fits within the
+    /// pull-depth bound (ENG4): a cached value is served ONLY when the cell's cone fits within the
     /// remaining depth budget from HERE, i.e. exactly when a cold descent from this same depth would
     /// compute it clean too. A cone that a cold descent would carry past [`MAX_PULL_DEPTH`] into a
     /// depth-tainted `#NUM!` gets no cache key at this depth (see [`Workbook::cacheable_hash`]) and
@@ -124,7 +124,7 @@ impl Workbook {
         }
     }
 
-    /// Persist the just-computed CLEAN results of this pass to the cache (the ENG7 write, mirroring
+    /// Persist the just-computed CLEAN results of this pass to the cache (the ENG4 write, mirroring
     /// `finish_pass`'s clean-only memo rule). Only cacheable cells are written; a served cell is not in
     /// `clean` (it went straight to the memo), so it is never re-written. No-op when caching is off.
     pub(super) fn cache_store_clean(&self, clean: &[(CellKey, Value)]) {
@@ -151,7 +151,7 @@ impl Workbook {
     /// simplicity) that HAS a computation hash whose content cone contains NO volatile function.
     ///
     /// The hash is derived STARTING at `depth` (the plan depth the cell sits at): a reference-cycle or
-    /// depth-tainted cell has no hash (ENG7), and — the soundness gate for deep chains — a cell whose
+    /// depth-tainted cell has no hash (ENG4), and — the soundness gate for deep chains — a cell whose
     /// cone would be carried past [`MAX_PULL_DEPTH`] FROM THIS DEPTH is depth-tainted here and so gets
     /// NO key, even though its rooted (depth-0) cone would fit. The WRITE side passes `depth = 0` (the
     /// canonical content key of a cell that already computed clean); the SERVE side passes the plan
@@ -159,7 +159,7 @@ impl Workbook {
     /// it clean — a warm run never short-circuits a depth refusal a cache-deleted run would raise.
     ///
     /// TODAY/NOW read the resolver clock, which the computation hash does not fold, so a cached volatile
-    /// result could not equal a fresh recomputation (ENG7 soundness) — such cones are refused a key and
+    /// result could not equal a fresh recomputation (ENG4 soundness) — such cones are refused a key and
     /// always recompute.
     fn cacheable_hash(&self, key: CellKey, depth: u32, scan: &mut CacheScan) -> Option<String> {
         let (sheet, col, row) = key;
@@ -229,7 +229,7 @@ impl Workbook {
 fn expr_has_volatile(expr: &Expr) -> bool {
     match expr {
         Expr::Call(id, args) => {
-            // ENG7: a reference-forging call (`INDIRECT`/`OFFSET`) is VOLATILE — its resolved target
+            // ENG4: a reference-forging call (`INDIRECT`/`OFFSET`) is VOLATILE — its resolved target
             // depends on runtime values the computation hash does not fold, so a forging cone can never
             // be cached (the same reason TODAY/NOW are volatile). Read here on the ORIGINAL grid expr
             // (the `cone_volatile_walk` caller passes the grid cell), so the forger is still seen even
@@ -249,8 +249,8 @@ fn expr_has_volatile(expr: &Expr) -> bool {
 // on-disk file is `[8-byte FNV-1a checksum of the payload][payload]`; `decode_value` recomputes the
 // checksum and rejects any mismatch, so a crash-/hardware-corrupted file that would otherwise be a
 // valid same-length decode (e.g. an all-zero file that reads back as `Number(0.0)`) is a clean MISS
-// rather than a wrong value (ENG7: a hit equals recomputation). The on-disk form need only round-trip
-// within one build: the key is an OPAQUE change-detector (ENG7), so a scheme change simply orphans old
+// rather than a wrong value (ENG4: a hit equals recomputation). The on-disk form need only round-trip
+// within one build: the key is an OPAQUE change-detector (ENG4), so a scheme change simply orphans old
 // files (they key differently and are ignored). A number is stored by its exact bit pattern so
 // `-0.0`/`NaN` round-trip identically to `Value`'s bit-exact `Eq`.
 // ----------------------------------------------------------------------------------------------
@@ -259,7 +259,7 @@ fn expr_has_volatile(expr: &Expr) -> bool {
 /// prepended to each entry and verified on read). It reuses the engine's ONE FNV-1a fold — the `hash`
 /// sibling's engine-private incremental [`Fnv`] (DRY: a single offset/prime and folding rule) — read out
 /// as its raw 64-bit digest. The two USES stay distinct concerns even though they share the primitive:
-/// the hash walk CONTENT-ADDRESSES a cell into an opaque [`CompHash`] (ENG7 keying), whereas this only
+/// the hash walk CONTENT-ADDRESSES a cell into an opaque [`CompHash`] (ENG4 keying), whereas this only
 /// guards a stored file's bytes against corruption (cf. `err_code`, which — because it must INVERT —
 /// keeps its own round-trippable mapping rather than sharing the hash sibling's one-way tag).
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -317,7 +317,7 @@ fn put_value(out: &mut Vec<u8>, v: &Value) {
 /// ANY malformation — a file shorter than the checksum header, a payload whose recomputed checksum does
 /// not match the stored one (a torn, zero-filled, or bit-rotted entry, even one that would decode to a
 /// valid same-length `Value`), an unknown tag, invalid UTF-8, a short read, or trailing bytes. A corrupt
-/// entry is a clean cache miss, never a wrong value (VAL2 / ENG7). Total: never panics.
+/// entry is a clean cache miss, never a wrong value (VAL2 / ENG4). Total: never panics.
 fn decode_value(bytes: &[u8]) -> Option<Value> {
     let stored = u64::from_le_bytes(bytes.get(..8)?.try_into().expect("took 8 bytes"));
     let payload = &bytes[8..];

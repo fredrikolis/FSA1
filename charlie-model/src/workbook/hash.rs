@@ -1,4 +1,4 @@
-// Concern: the COMPUTATION HASH primitive (the ENG7 digest, no persistence) — a per-cell deterministic digest of a cell's OWN content (a literal's value bytes, a formula's verbatim text, a blank/gap a fixed blank tag) folded with its DEPENDENCIES' computation hashes in a DETERMINISTIC dependency-key order (so it is traversal-independent, VAL1: never the cell's own address), computed in ONE memoized walk over the dependency relation via `expr_deps`; a cell on a reference CYCLE and a depth-tainted cell have NO hash (`None`), mirroring the plan's `Cycle`/`DepthRefused` terminals, and a `None` dependency propagates upward; the raw digest type [`CompHash`] and its [`HashMemo`] stay engine-private (ENG3 containment), the only PUBLIC surface being [`Workbook::computation_hash`] which returns an OPAQUE hex `String` or `None` | Non-concern: computing any VALUE (the `evaluate` sibling owns that; this hashes CONTENT, never the computed value), building the dependency graph (the `plan` sibling owns `DepGraph`/`PlanNode`; this reuses only `expr_deps`), persistence / the on-disk `.cache/` (that is a later workbench), and a stable cross-version identity (the hash is an opaque change-detector, ENG7 — a fast non-cryptographic FNV-1a digest) | IO: (a `(sheet,col,row)` cell + the `Workbook`'s grids) -> an `Option<String>` opaque hex digest (`None` on a cycle/depth-tainted cell)
+// Concern: the COMPUTATION HASH primitive (the ENG4 digest, no persistence) — a per-cell deterministic digest of a cell's OWN content (a literal's value bytes, a formula's verbatim text, a blank/gap a fixed blank tag) folded with its DEPENDENCIES' computation hashes in a DETERMINISTIC dependency-key order (so it is traversal-independent, VAL1: never the cell's own address), computed in ONE memoized walk over the dependency relation via `expr_deps`; a cell on a reference CYCLE and a depth-tainted cell have NO hash (`None`), mirroring the plan's `Cycle`/`DepthRefused` terminals, and a `None` dependency propagates upward; the raw digest type [`CompHash`] and its [`HashMemo`] stay engine-private (ENG3 containment), the only PUBLIC surface being [`Workbook::computation_hash`] which returns an OPAQUE hex `String` or `None` | Non-concern: computing any VALUE (the `evaluate` sibling owns that; this hashes CONTENT, never the computed value), building the dependency graph (the `plan` sibling owns `DepGraph`/`PlanNode`; this reuses only `expr_deps`), persistence / the on-disk `.cache/` (that is a later workbench), and a stable cross-version identity (the hash is an opaque change-detector, ENG4 — a fast non-cryptographic FNV-1a digest) | IO: (a `(sheet,col,row)` cell + the `Workbook`'s grids) -> an `Option<String>` opaque hex digest (`None` on a cycle/depth-tainted cell)
 use std::collections::{HashMap, HashSet};
 
 use charlie_ast::{ErrKind, Value};
@@ -8,7 +8,7 @@ use crate::grid::Cell as GridCell;
 use super::{CellKey, MAX_PULL_DEPTH, Workbook, sort_dedup};
 
 /// FNV-1a 64-bit offset basis and prime — a fast, deterministic, NON-cryptographic hash. The digest
-/// is an opaque change-detector (ENG7), so a stable-within-a-run-and-across-runs value is all that is
+/// is an opaque change-detector (ENG4), so a stable-within-a-run-and-across-runs value is all that is
 /// required; cross-version stability is explicitly NOT a contract (changing the scheme only
 /// invalidates a later cache).
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -23,7 +23,7 @@ const TAG_FORMULA: u8 = 2;
 /// with a `#NAME?` literal or a parsed formula sharing its bytes.
 const TAG_LOAD_ERROR: u8 = 3;
 
-/// A per-cell computation digest — the ENG7 hash. PRIVATE to the engine (ENG3 containment): it appears
+/// A per-cell computation digest — the ENG4 hash. PRIVATE to the engine (ENG3 containment): it appears
 /// in no other module's surface and is never re-exported. The public accessor
 /// ([`Workbook::computation_hash`]) hands out only its opaque hex spelling.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -162,7 +162,7 @@ impl HashMemo {
 }
 
 impl Workbook {
-    /// The PUBLIC computation-hash accessor (the ENG7 primitive): a deterministic, opaque hex digest of
+    /// The PUBLIC computation-hash accessor (the ENG4 primitive): a deterministic, opaque hex digest of
     /// the cell's own content folded with its dependencies' digests, or `None` when the cell lies on a
     /// reference cycle or is depth-tainted. A fresh one-shot memo per call, so the digest is a pure
     /// function of the cell's content cone (VAL1) and is stable run-to-run.
@@ -175,7 +175,7 @@ impl Workbook {
     /// STARTING the depth count at `at_depth` — the plan depth the cell sits at (the trace/public
     /// callers pass `0`, the cell's own rooted identity). The digest VALUE is content-only and so is
     /// independent of `at_depth`; `at_depth` only shifts WHEN the walk hits the pull-depth bound, i.e.
-    /// whether the digest is a clean `Some` or a depth-tainted `None`. The ENG7 cache serve threads the
+    /// whether the digest is a clean `Some` or a depth-tainted `None`. The ENG4 cache serve threads the
     /// plan depth here so a cached value is served for a cell EXACTLY when a cold descent from that same
     /// depth would compute it clean (see [`Workbook::cacheable_hash`]); a cone that would refuse from
     /// this depth returns `None` and is not served. The raw [`CompHash`] stays inside; only the opaque

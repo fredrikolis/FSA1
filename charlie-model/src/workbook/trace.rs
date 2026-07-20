@@ -65,7 +65,7 @@ pub struct TraceNode {
     pub value: String,
     /// The cell's classification.
     pub status: TraceStatus,
-    /// The cell's computation hash (ENG7) as an opaque hex string, or `None` on a cycle / depth-tainted
+    /// The cell's computation hash (ENG4) as an opaque hex string, or `None` on a cycle / depth-tainted
     /// cell.
     pub hash: Option<String>,
     /// The next hop of the trace (upstream dependencies or downstream consumers). Empty at a leaf, at a
@@ -263,7 +263,7 @@ impl<'w> Tracer<'w> {
     }
 
     /// The opaque computation hash of a cell, using the shared memo. Rooted at depth 0 — the trace
-    /// reports each node's own content identity (the depth-relative taint gating is the ENG7 cache
+    /// reports each node's own content identity (the depth-relative taint gating is the ENG4 cache
     /// serve's concern, not the trace's).
     fn hashes_of(&mut self, key: CellKey) -> Option<String> {
         self.wb.computation_hash_with(key, 0, &mut self.hashes)
@@ -294,7 +294,7 @@ impl Workbook {
     /// transitively; [`Direction::Downstream`] lists the cells that read it (the same engine dependency
     /// relation transposed, ENG3). The walk is visited-once (a shared cell appears once with
     /// `repeated=true`) and cycle-safe (a back-edge is `status=Cycle`, never looped, ENG2). Each node
-    /// carries its value and, unless on a cycle, its computation hash (ENG7). `max_depth` caps the walk
+    /// carries its value and, unless on a cycle, its computation hash (ENG4). `max_depth` caps the walk
     /// (`None` = unbounded, still bounded by the engine's pull-depth guard). An out-of-range tab is a
     /// located refusal (CORE2), never a panic.
     pub fn trace(

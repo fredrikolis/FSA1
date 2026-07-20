@@ -736,7 +736,7 @@ fn load(fmt: Format, path: &Path, no_cache: bool) -> Result<Workbook, u8> {
 }
 
 /// Apply the `--no-cache` bypass: turn the persistent result cache off when the flag is set (the
-/// ENG4/ENG7 testing bypass — no `.cache/` reads or writes; values are identical either way, VAL2).
+/// ENG4 testing bypass — no `.cache/` reads or writes; values are identical either way, VAL2).
 /// Single-homes the flag -> [`Workbook::disable_cache`] step that both [`load`] (render/eval/trace) and
 /// [`cmd_check`] (which bypasses `load` because it needs the loader's OWN diagnostics as lint output)
 /// must perform identically, so the two sites cannot drift.

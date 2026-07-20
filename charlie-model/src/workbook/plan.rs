@@ -68,7 +68,7 @@ impl Workbook {
             self.resolve_forgers(roots);
         }
         let mut graph = DepGraph::default();
-        // One cache scan shared across the pass so each cell's content cone hashes at most once (ENG7).
+        // One cache scan shared across the pass so each cell's content cone hashes at most once (ENG4).
         let mut scan = CacheScan::new();
         for &r in roots {
             let mut on_stack = HashSet::new();
@@ -104,12 +104,12 @@ impl Workbook {
         if self.memo.borrow().contains_key(&key) {
             return; // a clean, memoized value — a resolved leaf (ENG4 reuse)
         }
-        // ENG7: a persistent cache HIT serves this cell's value into the memo, so it becomes a resolved
+        // ENG4: a persistent cache HIT serves this cell's value into the memo, so it becomes a resolved
         // leaf here and its whole dependency cone is never planned or evaluated (a cached subtree is
         // not recomputed). A miss / uncacheable cell / caching-off falls through to plan normally. The
         // plan `depth` gates the serve against the pull-depth bound: a cell whose cone a cold descent
         // would carry past `MAX_PULL_DEPTH` from here is not served (it would suppress the depth refusal
-        // a cache-deleted run raises), so it plans on and reaches the SAME refusal warm as cold (ENG7).
+        // a cache-deleted run raises), so it plans on and reaches the SAME refusal warm as cold (ENG4).
         if self.cache_serve(key, depth, scan) {
             return;
         }

@@ -118,7 +118,7 @@ impl Workbook {
     }
 
     /// Promote the pass's clean (non-tainted) results into the memo (ENG4 reuse), PERSIST them to the
-    /// ENG7 cache, and clear the pass scratch. A depth-tainted value is dropped, not memoized — its
+    /// ENG4 cache, and clear the pass scratch. A depth-tainted value is dropped, not memoized — its
     /// `#NUM!` is root-relative, so a later shallower demand must recompute it (and, being uncacheable,
     /// never reaches the cache). Only NEWLY-computed clean results are written; a cache-served value
     /// went straight to the memo (never into `results`), so it is not re-written.
@@ -143,7 +143,7 @@ impl Workbook {
         self.cache_store_clean(&clean);
     }
 
-    /// The number of formula evaluations this workbook has performed (test-visible ENG7 instrument): a
+    /// The number of formula evaluations this workbook has performed (test-visible ENG4 instrument): a
     /// warm-cache re-run reads served subtrees from the cache and so increments this materially less
     /// than the cold first run (values matching alone does not prove reuse — this does).
     #[cfg(test)]
