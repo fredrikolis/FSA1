@@ -16,14 +16,18 @@ permissions:
   contents: read
 
 jobs:
-  # fmt + clippy + the full test gate, cross-platform. The matrix is the point: it exercises the
-  # names feature's #[cfg(unix)] symlink path against the #[cfg(not(unix))] ref-file path that an
-  # ubuntu-only CI never compiles. fail-fast: false so one OS failing still reports the others.
+  # fmt + clippy + the full test gate on the POSIX OSes charlie's on-disk representation supports.
+  # windows-latest is DELIBERATELY excluded: a cell/range filename is its A1 range (FS2), e.g.
+  # `A1:E1` / `F2:F11`, and `:` is a reserved character in Windows filenames — so `git checkout`
+  # of the conformance corpus fails there before any test runs (macOS/APFS allows `:` at the POSIX
+  # layer, so it stays). Native Windows support would need a Windows-safe range delimiter — a spec
+  # representation decision, tracked, not a CI setting. fail-fast: false so one OS still reports the
+  # other.
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       # lfs: true is REQUIRED — the ingest test fixtures + oracle workbooks are Git LFS objects
