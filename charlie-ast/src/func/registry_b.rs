@@ -25,7 +25,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: proper_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "EXACT",
@@ -34,7 +34,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: exact_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "VALUE",
@@ -52,7 +52,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: char_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "CODE",
@@ -61,7 +61,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: code_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "EOMONTH",
@@ -70,7 +70,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: eomonth_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "DAYS",
@@ -79,7 +79,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: days_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "WEEKDAY",
@@ -88,7 +88,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: weekday_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "WEEKNUM",
@@ -97,7 +97,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: weeknum_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "WORKDAY",
@@ -106,7 +106,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: workday_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "NETWORKDAYS",
@@ -115,7 +115,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: networkdays_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "YEARFRAC",
@@ -124,7 +124,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: yearfrac_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "HOUR",
@@ -133,7 +133,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: hour_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "MINUTE",
@@ -142,7 +142,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: minute_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "SECOND",
@@ -151,7 +151,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: second_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "TIME",
@@ -160,7 +160,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: time_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     // --- Dynamic-array (spill) batch: UNIQUE SORT FILTER SEQUENCE TRANSPOSE (impls in func/spill.rs).
     //     Each RETURNS an `array`, so its value fills a GRID5 range file whose declared range spans >1
@@ -306,10 +306,13 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
     //     ASIN ACOS ATAN ATAN2 SINH COSH TANH RADIANS DEGREES; the integer/combinatorial family
     //     (func/combinatorics.rs): GCD LCM FACT COMBIN; the VOLATILE random family (func/random.rs):
     //     RAND RANDBETWEEN; and the meta-aggregators (func/subtotal.rs): SUBTOTAL AGGREGATE. The scalar
-    //     math built-ins do NOT broadcast (matching the earlier ABS/ROUND/SQRT rows — an array in a
-    //     scalar slot is `#VALUE!`). RAND/RANDBETWEEN carry `volatile: true` (they read the resolver's
-    //     entropy seam). The `.` in a name is lexer-legal, so CEILING.MATH/FLOOR.MATH are one row each,
-    //     like STDEV.S. ---
+    //     math/trig/combinatorial built-ins BROADCAST every scalar-numeric position (ENG6: an array in a
+    //     scalar slot MAPS the call element-wise, like the earlier ABS/ROUND/SQRT rows) — TRUNC/SIGN/
+    //     MROUND/QUOTIENT/CEILING.MATH/FLOOR.MATH/EVEN/ODD and the whole transcendental family, plus
+    //     FACT/COMBIN. The array-CONSUMING members do NOT broadcast: SUMSQ (SUM's direct-vs-in-range
+    //     gather), the variadic GCD/LCM, the SUBTOTAL/AGGREGATE meta-aggregators, and the 0-arity
+    //     PI/RAND. RAND/RANDBETWEEN carry `volatile: true` (they read the resolver's entropy seam). The
+    //     `.` in a name is lexer-legal, so CEILING.MATH/FLOOR.MATH are one row each, like STDEV.S. ---
     FuncDef {
         name: "TRUNC",
         min_args: 1,
@@ -317,7 +320,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: trunc_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "SIGN",
@@ -326,7 +329,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: sign_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "MROUND",
@@ -335,7 +338,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: mround_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "CEILING.MATH",
@@ -344,7 +347,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: ceiling_math_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "FLOOR.MATH",
@@ -353,7 +356,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: floor_math_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "EVEN",
@@ -362,7 +365,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: even_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ODD",
@@ -371,7 +374,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: odd_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "SUMSQ",
@@ -389,7 +392,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: quotient_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "PI",
@@ -407,7 +410,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: exp_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "LN",
@@ -416,7 +419,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: ln_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "LOG",
@@ -425,7 +428,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: log_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "LOG10",
@@ -434,7 +437,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: log10_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "SIN",
@@ -443,7 +446,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: sin_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "COS",
@@ -452,7 +455,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: cos_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "TAN",
@@ -461,7 +464,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: tan_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ASIN",
@@ -470,7 +473,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: asin_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ACOS",
@@ -479,7 +482,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: acos_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ATAN",
@@ -488,7 +491,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: atan_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ATAN2",
@@ -497,7 +500,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: atan2_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "SINH",
@@ -506,7 +509,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: sinh_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "COSH",
@@ -515,7 +518,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: cosh_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "TANH",
@@ -524,7 +527,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: tanh_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "RADIANS",
@@ -533,7 +536,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: radians_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "DEGREES",
@@ -542,7 +545,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: degrees_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "GCD",
@@ -569,7 +572,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: fact_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "COMBIN",
@@ -578,7 +581,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: combin_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "RAND",
@@ -955,7 +958,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: datevalue_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "TIMEVALUE",
@@ -964,7 +967,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: timevalue_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "DAYS360",
@@ -973,7 +976,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: days360_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "ISOWEEKNUM",
@@ -982,7 +985,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: isoweeknum_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "NETWORKDAYS.INTL",
@@ -991,7 +994,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: networkdays_intl_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "WORKDAY.INTL",
@@ -1000,7 +1003,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: workday_intl_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     // --- Text parity batch: the CONCATENATE alias (points at CONCAT's `concat_fn`), the split/scan
     //     built-ins TEXTBEFORE TEXTAFTER TEXTSPLIT, CLEAN, T, NUMBERVALUE, UNICHAR UNICODE (impls in

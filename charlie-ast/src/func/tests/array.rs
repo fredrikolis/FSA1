@@ -186,6 +186,113 @@ fn the_trim_right_substitute_value_extraction_idiom() {
     );
 }
 
+// --- Scalar math/date functions map element-wise over an array argument (ENG6), while the
+//     array-CONSUMING reducers/lookups keep collapsing the array (the classification crux). ---
+
+#[test]
+fn a_scalar_date_function_maps_over_an_array_argument() {
+    // MONTH/YEAR/DAY broadcast their sole serial position: an array in -> an array of results.
+    // 44927 = 2023-01-01, 44958 = 2023-02-01, 44986 = 2023-03-01.
+    let g = Grid::new(1, vec![n(44927.0), n(44958.0), n(44986.0)]);
+    assert_eq!(
+        run("=MONTH(A1:A3)", &g),
+        Value::Array(Shape { rows: 3, cols: 1 }, vec![n(1.0), n(2.0), n(3.0)])
+    );
+    assert_eq!(
+        run("=YEAR(A1:A3)", &g),
+        Value::Array(
+            Shape { rows: 3, cols: 1 },
+            vec![n(2023.0), n(2023.0), n(2023.0)]
+        )
+    );
+}
+
+#[test]
+fn date_constructor_maps_element_wise_over_an_array_position() {
+    // DATE(year, month, day) is a scalar constructor (min=max=3, all-numeric), so it broadcasts ALL
+    // three positions like its sibling TIME: an array of years yields an array of serials. Anchored on
+    // 44927 = 2023-01-01 (the existing fixture serial): 2020-01-01 = 43831, 2021-01-01 = 44197 (2020
+    // is a leap year). Excel spills `DATE({2020;2021},1,1)` element-wise — the crux completeness fix.
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(
+        run("=DATE({2020;2021},1,1)", &g),
+        Value::Array(Shape { rows: 2, cols: 1 }, vec![n(43831.0), n(44197.0)])
+    );
+}
+
+#[test]
+fn workday_intl_forms_map_over_an_array_weekend_code() {
+    // The `.INTL` working-day forms broadcast their scalar `weekend`-code position (2), while the
+    // `holidays` list (position 3) is a CONSUMED whole. 45292 = 2024-01-01 (a Monday), 45298 =
+    // 2024-01-07 (the following Sunday) — a full Mon..Sun span. NETWORKDAYS.INTL over `{1;11}`:
+    // code 1 (Sat+Sun weekend) leaves Mon..Fri = 5 working days; code 11 (Sun-only) leaves Mon..Sat
+    // = 6. Excel spills an array of weekend codes element-wise.
+    let g = Grid::new(1, vec![Value::Blank]);
+    assert_eq!(
+        run("=NETWORKDAYS.INTL(45292,45298,{1;11})", &g),
+        Value::Array(Shape { rows: 2, cols: 1 }, vec![n(5.0), n(6.0)])
+    );
+}
+
+#[test]
+fn a_scalar_math_function_maps_over_an_array_argument() {
+    // ABS broadcasts its sole numeric position; a per-cell error carries IN PLACE (GRID6/VAL3).
+    let g = Grid::new(1, vec![n(-3.0), n(4.0), Value::Error(ErrKind::Div0)]);
+    assert_eq!(
+        run("=ABS(A1:A3)", &g),
+        Value::Array(
+            Shape { rows: 3, cols: 1 },
+            vec![n(3.0), n(4.0), Value::Error(ErrKind::Div0)]
+        )
+    );
+}
+
+#[test]
+fn a_multi_arg_scalar_function_broadcasts_the_array_and_the_scalar() {
+    // ROUND(range, 1): position 0 is the mapped array, position 1 (the digit count) broadcasts
+    // whole. Values chosen to avoid half-way ties so the f64 result bit-matches the literal.
+    let g = Grid::new(1, vec![n(1.23), n(4.56), n(7.89)]);
+    assert_eq!(
+        run("=ROUND(A1:A3,1)", &g),
+        Value::Array(Shape { rows: 3, cols: 1 }, vec![n(1.2), n(4.6), n(7.9)])
+    );
+}
+
+#[test]
+fn sumproduct_month_equals_k_times_values_is_the_8942_idiom() {
+    // The reproduced idiom: SUMPRODUCT((MONTH(dates)=1)*values). MONTH maps over the date column,
+    // `=1` broadcasts to a boolean array, `*values` broadcasts element-wise, SUMPRODUCT collapses.
+    // Dates A1:A4 = Jan, Feb, Jan, Mar 2023 (a full-width single column, the shape the stub windows);
+    // the values ride along as a conforming array literal. The January rows (1 and 3) contribute
+    // 5000 + 3942 = 8942.
+    let g = Grid::new(1, vec![n(44927.0), n(44958.0), n(44941.0), n(44986.0)]);
+    assert_eq!(
+        run("=SUMPRODUCT((MONTH(A1:A4)=1)*{5000;1000;3942;2000})", &g),
+        Value::Number(8942.0)
+    );
+}
+
+#[test]
+fn array_consuming_reducers_and_lookups_still_reduce_not_map() {
+    // The classification guard (a reducer regressing to a per-element map would be a MAJOR): SUM,
+    // SUMPRODUCT, COUNT, MATCH, VLOOKUP over a genuine range each CONSUME the whole array and return
+    // a scalar — they carry no broadcast positions, so this behavior is unchanged by the ENG6 fix.
+    let g = Grid::new(1, vec![n(10.0), n(20.0), n(30.0)]);
+    assert_eq!(run("=SUM(A1:A3)", &g), Value::Number(60.0));
+    assert_eq!(run("=SUMPRODUCT(A1:A3)", &g), Value::Number(60.0));
+    assert_eq!(run("=COUNT(A1:A3)", &g), Value::Number(3.0));
+    // MATCH(20, A1:A3, 0) -> position 2 (a scalar), NOT a mapped array.
+    assert_eq!(run("=MATCH(20,A1:A3,0)", &g), Value::Number(2.0));
+    // A 2-col grid so VLOOKUP has a lookup value + a 3x2 table: VLOOKUP(20, A1:B3, 2, FALSE) = 200.
+    let t = Grid::new(
+        2,
+        vec![n(10.0), n(100.0), n(20.0), n(200.0), n(30.0), n(300.0)],
+    );
+    assert_eq!(run("=VLOOKUP(20,A1:B3,2,FALSE)", &t), Value::Number(200.0));
+    // COUNTIF keeps its scalar-criterion reduce (only an ARRAY criterion maps, unchanged).
+    assert_eq!(run("=COUNTIF(A1:A3,\">=20\")", &g), Value::Number(2.0));
+}
+
 #[test]
 fn if_maps_over_an_array_condition_and_broadcasts_scalar_branches() {
     // IF({1;0;1},{"a";"b";"c"},"") -> {"a";"";"c"} (element-wise pick; "" broadcasts to false cells).

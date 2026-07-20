@@ -116,22 +116,38 @@ pub struct FuncDef {
     /// `array` handed to one of these maps the call element-wise (`func::array` owns the mapping
     /// LOGIC), while every other argument (a range/value-range a reducer or lookup consumes whole)
     /// is broadcast whole. An empty slice means "no broadcasting" — the function is dispatched
-    /// unchanged. Two families broadcast in v1: (a) the single-criterion criteria-aggregation forms,
-    /// whose CRITERION is arg 1 (`COUNTIF(range, criteria)`, `SUMIF(range, criteria, [sum_range])`,
-    /// `AVERAGEIF(range, criteria, [avg_range])`), so an array criterion (the distinct-count idiom
-    /// `SUMPRODUCT(1/COUNTIF(A1:A6,A1:A6))`) maps to an array of per-criterion results; and (b) the
-    /// SCALAR TEXT functions (`LEFT`/`RIGHT`/`MID`/`LEN`/`FIND`/`SEARCH`/`SUBSTITUTE`/`TRIM`/`UPPER`/
-    /// `LOWER`/`TEXT`/`VALUE`/`REPT`), each broadcasting ALL its scalar-typed positions so a
-    /// range/array argument maps the call element-wise (the CSE-array idioms real sheets use, e.g.
-    /// `SUMPRODUCT(LEN(A1:A3))` or `SUMPRODUCT(--(VALUE(TRIM(range))>0))`) — a genuinely multi-cell
-    /// array in ANY marked position drives the map, every scalar broadcasts, and the reducer wrapping
-    /// it collapses the result. `IF`'s array condition is NOT expressed here (it is lazy — arg 1/2 are
-    /// evaluated only when the condition is an array — so `logical::if_fn` decides scalar-vs-array and
-    /// delegates the map to `array::map_if`); the multi-criteria `*IFS` forms are a later batch.
-    /// Recorded as
-    /// registry DATA — like `validate`/`volatile` — so which functions broadcast which positions is
-    /// single-sourced with the rest of the row and keyed by [`FuncId`], not a hand-forked name-match
-    /// in `func::array`, keeping the "function is a row" invariant.
+    /// unchanged. This slice IS the map-vs-CONSUME classification (ENG6, the crux): a SCALAR-mapping
+    /// function marks its scalar positions here; an array-CONSUMING reducer/lookup/aggregator (SUM,
+    /// SUMPRODUCT, COUNT/COUNTA, the `*IFS` family, MIN/MAX/AVERAGE over a range, MATCH/INDEX/LOOKUP/
+    /// VLOOKUP/HLOOKUP/XLOOKUP/XMATCH, TEXTJOIN, ROW/COLUMN, the spill/array-shaping forms) leaves it
+    /// EMPTY so its array argument reaches the body WHOLE and is never element-mapped. The broadcasting
+    /// families: (a) the single-criterion criteria-aggregation forms, whose CRITERION is arg 1
+    /// (`COUNTIF(range, criteria)`, `SUMIF(range, criteria, [sum_range])`, `AVERAGEIF(range, criteria,
+    /// [avg_range])`), so an array criterion (the distinct-count idiom `SUMPRODUCT(1/COUNTIF(A1:A6,
+    /// A1:A6))`) maps to an array of per-criterion results — the RANGE stays a consumed whole; and
+    /// (b) the SCALAR-ARGUMENT built-ins across text/math/date-time/trig, each marking ALL its
+    /// scalar-typed positions so a range/array there maps the call element-wise (the CSE-array idioms
+    /// real sheets use, e.g. `SUMPRODUCT(LEN(A1:A3))`, `SUMPRODUCT((MONTH(A1:A6)=1)*B1:B6)`, or
+    /// `ROUND(A1:A6,2)`): the text scalars (`LEFT`/`RIGHT`/`MID`/`LEN`/`FIND`/`SEARCH`/`SUBSTITUTE`/
+    /// `REPLACE`/`TRIM`/`UPPER`/`LOWER`/`PROPER`/`CHAR`/`CODE`/`EXACT`/`TEXT`/`VALUE`/`REPT`), the
+    /// numeric-math scalars (`ABS`/`ROUND`/`ROUNDUP`/`ROUNDDOWN`/`INT`/`TRUNC`/`SIGN`/`MOD`/`QUOTIENT`/
+    /// `POWER`/`SQRT`/`CEILING`(`.MATH`)/`FLOOR`(`.MATH`)/`MROUND`/`EVEN`/`ODD`/`FACT`/`COMBIN` and the
+    /// transcendental family `EXP`/`LN`/`LOG`/`LOG10`/`SIN`…`ATAN2`/`RADIANS`/`DEGREES`), and the
+    /// date-time scalars (`DATE`/`YEAR`/`MONTH`/`DAY`/`HOUR`/`MINUTE`/`SECOND`/`EDATE`/`EOMONTH`/
+    /// `DATEDIF`/`DAYS`(`360`)/`WEEKDAY`/`WEEKNUM`/`ISOWEEKNUM`/`YEARFRAC`/`TIME`/`DATEVALUE`/
+    /// `TIMEVALUE`/`WORKDAY`(`.INTL`)/`NETWORKDAYS`(`.INTL`) — the working-day forms broadcast their
+    /// date/count AND (for the `.INTL` forms) their scalar `weekend`-code positions, while their
+    /// `holidays` list is a consumed whole). A genuinely multi-cell array in ANY
+    /// marked position drives the map, every other argument broadcasts, and a reducer wrapping it
+    /// collapses the result; a per-element error carries in place (GRID6/VAL3). `IF`'s array condition
+    /// is NOT expressed here (it is lazy — arg 1/2 are evaluated only when the condition is an array —
+    /// so `logical::if_fn` decides scalar-vs-array and delegates the map to `array::map_if`); the
+    /// error-TRANSPARENT information predicates (`ISNUMBER`/`ISERROR`/`TYPE`/…) also stay EMPTY — they
+    /// inspect an array operand AS an array by a separate, tested contract (`func::info`). The
+    /// multi-criteria `*IFS` forms are a later batch. Recorded as registry DATA — like `validate`/
+    /// `volatile` — so which functions broadcast which positions is single-sourced with the rest of the
+    /// row and keyed by [`FuncId`], not a hand-forked name-match in `func::array`, keeping the
+    /// "function is a row" invariant.
     pub broadcast: &'static [usize],
 }
 

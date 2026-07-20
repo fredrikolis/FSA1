@@ -1,6 +1,6 @@
 charlie-formula-conformance/v1
-# captured_unix=1784289737 git_commit=023c17a3820a002934d5b8bf86059d3e4ee23d57 git_dirty=true tool=conformance 0.1.0
-# coverage modeled=75 target=70 registry=77 functions=ABS,AND,AVERAGE,AVERAGEIF,AVERAGEIFS,CEILING,CHOOSE,COLUMN,CONCAT,COUNT,COUNTA,COUNTBLANK,COUNTIF,COUNTIFS,DATE,DATEDIF,DAY,EDATE,FIND,FLOOR,IF,IFERROR,IFNA,IFS,INDEX,INT,IRR,ISBLANK,ISERROR,ISNUMBER,ISTEXT,LEFT,LEN,LOWER,MATCH,MAX,MAXIFS,MEDIAN,MID,MIN,MINIFS,MOD,MONTH,NA,NOT,NOW,NPV,OR,PMT,POWER,PRODUCT,RANK,REPLACE,RIGHT,ROUND,ROUNDDOWN,ROUNDUP,ROW,SEARCH,SQRT,SUBSTITUTE,SUM,SUMIF,SUMIFS,SUMPRODUCT,SWITCH,TEXT,TEXTJOIN,TODAY,TRIM,TYPE,UPPER,VLOOKUP,XLOOKUP,YEAR
+# captured_unix=1784564729 git_commit=4f9fe0750037bb7f0272c2494ead4c66578c6f59 git_dirty=true tool=conformance 0.1.0
+# coverage modeled=78 target=70 registry=253 functions=ABS,AND,AVERAGE,AVERAGEIF,AVERAGEIFS,CEILING,CHOOSE,COLUMN,CONCAT,COUNT,COUNTA,COUNTBLANK,COUNTIF,COUNTIFS,DATE,DATEDIF,DAY,EDATE,FIND,FLOOR,IF,IFERROR,IFNA,IFS,INDEX,INT,IRR,ISBLANK,ISERROR,ISNUMBER,ISTEXT,LEFT,LEN,LOWER,MATCH,MAX,MAXIFS,MEDIAN,MID,MIN,MINIFS,MOD,MONTH,NA,NETWORKDAYS.INTL,NOT,NOW,NPV,OR,PMT,POWER,PRODUCT,RANK,REPLACE,REPT,RIGHT,ROUND,ROUNDDOWN,ROUNDUP,ROW,SEARCH,SQRT,SUBSTITUTE,SUM,SUMIF,SUMIFS,SUMPRODUCT,SWITCH,TEXT,TEXTJOIN,TODAY,TRIM,TYPE,UPPER,VALUE,VLOOKUP,XLOOKUP,YEAR
 # columns: VERDICT<TAB>key[<TAB>detail]
 MATCH	aggregation/average-mixed-range
 MATCH	aggregation/average-no-numbers-is-div0
@@ -13,6 +13,32 @@ MATCH	aggregation/sum-direct-nonnumeric-text-is-value-error
 MATCH	aggregation/sum-mixed-range-ignores-nonnumbers
 MATCH	aggregation/sum-range-basic
 MATCH	aggregation/sum-range-error-propagates
+MATCH	array_broadcast/abs-over-array-is-an-array
+MATCH	array_broadcast/abs-over-array-reduces
+MATCH	array_broadcast/date-constructor-over-array-is-an-array
+MATCH	array_broadcast/find-over-array-reduces
+MATCH	array_broadcast/if-array-condition-scalar-branches-broadcast
+MATCH	array_broadcast/if-array-condition-textjoin-drops-empty
+MATCH	array_broadcast/if-scalar-condition-passes-whole-branch
+MATCH	array_broadcast/left-over-range-then-concat
+MATCH	array_broadcast/len-over-array-is-an-array
+MATCH	array_broadcast/len-over-array-reduces
+MATCH	array_broadcast/mid-over-array-then-concat
+MATCH	array_broadcast/month-over-array-is-an-array
+MATCH	array_broadcast/networkdays-intl-over-array-weekend-code-is-an-array
+MATCH	array_broadcast/reducer-guard-countif-over-range-still-reduces
+MATCH	array_broadcast/reducer-guard-match-over-range-still-reduces
+MATCH	array_broadcast/reducer-guard-sum-over-range-still-reduces
+MATCH	array_broadcast/reducer-guard-sumproduct-over-range-still-reduces
+MATCH	array_broadcast/reducer-guard-vlookup-over-range-still-reduces
+MATCH	array_broadcast/round-over-array-broadcasts-scalar
+MATCH	array_broadcast/substitute-over-array-then-concat
+MATCH	array_broadcast/sumproduct-month-eq-k-times-values-8942
+MATCH	array_broadcast/text-over-array-then-concat
+MATCH	array_broadcast/trim-right-substitute-value-extractor
+MATCH	array_broadcast/upper-over-array-then-concat
+MATCH	array_broadcast/value-over-array-reduces
+MATCH	array_broadcast/year-over-array-is-an-array
 MATCH	criteria/averageif-ignores-nonnumeric-in-average-range
 MATCH	criteria/averageif-no-match-is-div0
 MATCH	criteria/averageif-numeric-gt
@@ -151,7 +177,7 @@ MATCH	logical_v1/switch-text-match-is-case-insensitive
 MATCH	lookup/choose-basic
 MATCH	lookup/choose-out-of-range-is-value-error
 MATCH	lookup/column-of-cell
-MATCH	lookup/column-of-range-top-left
+MATCH	lookup/column-of-range-is-horizontal-array
 MATCH	lookup/index-out-of-bounds-is-ref
 MATCH	lookup/index-scalar
 MATCH	lookup/index-single-column-two-arg
@@ -163,7 +189,7 @@ MATCH	lookup/match-exact-miss-is-na
 MATCH	lookup/match-text-wildcard-exact
 MATCH	lookup/row-of-cell
 MATCH	lookup/row-of-non-reference-is-value-error
-MATCH	lookup/row-of-range-top-left
+MATCH	lookup/row-of-range-is-vertical-array
 MATCH	lookup/vlookup-approx-default-between-keys
 MATCH	lookup/vlookup-col-index-out-of-range-is-ref
 MATCH	lookup/vlookup-exact-false
@@ -305,6 +331,7 @@ MATCH	text/substitute-all-occurrences
 MATCH	text/substitute-empty-old-unchanged
 MATCH	text/substitute-instance-zero-is-value
 MATCH	text/substitute-nth-occurrence
+MATCH	text/text-coercible-text-into-numeric-format-pads
 MATCH	text/text-date-1900-leap-bug
 MATCH	text/text-date-serial-above-max-is-value
 MATCH	text/text-date-serial-overflow-is-value
@@ -316,7 +343,6 @@ MATCH	text/text-fixed-decimals
 MATCH	text/text-general
 MATCH	text/text-general-15-significant-digits
 MATCH	text/text-negative-fixed
-MATCH	text/text-coercible-text-into-numeric-format-pads
 MATCH	text/text-noncoercible-to-numeric-format-passes-through
 MATCH	text/text-percent
 MATCH	text/text-percent-decimals

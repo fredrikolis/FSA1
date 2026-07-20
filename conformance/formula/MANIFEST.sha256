@@ -5,7 +5,7 @@
 #   { head -n 6 MANIFEST.sha256; sha256sum *.fixtures PROVENANCE.md; } > MANIFEST.sha256.new && mv MANIFEST.sha256.new MANIFEST.sha256
 # (also gated by conformance/tests/corpus_integrity.rs, which recomputes with the vendored SHA-256).
 764e2f378302fe45393e088597f360d2b625da928137985a47094725301abec8  aggregation.fixtures
-f31754dbaa16daf2a4b01be73540106a98cd0cd9f8f4e4da2b36d882c6054326  array_broadcast.fixtures
+04face0c7fb017599320b7c20ae28cfa2ea503b48f86472f5a1e9ccbd777ff55  array_broadcast.fixtures
 3f53be9a0f202858e31103a8c670e0c805e7893afbe2bb51b47b891447129561  criteria.fixtures
 185bff6b4c3d6e5288625f31229be465ed56f86685ab78e0b2dcb2b3412398d6  crosssheet.fixtures
 60a0b0e0a738bd3a753a77f6a2ae2aba2958958a9b554f2f489641b1c66c73ab  date.fixtures

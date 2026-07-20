@@ -75,7 +75,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: abs_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ROUND",
@@ -84,7 +84,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: round_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     // --- Criteria-aggregation family (the `*IF(S)` reporting workhorse) ---
     FuncDef {
@@ -185,7 +185,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: roundup,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "ROUNDDOWN",
@@ -194,7 +194,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: rounddown,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "INT",
@@ -203,7 +203,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: int_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "MOD",
@@ -212,7 +212,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: mod_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "POWER",
@@ -221,7 +221,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: power_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "SQRT",
@@ -230,7 +230,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: sqrt_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "CEILING",
@@ -239,7 +239,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: ceiling_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "FLOOR",
@@ -248,7 +248,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: floor_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     // --- Statistical extremes / order / counting (the v1 stats batch) ---
     FuncDef {
@@ -583,7 +583,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: replace_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2, 3],
     },
     FuncDef {
         name: "TRIM",
@@ -633,7 +633,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: date_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "YEAR",
@@ -642,7 +642,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: year_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "MONTH",
@@ -651,7 +651,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: month_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "DAY",
@@ -660,7 +660,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: day_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "EDATE",
@@ -669,7 +669,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: edate_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1],
     },
     FuncDef {
         name: "DATEDIF",
@@ -678,7 +678,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: datedif_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0, 1, 2],
     },
     FuncDef {
         name: "TODAY",
