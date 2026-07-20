@@ -1,0 +1,82 @@
+name: ci
+
+# The mechanical commit gate (.githooks/pre-commit + commit-msg), enforced in CI across three OSes.
+# Modeled on the annotated-tree CI, minus the release / installer / npm-publish channels (charlie has
+# none yet). Pins below are DELIBERATE — keep them in sync with .githooks/pre-commit,
+# rust-toolchain.toml, and .annotated-tree.toml; bump each together, on purpose.
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # fmt + clippy + the full test gate, cross-platform. The matrix is the point: it exercises the
+  # names feature's #[cfg(unix)] symlink path against the #[cfg(not(unix))] ref-file path that an
+  # ubuntu-only CI never compiles. fail-fast: false so one OS failing still reports the others.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # lfs: true is REQUIRED — the ingest test fixtures + oracle workbooks are Git LFS objects
+      # (.xlsx/.ods); without smudging, cargo test would read pointer files and fail.
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      # Pinned to rust-toolchain.toml's channel (NOT @stable): a floating stable is the very drift the
+      # pin exists to prevent. Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt --check
+        run: cargo fmt --all -- --check
+      - name: clippy -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # Unfiltered workspace run: --include-ignored so an #[ignore] never silently skips a load-bearing
+      # test (this also runs the conformance backslide/anchor test); --locked so lockfile drift FAILS
+      # CI instead of silently updating it.
+      - name: test (--include-ignored)
+        run: cargo test --locked --workspace -- --include-ignored
+
+  # charlie-specific mechanical gates — OS-independent, so once on ubuntu. No cargo toolchain needed
+  # (sha256sum + bash only).
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: oracle-input purity (frozen corpus fingerprint)
+        # The frozen encoding corpus is a graded ORACLE INPUT (charlie-model is graded AGAINST it);
+        # re-hash every file against the manifest so a silent fixture / EXPECTED-ledger rewrite fails
+        # here. Kept out of the crypto-free charlie-model (system sha256sum, per PROVENANCE.md).
+        working-directory: conformance/encoding
+        run: sha256sum -c MANIFEST.sha256 --quiet
+      - name: commit-gate selftests
+        # The gate's own regression tables — pure bash, no cargo. This is their ONLY mechanical
+        # entrypoint, so a hook-parser edit that breaks a locked quirk fails here.
+        run: |
+          bash .githooks/pre-commit.selftest.sh
+          bash .githooks/commit-msg.selftest.sh
+
+  # Dogfood: the suite-wide first-line annotation convention + the architecture rules in
+  # .annotated-tree.toml. annotated-tree is PINNED (this gate is load-bearing; a floating latest could
+  # change --strict-check behavior and silently weaken it). The three frozen conformance corpora are
+  # graduated CONTRACTS, not authored source — excluded at the call site (annotated-tree has no ignore
+  # key). Keep the globs + the pinned version in sync with .githooks/pre-commit.
+  annotations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Enforce annotations + architecture rules
+        run: npx --yes annotated-tree@0.2.1 --strict-check --include-tests -I 'conformance/encoding/**' -I 'conformance/formula/**' -I 'conformance/render/**' .
