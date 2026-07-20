@@ -120,7 +120,8 @@ fn extract_format(args: &[String]) -> Result<(Format, Vec<String>), u8> {
     Ok((fmt, rest))
 }
 
-/// `charlie-cli render <path> [--tab NAME] [--range A3:G8] [--values|--functions]`.
+/// `charlie-cli render <path> [--tab NAME] [--range A3:G8] [--values|--functions]`. The default mode is
+/// combined (`<value> ← =<formula>` per formula cell); `--values`/`--functions` narrow to one facet.
 fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     let mut tab: Option<String> = None;
@@ -154,7 +155,9 @@ fn cmd_render(fmt: Format, rest: &[String]) -> u8 {
     if modes.len() > 1 {
         return bad_arg(fmt, "choose at most one of --values / --functions");
     }
-    let mode = modes.first().copied().unwrap_or(RenderMode::Values);
+    // DEFAULT is Combined (`<value> ← =<formula>` per formula cell — value AND provenance in one glance
+    // for quick agent scanning); `--values` / `--functions` narrow to a single facet.
+    let mode = modes.first().copied().unwrap_or(RenderMode::Combined);
     let Some(path) = path else {
         return bad_arg(fmt, "render needs a <path> to a workbook directory");
     };
@@ -764,7 +767,10 @@ pub(crate) fn split_flag(arg: &str) -> (&str, Option<&str>) {
 }
 
 /// The value for a valued flag: the inline `=value`, else the next argument.
-fn take_value(inline: Option<&str>, it: &mut std::slice::Iter<'_, String>) -> Option<String> {
+pub(crate) fn take_value(
+    inline: Option<&str>,
+    it: &mut std::slice::Iter<'_, String>,
+) -> Option<String> {
     match inline {
         Some(v) => Some(v.to_string()),
         None => it.next().cloned(),
@@ -805,7 +811,7 @@ USAGE:
   charlie-cli check  <path> [--tab <name>] [--range <A1:B2>] [--cell <A1>]
   charlie-cli eval   <path> --formula '=<formula>' [--tab <name>]
   charlie-cli trace  <path> --cell <A1> [--tab <name>] [--dependents] [--depth <N>]
-  charlie-cli tree   <scope> [--values|--functions]     # <scope> is <workbook> or <workbook>/<Tab>
+  charlie-cli tree   <scope> [--values|--functions] [--range <A1:B9>]   # <scope>: <workbook> or <workbook>/<Tab>
   charlie-cli sample <dir>
   charlie-cli import <src> <dest-workbook-dir>       # <src> is a .ods or .xlsx file
   charlie-cli --version | --help | --guide
@@ -819,7 +825,9 @@ GLOBAL:
 
 COMMANDS:
   render   Draw a tab (or a sub-range). Text: an ASCII table with a column-letter header and a
-           row-number gutter. JSON: {columns, rows}. Default mode is --values.
+           row-number gutter. JSON: {columns, rows}. Default mode is COMBINED: a literal shows its
+           value; a formula shows `<value> ← =<formula>` (value AND source in one glance). Narrow with
+           --values (computed only) or --functions (authored source only).
   check    Lint the workbook — overlap, dimension-mismatch, and cycle diagnostics. Text: an ASCII
            table pointing at the offending file(s). JSON: a diagnostics[] array. Exits non-zero if
            any error-severity diagnostic. Scope it with --tab/--range/--cell to report ONLY the
@@ -829,9 +837,11 @@ COMMANDS:
   trace    Report a cell's upstream dependencies (or downstream consumers with --dependents) as a
            tree; each node carries its value and computation hash. Read-only.
   tree     Present the workbook's COMPLETE structure — every tab, every cell, every name — as one
-           read-only nested view; never the derived .cache/. Content mode mirrors render (--functions,
-           the default, shows authored source; --values shows computed). Scope it to a tab with a
-           <workbook>/<Tab> path. Text only (no --format json). Read-only.
+           read-only nested view; never the derived .cache/. Content mode mirrors render: COMBINED is
+           the default (a formula name/cell shows `<value> ← =<formula>`), narrow with --values or
+           --functions. Scope it to a tab with a <workbook>/<Tab> path; --range <A1:B9> (needs a tab
+           scope) shows exactly that viewport's cells, ALL of them, uncapped. Text only (no --format
+           json). Read-only.
   sample   Write a live tutorial workbook into <dir>, then report. Refuses to overwrite a non-empty
            directory.
   import   Convert a real spreadsheet file (.ods or .xlsx) into a charlie workbook the engine reads.
@@ -888,15 +898,17 @@ USAGE:
   charlie-cli render <path> [--tab <name>] [--range <A3:G8>] [--values|--functions] [--no-cache] [--format <text|json>]
 
 DESCRIPTION:
-  Render a workbook tab to a grid. Values mode is demand-driven — only the viewport's dependency cone
-  evaluates. Default mode is --values; default tab is the first; default viewport is the tab's used region.
+  Render a workbook tab to a grid. Values are demand-driven — only the viewport's dependency cone
+  evaluates. Default mode is COMBINED (a literal shows its value; a formula shows `<value> ← =<formula>`,
+  reusing the same value and source spellings --values/--functions produce). Default tab is the first;
+  default viewport is the tab's used region.
 
 ARGUMENTS:
   <path>            (required) The workbook directory (tabs = sub-folders).
   --tab <name>      (optional) Which tab to render. Default: the first tab.
   --range <A3:G8>   (optional) Only this rectangle (canonical A1). Default: the tab's used region.
-  --values          (optional) Computed values (the default mode).
-  --functions       (optional) Source text: a formula shows its =… text, a literal shows its value.
+  --values          (optional) Computed values only (narrows the combined default).
+  --functions       (optional) Source text only: a formula shows its =… text, a literal shows its value.
   --no-cache        (optional) Bypass the persistent result cache (.cache/) for this run — no reads
                     or writes. Values are identical; only the work to compute them changes.
   --format <fmt>    (optional) text (default, human ASCII table) or json (the machine envelope).
@@ -1067,7 +1079,7 @@ SEE ALSO:
 const TREE_HELP: &str = r#"charlie-cli tree — present a workbook's complete structure as a read-only nested view
 
 USAGE:
-  charlie-cli tree <scope> [--values|--functions] [--full]
+  charlie-cli tree <scope> [--values|--functions] [--range <A1:B9>] [--full]
 
 DESCRIPTION:
   Present the workbook's COMPLETE authored structure (CLI3) — every tab, every cell of every cell/range
@@ -1075,28 +1087,37 @@ DESCRIPTION:
   .cache/ (FS3). A single-cell file is one node; a multi-cell range file expands to one node per A1
   coordinate (row then column), capped so a large range never floods the view (the remainder is shown
   as an elided count with a "use --full to expand" hint — pass --full to lift the cap and show every
-  coordinate). A GRID5 array-formula file is one node under --functions (the formula) and expands under
-  --values. A name shows what it resolves to: a symlinked cell/range shows its target A1 reference; a
-  named formula/constant shows its definition (--functions) or computed value (--values). Rooting at a
-  <workbook>/<Tab> shows that tab's cells and its sheet-scoped names only; workbook-scoped names appear
-  in the whole-workbook view (scope the workbook directory to see them). READ-ONLY: leaves the workbook
-  byte-identical (CORE3) and writes nothing. Text only — no --format json (a structure view is not a
-  serialization surface).
+  coordinate). Content mode mirrors render: COMBINED is the DEFAULT (a formula cell/name shows
+  `<value> ← =<formula>`; a literal shows its value), narrow with --functions (authored source) or
+  --values (computed). A GRID5 array-formula file is one node under --functions (the formula) and
+  expands under --values/combined. A name shows what it resolves to: a symlinked cell/range shows its
+  target A1 reference; a named formula/constant shows its definition (--functions), computed value
+  (--values), or both (combined). Rooting at a <workbook>/<Tab> shows that tab's cells and its
+  sheet-scoped names only; workbook-scoped names appear in the whole-workbook view. --range <A1:B9>
+  (requires a <workbook>/<Tab> scope) shows EXACTLY that viewport's cells — ALL of them, the per-range
+  cap does NOT apply (an explicit range is shown in full). READ-ONLY: leaves the workbook byte-identical
+  (CORE3) and writes nothing. Text only — no --format json (a structure view is not a serialization
+  surface).
 
 ARGUMENTS:
   <scope>           (required) The workbook directory (the whole workbook), or a <workbook>/<Tab> path
                     to root the view at one tab.
-  --functions       (optional) Authored source: a formula shows its =… text, a literal shows its value.
-                    The DEFAULT (a structure view shows what an agent would edit).
-  --values          (optional) Computed values (demand-driven — only the shown cells' cone evaluates).
-  --full            (optional) Lift the per-range coordinate cap: expand every cell, eliding nothing
-                    (what the elided-count marker's "use --full to expand" hint invites).
+  --functions       (optional) Authored source only: a formula shows its =… text, a literal shows its value.
+  --values          (optional) Computed values only (demand-driven — only the shown cells' cone evaluates).
+                    With neither flag, the default is COMBINED (value AND source: `<value> ← =<formula>`).
+  --range <A1:B9>   (optional) Show exactly this viewport's cells on the scoped tab, ALL of them,
+                    uncapped (an explicit range overrides the per-range cap). Requires a <workbook>/<Tab>
+                    scope so the range names one tab.
+  --full            (optional) Lift the per-range coordinate cap on the whole-structure view: expand
+                    every cell, eliding nothing (what the "use --full to expand" hint invites).
 
 EXAMPLES:
-  charlie-cli tree ./budget                 # the whole workbook, authored source
-  charlie-cli tree ./budget --values        # the whole workbook, computed values
-  charlie-cli tree ./budget --full          # every coordinate of every range, nothing elided
-  charlie-cli tree ./budget/Summary         # just the Summary tab
+  charlie-cli tree ./budget                        # the whole workbook, combined (value + source)
+  charlie-cli tree ./budget --functions            # authored source only
+  charlie-cli tree ./budget --values               # computed values only
+  charlie-cli tree ./budget --full                 # every coordinate of every range, nothing elided
+  charlie-cli tree ./budget/Summary                # just the Summary tab
+  charlie-cli tree ./budget/Summary --range A1:A60  # exactly this viewport, all 60 cells, uncapped
 
 OUTPUT:
   A nested text tree on stdout: each tab, its cells (A1 coordinate  # content), and its names. There is
@@ -1105,7 +1126,8 @@ OUTPUT:
 EXIT CODES:
   0   Success (tree drawn)
   1   I/O failure
-  2   Invalid arguments (unknown flag, both --values and --functions, or --format json)
+  2   Invalid arguments (unknown flag, both --values and --functions, --range without a tab scope or
+      oversized, or --format json)
   3   Validation error (the workbook would not load)
   24  Not found (no such workbook directory)
 

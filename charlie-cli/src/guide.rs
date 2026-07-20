@@ -46,12 +46,15 @@ AUTHORING — the filesystem IS the write surface; there is NO write command
 
 COMMANDS
   charlie-cli render <dir> [--tab NAME] [--range A1:D9] [--values|--functions]
+                                          default COMBINED: a formula shows `<value> ← =<formula>`
   charlie-cli check  <dir> [--tab NAME] [--range A1:B2] [--cell A1]   lint; non-zero on error
                                           scope to a tab/range to check ONLY the cells you authored
   charlie-cli eval   <dir> --formula '=SUM(A1:A5)'   evaluate an ad-hoc formula against the workbook
-  charlie-cli tree   <dir>[/<Tab>] [--values|--functions]   the whole workbook's structure (every
-                                          tab/cell/name) as a nested view; --functions (default) or
-                                          --values; a <dir>/<Tab> scope roots it at one tab
+  charlie-cli tree   <dir>[/<Tab>] [--values|--functions] [--range A1:B9]   the whole workbook's
+                                          structure (every tab/cell/name) as a nested view; default
+                                          COMBINED (value + source), or --values/--functions; a
+                                          <dir>/<Tab> scope roots it at one tab, and --range (tab-scoped)
+                                          shows that viewport's cells in full (cap overridden)
   charlie-cli sample <dir>                 write a live tutorial workbook to play with
 
 START HERE

@@ -32,8 +32,8 @@ pub use grid::{Cell, Grid, deserialize_tsv, encode_field, lex_literal, load_erro
 pub use names::{Name, NameRepr, NameScope, NameTable, NameTarget, RawNameEntry, is_cell_filename};
 pub use overlap::{Rect, detect_overlaps};
 pub use render::{
-    MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, display_value, parse_viewport, render,
-    viewport_cell_count,
+    MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, combined_cell, display_value,
+    parse_viewport, render, viewport_cell_count,
 };
 pub use sample::sample_workbook;
 pub use scope::Scope;

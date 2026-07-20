@@ -75,6 +75,37 @@ fn render_functions_shows_formula_text() {
 }
 
 #[test]
+fn render_default_is_combined_value_then_source() {
+    // With no mode flag the default is COMBINED: a literal shows its value plain; a formula shows
+    // `<value> ← =<formula>` (value AND authored source in one cell). --values/--functions still narrow.
+    let fx = Fixture::new("combined");
+    fx.file("Sheet1", "A1", "2").file("Sheet1", "B1", "=A1*2");
+    let (code, out) = run(&["render", fx.path().to_str().unwrap()]);
+    assert_eq!(code, 0, "combined render exits 0:\n{out}");
+    // The formula cell carries value AND source, joined by the U+2190 arrow.
+    assert!(
+        out.contains("4 ← =A1*2"),
+        "a formula shows `<value> ← =<formula>` in the combined default:\n{out}"
+    );
+
+    // --values narrows to the computed value only (no arrow, no source).
+    let (vc, vals) = run(&["render", fx.path().to_str().unwrap(), "--values"]);
+    assert_eq!(vc, 0);
+    assert!(
+        vals.contains("| 4 ") && !vals.contains("←"),
+        "--values shows the value only (no arrow):\n{vals}"
+    );
+
+    // --functions narrows to the authored source only.
+    let (fc, funcs) = run(&["render", fx.path().to_str().unwrap(), "--functions"]);
+    assert_eq!(fc, 0);
+    assert!(
+        funcs.contains("=A1*2") && !funcs.contains("←"),
+        "--functions shows the source only (no arrow):\n{funcs}"
+    );
+}
+
+#[test]
 fn render_missing_tab_is_not_found() {
     let fx = Fixture::new("notab");
     fx.file("Sheet1", "A1", "1");
@@ -1076,11 +1107,21 @@ fn tree_functions_shows_source_and_values_shows_computed() {
         vals.contains("Rate  # 10.5"),
         "--values shows the named formula's computed value 10*1.05=10.5:\n{vals}"
     );
-    // Default mode is --functions (the structure view shows what an agent edits).
+    // Default mode is COMBINED: a formula cell shows `<value> ← =<formula>` (value AND source),
+    // matching render's default; the named formula likewise carries both.
     let (_, dflt) = run(&["tree", fx.path().to_str().unwrap()]);
     assert!(
-        dflt.contains("C1  # =B1*2"),
-        "the default mode is --functions:\n{dflt}"
+        dflt.contains("C1  # 20 ← =B1*2"),
+        "the default mode is combined (value ← source):\n{dflt}"
+    );
+    assert!(
+        dflt.contains("Rate  # 10.5 ← =B1*1.05"),
+        "a named formula in combined shows value ← source:\n{dflt}"
+    );
+    // A literal renders plain in combined (its value IS its provenance — no arrow).
+    assert!(
+        dflt.contains("B1  # 10") && !dflt.contains("B1  # 10 ←"),
+        "a literal renders plain (no arrow) in combined:\n{dflt}"
     );
 }
 
@@ -1135,6 +1176,46 @@ fn tree_full_lifts_the_cap_so_the_elided_markers_hint_is_honest() {
         !out.contains("use --full to expand"),
         "--full elides nothing, so the expand hint does not appear:\n{out}"
     );
+}
+
+#[test]
+fn tree_range_shows_every_cell_uncapped_while_the_default_view_caps() {
+    // An explicit --range OVERRIDES the per-range cap: `tree <wb>/<Tab> --range A1:A60` shows ALL 60
+    // cells (nothing elided), whereas the implicit whole-structure view of the same file caps at 50.
+    let fx = Fixture::new("tree-range");
+    let body: String = (1..=60)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    fx.file("T", "A1:A60", &body); // 60 authored cells in one range file
+
+    // The default (no --range) whole-structure view caps at 50 with the 10-cell elision marker.
+    let (dc, dflt) = run(&["tree", fx.path().to_str().unwrap()]);
+    assert_eq!(dc, 0, "{dflt}");
+    assert!(
+        !dflt.contains("A51 ") && dflt.contains("[+10"),
+        "the implicit view keeps the cap (A51 elided, +10 marker):\n{dflt}"
+    );
+
+    // --range on the tab scope shows EVERY coordinate, uncapped — no elision marker.
+    let scope = fx.path().join("T");
+    let (rc, ranged) = run(&["tree", scope.to_str().unwrap(), "--range", "A1:A60"]);
+    assert_eq!(rc, 0, "a tab-scoped --range exits 0:\n{ranged}");
+    for cell in ["A1 ", "A50 ", "A51 ", "A60 "] {
+        assert!(
+            ranged.contains(cell),
+            "the explicit range shows every cell incl. {cell} (uncapped):\n{ranged}"
+        );
+    }
+    assert!(
+        !ranged.contains("use --full to expand") && !ranged.contains("[+"),
+        "an explicit range elides nothing:\n{ranged}"
+    );
+
+    // --range without a tab scope (a whole-workbook path) is a bad-args refusal: the range is ambiguous
+    // across tabs, so it needs a <workbook>/<Tab> scope.
+    let (bc, _) = run(&["tree", fx.path().to_str().unwrap(), "--range", "A1:A60"]);
+    assert_eq!(bc, 2, "--range without a tab scope is bad args (exit 2)");
 }
 
 #[test]

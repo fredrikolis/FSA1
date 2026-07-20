@@ -1,4 +1,4 @@
-// Concern: the RENDER MODEL — turn a `Workbook` viewport (a sheet + a rectangular range) into a plain-data ASCII grid: the column-letter header row, the row-number gutter, and each cell's display string under one of two modes (computed VALUES — demand-driven, only the viewport's cone evaluates; FORMULA text), plus the A1-range→`Rect` viewport parser and the single `Value`→display-string spelling (numbers, TRUE/FALSE, the `#REF!`-family error text, blank) | Non-concern: the ASCII table DRAWING itself (charlie-cli owns comfy-table layout/borders — this hands back strings, never glyphs), the demand-driven eval engine (workbook.rs owns the pull), and the lint/diagnostic surface (workbook.rs `lint`) | IO: (a `&Workbook`, a sheet, a viewport `Rect`, a `RenderMode`) -> a `RenderGrid` of strings; (an A1 range `&str`) -> a `Rect`
+// Concern: the RENDER MODEL — turn a `Workbook` viewport (a sheet + a rectangular range) into a plain-data ASCII grid: the column-letter header row, the row-number gutter, and each cell's display string under one of three modes (computed VALUES — demand-driven, only the viewport's cone evaluates; FORMULA text; COMBINED — a literal's value, or a formula's `<value> ← =<formula>` reusing the SAME value+source spellings), plus the A1-range→`Rect` viewport parser, the single `Value`→display-string spelling (numbers, TRUE/FALSE, the `#REF!`-family error text, blank), and the ONE `<value> ← <source>` combined composition (`combined_cell`) reused by the CLI's name rendering | Non-concern: the ASCII table DRAWING itself (charlie-cli owns comfy-table layout/borders — this hands back strings, never glyphs), the demand-driven eval engine (workbook.rs owns the pull), and the lint/diagnostic surface (workbook.rs `lint`) | IO: (a `&Workbook`, a sheet, a viewport `Rect`, a `RenderMode`) -> a `RenderGrid` of strings; (an A1 range `&str`) -> a `Rect`
 //! The render model: [`render`] builds a [`RenderGrid`] of display strings for a viewport; the CLI
 //! draws it. [`parse_viewport`] turns an `A3:G8` (or `A3`) range string into a [`Rect`].
 //!
@@ -21,6 +21,12 @@ pub enum RenderMode {
     /// The source text: a formula cell shows its `=…` text; a literal cell shows its value
     /// (Excel's "show formulas" view).
     Functions,
+    /// The COMBINED view (the DEFAULT for `render` and `tree`): per cell, a literal shows its value
+    /// plain (as [`RenderMode::Values`]); a formula shows `<value> ← =<formula>` — its computed value
+    /// AND its authored source in one glance, arrow U+2190 single-spaced; a blank is blank; an error
+    /// value keeps its error spelling (still `<err> ← =<formula>` if it came from a formula). Reuses the
+    /// EXACT `Values` value spelling and `Functions` source text — no second formatter, no re-parse.
+    Combined,
 }
 
 /// One rendered row: the gutter label (the 1-based row number) and the viewport cells left→right.
@@ -54,6 +60,21 @@ pub const MAX_VIEWPORT_CELLS: u64 = 1_000_000;
 /// re-printing the formula (VAL1: one array-formula cell spanning its range, not many cells).
 const ARRAY_CONTINUATION_MARK: &str = "^";
 
+/// The Combined-mode provenance delimiter: `<value> ← <source>` — U+2190 LEFTWARDS ARROW, single-spaced
+/// (` ← `). Parentheses are deliberately NOT the delimiter (a formula's own `(...)` would collide). Its
+/// one home; the composition is done ONLY through [`combined_cell`].
+const COMBINED_ARROW: &str = " ← ";
+
+/// Compose the [`RenderMode::Combined`] spelling from a cell/name's ALREADY-PRODUCED value and source
+/// strings: `<value> ← <source>`. The SINGLE composition point — the grid-cell path ([`combined_text`])
+/// AND the CLI's `tree` name rendering both call it, so the arrow, the spacing, and the value-then-source
+/// order live in exactly ONE place (HARD RULE 2/4: one combined spelling, never a second formatter). The
+/// caller supplies the value spelled by [`display_value`] and the source spelled by the `Functions` path;
+/// this only joins them.
+pub fn combined_cell(value: &str, source: &str) -> String {
+    format!("{value}{COMBINED_ARROW}{source}")
+}
+
 /// The cell-count of a viewport rectangle, as `u64` so the product of two `u32` spans cannot
 /// overflow. The CLI compares this to [`MAX_VIEWPORT_CELLS`] before calling [`render`].
 pub fn viewport_cell_count(vp: Rect) -> u64 {
@@ -74,9 +95,11 @@ pub fn render(wb: &Workbook, sheet: u32, viewport: Rect, mode: RenderMode) -> Re
         .map(format_column)
         .collect();
 
-    // In Values mode, demand every viewport cell in ONE plan+evaluate pass so shared dependencies are
-    // computed once (ENG3). The spelled strings are indexed row-major to fill the grid below.
-    let value_strings: Option<Vec<String>> = (mode == RenderMode::Values).then(|| {
+    // Values AND Combined both demand every viewport cell in ONE plan+evaluate pass so shared
+    // dependencies are computed once (ENG3); Combined then prefixes each value with its source
+    // provenance. The spelled strings are indexed row-major to fill the grid below.
+    let needs_values = matches!(mode, RenderMode::Values | RenderMode::Combined);
+    let value_strings: Option<Vec<String>> = needs_values.then(|| {
         let coords: Vec<(u32, u32, u32)> = (viewport.min_row..=viewport.max_row)
             .flat_map(|row| (viewport.min_col..=viewport.max_col).map(move |col| (sheet, col, row)))
             .collect();
@@ -90,7 +113,13 @@ pub fn render(wb: &Workbook, sheet: u32, viewport: Rect, mode: RenderMode) -> Re
             let cells = (viewport.min_col..=viewport.max_col)
                 .enumerate()
                 .map(|(ci, col)| match &value_strings {
+                    // Combined: `<value> ← <source>` per cell, reusing the batched value string.
+                    Some(vs) if mode == RenderMode::Combined => {
+                        combined_text(wb, sheet, col, row, &vs[ri * width + ci])
+                    }
+                    // Values: the batched computed value.
                     Some(vs) => vs[ri * width + ci].clone(),
+                    // Functions: the per-cell source lookup (no cross-cell sharing).
                     None => cell_text(wb, sheet, col, row, mode),
                 })
                 .collect();
@@ -105,8 +134,9 @@ pub fn render(wb: &Workbook, sheet: u32, viewport: Rect, mode: RenderMode) -> Re
     RenderGrid { col_labels, rows }
 }
 
-/// The display string for one cell under `mode` (the non-`Values` modes; `Values` is batched in
-/// [`render`]). `Functions` is a per-cell source lookup with no cross-cell sharing.
+/// The display string for one cell under `mode`. `Functions` is a per-cell source lookup with no
+/// cross-cell sharing; `Values` and `Combined` are batched through the `value_strings` path in
+/// [`render`], so their arms here are statically dead (kept total, never a panic, if ever reached).
 fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) -> String {
     match mode {
         RenderMode::Functions => match wb.source_at(sheet, col, row) {
@@ -125,12 +155,41 @@ fn cell_text(wb: &Workbook, sheet: u32, col: u32, row: u32, mode: RenderMode) ->
             },
             None => String::new(),
         },
-        // `Values` is materialized once, batched, in [`render`] (the `value_strings` branch), so
-        // `cell_text` is only ever reached when `mode != Values` and this arm is statically dead.
-        // Rather than panic, spell the cell's value the same way the batched path would — total,
-        // never a panic (this engine's never-panic convention), and the correct answer if ever
-        // reached.
+        // `Values` and `Combined` are materialized once, batched, in [`render`] (the `value_strings`
+        // branch), so `cell_text` is only ever reached for `Functions`; these arms are statically dead.
+        // Rather than panic, spell each the same way its batched path would — total, never a panic (this
+        // engine's never-panic convention), and the correct answer if ever reached.
         RenderMode::Values => display_value(&wb.value_at(sheet, col, row)),
+        RenderMode::Combined => combined_text(
+            wb,
+            sheet,
+            col,
+            row,
+            &display_value(&wb.value_at(sheet, col, row)),
+        ),
+    }
+}
+
+/// The [`RenderMode::Combined`] display string for one cell, given `value` — the cell's ALREADY-SPELLED
+/// computed value (from the batched `Values` pass in [`render`], so no re-evaluation and the SAME
+/// spelling as `--values`). A literal shows just its value (its value IS its provenance — no arrow); a
+/// formula (or a GRID6 load-error cell) shows `<value> ← <source>`, where `<source>` is the EXACT text
+/// `--functions` prints (the parsed `=…`, or the raw unparsed body) — reused verbatim, never re-parsed
+/// (HARD RULE 2). A GRID5 continuation cell shows its spilled value with the `^` array-formula marker as
+/// provenance (the same token `--functions` prints — the formula lives once, at the anchor, VAL1). A gap
+/// cell (covered by no file) is blank.
+fn combined_text(wb: &Workbook, sheet: u32, col: u32, row: u32, value: &str) -> String {
+    let Some(src) = wb.source_at(sheet, col, row) else {
+        return String::new();
+    };
+    if src.array_continuation {
+        return combined_cell(value, ARRAY_CONTINUATION_MARK);
+    }
+    match src.cell {
+        Cell::Value(_) => value.to_string(),
+        Cell::Formula { src: text, .. } | Cell::LoadError { src: text, .. } => {
+            combined_cell(value, text)
+        }
     }
 }
 
@@ -254,11 +313,46 @@ mod tests {
     }
 
     #[test]
+    fn combined_mode_shows_value_then_source_for_formulas_and_plain_for_literals() {
+        let wb = wb();
+        let g = render(
+            &wb,
+            0,
+            parse_viewport("A1:C1").unwrap(),
+            RenderMode::Combined,
+        );
+        // A1 is a literal → its value plain (no arrow); B1/C1 are formulas → `<value> ← =<formula>`,
+        // reusing the SAME value spelling (Values) and source text (Functions) per cell.
+        assert_eq!(g.rows[0].cells, vec!["1", "2 ← =A1+1", "20 ← =B1*10"]);
+    }
+
+    #[test]
+    fn combined_mode_spells_an_error_valued_formula_with_its_source() {
+        // A formula that evaluates to an error keeps its error spelling on the value side, and still
+        // carries `← =<formula>` (the combined form never drops provenance for a formula).
+        let a1 = "=1/0".to_string();
+        let wb = Workbook::from_tabs(&[("Sheet1", &[("A1", a1.as_str())])]).expect("loads");
+        let g = render(&wb, 0, parse_viewport("A1").unwrap(), RenderMode::Combined);
+        assert_eq!(g.rows[0].cells, vec!["#DIV/0! ← =1/0"]);
+    }
+
+    #[test]
+    fn combined_mode_leaves_a_gap_cell_blank() {
+        let wb = wb();
+        let g = render(&wb, 0, parse_viewport("Z9").unwrap(), RenderMode::Combined);
+        assert_eq!(g.rows[0].cells[0], "");
+    }
+
+    #[test]
     fn a_gap_cell_renders_empty_in_every_mode() {
         let wb = wb();
         // Z9 is claimed by no file.
         let vp = parse_viewport("Z9").unwrap();
-        for mode in [RenderMode::Values, RenderMode::Functions] {
+        for mode in [
+            RenderMode::Values,
+            RenderMode::Functions,
+            RenderMode::Combined,
+        ] {
             let g = render(&wb, 0, vp, mode);
             assert_eq!(g.rows[0].cells[0], "");
         }
