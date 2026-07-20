@@ -20,3 +20,7 @@ path = "src/main.rs"
 charlie-model = { path = "../charlie-model" }
 charlie-ingest = { path = "../charlie-ingest" }
 comfy-table = "7.2"
+# `tree` (CLI3) renders the workbook's structure through annotated-tree's model+text renderer.
+# A crates.io dep (HARD RULE 5: never a `path=` — it is not a workspace member); the CLI builds the
+# `DirNode`/`FileNode` tree by hand and asks `for_format(Format::Text)` to draw it.
+annotated-tree = "0.4"

@@ -10,6 +10,7 @@
 mod ascii;
 mod guide;
 mod output;
+mod tree;
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -49,7 +50,7 @@ fn run(args: &[String]) -> u8 {
         let cmd = args.iter().map(String::as_str).find(|a| {
             matches!(
                 *a,
-                "render" | "check" | "eval" | "trace" | "sample" | "import"
+                "render" | "check" | "eval" | "trace" | "tree" | "sample" | "import"
             )
         });
         print_help(cmd);
@@ -72,6 +73,7 @@ fn run(args: &[String]) -> u8 {
         "check" => cmd_check(fmt, &rest[1..]),
         "eval" => cmd_eval(fmt, &rest[1..]),
         "trace" => cmd_trace(fmt, &rest[1..]),
+        "tree" => tree::cmd_tree(fmt, &rest[1..]),
         "sample" => cmd_sample(fmt, &rest[1..]),
         "import" => cmd_import(fmt, &rest[1..]),
         other => {
@@ -754,7 +756,7 @@ fn sheet_name(wb: &Workbook, sheet: u32) -> String {
 }
 
 /// Split `--flag=value` into `("--flag", Some("value"))`; a plain `--flag` yields `(.., None)`.
-fn split_flag(arg: &str) -> (&str, Option<&str>) {
+pub(crate) fn split_flag(arg: &str) -> (&str, Option<&str>) {
     match arg.split_once('=') {
         Some((f, v)) if f.starts_with('-') => (f, Some(v)),
         _ => (arg, None),
@@ -770,13 +772,13 @@ fn take_value(inline: Option<&str>, it: &mut std::slice::Iter<'_, String>) -> Op
 }
 
 /// Emit an operational error through the envelope layer and return its paired exit code.
-fn fail(fmt: Format, code: ErrorCode, message: &str) -> u8 {
+pub(crate) fn fail(fmt: Format, code: ErrorCode, message: &str) -> u8 {
     emit_error(fmt, code, message);
     code.exit()
 }
 
 /// A bad-args (invalid-usage) refusal — the most common operational error.
-fn bad_arg(fmt: Format, msg: &str) -> u8 {
+pub(crate) fn bad_arg(fmt: Format, msg: &str) -> u8 {
     fail(fmt, ErrorCode::InvalidArguments, msg)
 }
 
@@ -788,6 +790,7 @@ fn print_help(cmd: Option<&str>) {
         Some("check") => CHECK_HELP,
         Some("eval") => EVAL_HELP,
         Some("trace") => TRACE_HELP,
+        Some("tree") => TREE_HELP,
         Some("sample") => SAMPLE_HELP,
         Some("import") => IMPORT_HELP,
         _ => GLOBAL_HELP,
@@ -802,6 +805,7 @@ USAGE:
   charlie-cli check  <path> [--tab <name>] [--range <A1:B2>] [--cell <A1>]
   charlie-cli eval   <path> --formula '=<formula>' [--tab <name>]
   charlie-cli trace  <path> --cell <A1> [--tab <name>] [--dependents] [--depth <N>]
+  charlie-cli tree   <scope> [--values|--functions]     # <scope> is <workbook> or <workbook>/<Tab>
   charlie-cli sample <dir>
   charlie-cli import <src> <dest-workbook-dir>       # <src> is a .ods or .xlsx file
   charlie-cli --version | --help | --guide
@@ -824,6 +828,10 @@ COMMANDS:
   eval     Evaluate an ad-hoc --formula against the loaded workbook and emit its value. Read-only.
   trace    Report a cell's upstream dependencies (or downstream consumers with --dependents) as a
            tree; each node carries its value and computation hash. Read-only.
+  tree     Present the workbook's COMPLETE structure — every tab, every cell, every name — as one
+           read-only nested view; never the derived .cache/. Content mode mirrors render (--functions,
+           the default, shows authored source; --values shows computed). Scope it to a tab with a
+           <workbook>/<Tab> path. Text only (no --format json). Read-only.
   sample   Write a live tutorial workbook into <dir>, then report. Refuses to overwrite a non-empty
            directory.
   import   Convert a real spreadsheet file (.ods or .xlsx) into a charlie workbook the engine reads.
@@ -1053,6 +1061,56 @@ EXIT CODES:
 
 SEE ALSO:
   charlie-cli eval       Evaluate an ad-hoc formula
+  charlie-cli --guide    Terse guide to the on-disk model
+"#;
+
+const TREE_HELP: &str = r#"charlie-cli tree — present a workbook's complete structure as a read-only nested view
+
+USAGE:
+  charlie-cli tree <scope> [--values|--functions] [--full]
+
+DESCRIPTION:
+  Present the workbook's COMPLETE authored structure (CLI3) — every tab, every cell of every cell/range
+  file, and every name — as a single read-only nested tree. Never shows the derived, non-authoritative
+  .cache/ (FS3). A single-cell file is one node; a multi-cell range file expands to one node per A1
+  coordinate (row then column), capped so a large range never floods the view (the remainder is shown
+  as an elided count with a "use --full to expand" hint — pass --full to lift the cap and show every
+  coordinate). A GRID5 array-formula file is one node under --functions (the formula) and expands under
+  --values. A name shows what it resolves to: a symlinked cell/range shows its target A1 reference; a
+  named formula/constant shows its definition (--functions) or computed value (--values). Rooting at a
+  <workbook>/<Tab> shows that tab's cells and its sheet-scoped names only; workbook-scoped names appear
+  in the whole-workbook view (scope the workbook directory to see them). READ-ONLY: leaves the workbook
+  byte-identical (CORE3) and writes nothing. Text only — no --format json (a structure view is not a
+  serialization surface).
+
+ARGUMENTS:
+  <scope>           (required) The workbook directory (the whole workbook), or a <workbook>/<Tab> path
+                    to root the view at one tab.
+  --functions       (optional) Authored source: a formula shows its =… text, a literal shows its value.
+                    The DEFAULT (a structure view shows what an agent would edit).
+  --values          (optional) Computed values (demand-driven — only the shown cells' cone evaluates).
+  --full            (optional) Lift the per-range coordinate cap: expand every cell, eliding nothing
+                    (what the elided-count marker's "use --full to expand" hint invites).
+
+EXAMPLES:
+  charlie-cli tree ./budget                 # the whole workbook, authored source
+  charlie-cli tree ./budget --values        # the whole workbook, computed values
+  charlie-cli tree ./budget --full          # every coordinate of every range, nothing elided
+  charlie-cli tree ./budget/Summary         # just the Summary tab
+
+OUTPUT:
+  A nested text tree on stdout: each tab, its cells (A1 coordinate  # content), and its names. There is
+  no JSON form — tree is a text-only structure view.
+
+EXIT CODES:
+  0   Success (tree drawn)
+  1   I/O failure
+  2   Invalid arguments (unknown flag, both --values and --functions, or --format json)
+  3   Validation error (the workbook would not load)
+  24  Not found (no such workbook directory)
+
+SEE ALSO:
+  charlie-cli render     Draw one tab's grid as a flat table
   charlie-cli --guide    Terse guide to the on-disk model
 "#;
 

@@ -205,6 +205,24 @@ pub enum FormulaOutcome {
     Error(String),
 }
 
+/// A read-only summary of one authored cell/range file on a tab — its A1-range name, declared region,
+/// and whether it is a GRID5 array-formula region — the unit [`Workbook::tab_files`] hands the
+/// `charlie-cli tree` view (CLI3). It carries no content: the CLI fetches each coordinate's text by
+/// mode through the existing [`render`](crate::render::render) surface (which also names the
+/// coordinate), so the grid never leaks and the render/value spelling is single-sourced. Borrows the
+/// workbook, so it cannot outlive it.
+#[derive(Clone, Copy, Debug)]
+pub struct FileEntry<'a> {
+    /// The file's on-disk name — a closed A1 range (`A1`, `F2:F11`, `C1:C3`), FS2.
+    pub name: &'a str,
+    /// The declared region the file claims (its closed range as a [`Rect`]).
+    pub region: Rect,
+    /// `true` iff the whole file is a single GRID5 `=formula` that fills a multi-coordinate range —
+    /// so `tree --functions` shows ONE node (the formula at the anchor), while `--values` expands the
+    /// computed cells like any range.
+    pub array_formula: bool,
+}
+
 /// A read-only view of the single file that covers a requested cell — the un-evaluated source the
 /// render surface shows in `--functions` mode. Borrows the workbook, so it cannot outlive it.
 #[derive(Clone, Copy, Debug)]
@@ -524,6 +542,34 @@ impl Workbook {
             Value::Error(_) => FormulaOutcome::Error(shown),
             _ => FormulaOutcome::Value(shown),
         })
+    }
+
+    /// The authored cell/range files on `sheet`, in load order (sorted on the fs path), each as a
+    /// read-only [`FileEntry`] summary (its A1-range name, declared region, and whether it is a GRID5
+    /// array-formula region). `None` for an out-of-range sheet. The `charlie-cli tree` structure view
+    /// (CLI3) enumerates a tab this way — then expands each file's coordinates through the existing
+    /// [`render`](crate::render::render)/[`source_at`](Workbook::source_at) surface — so the CLI never
+    /// reaches into the grid or reimplements the A1-vs-name classification (SoC). Read-only.
+    pub fn tab_files(&self, sheet: u32) -> Option<Vec<FileEntry<'_>>> {
+        let tab = self.tabs.get(sheet as usize)?;
+        Some(
+            tab.files
+                .iter()
+                .map(|f| FileEntry {
+                    name: &f.name,
+                    region: f.region,
+                    array_formula: f.array_formula,
+                })
+                .collect(),
+        )
+    }
+
+    /// The workbook's resolved FS4 [`NameTable`] (built at load) — for the `charlie-cli tree` view
+    /// (CLI3) to list each name with what it resolves to (a symlink → its target A1 ref; a named
+    /// formula/constant → its authored definition or, evaluated via [`Workbook::eval_formula`], its
+    /// value). Read-only; the parsing/classification authority stays in the `names` module.
+    pub fn name_table(&self) -> &NameTable {
+        &self.names
     }
 
     /// The tab index for a sheet name, or `None` if no tab has that name. The index is the

@@ -49,6 +49,9 @@ COMMANDS
   charlie-cli check  <dir> [--tab NAME] [--range A1:B2] [--cell A1]   lint; non-zero on error
                                           scope to a tab/range to check ONLY the cells you authored
   charlie-cli eval   <dir> --formula '=SUM(A1:A5)'   evaluate an ad-hoc formula against the workbook
+  charlie-cli tree   <dir>[/<Tab>] [--values|--functions]   the whole workbook's structure (every
+                                          tab/cell/name) as a nested view; --functions (default) or
+                                          --values; a <dir>/<Tab> scope roots it at one tab
   charlie-cli sample <dir>                 write a live tutorial workbook to play with
 
 START HERE

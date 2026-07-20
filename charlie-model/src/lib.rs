@@ -37,7 +37,9 @@ pub use render::{
 };
 pub use sample::sample_workbook;
 pub use scope::Scope;
-pub use workbook::{CellSource, Direction, FormulaOutcome, TraceNode, TraceStatus, Workbook};
+pub use workbook::{
+    CellSource, Direction, FileEntry, FormulaOutcome, TraceNode, TraceStatus, Workbook,
+};
 
 use charlie_ast::Shape;
 

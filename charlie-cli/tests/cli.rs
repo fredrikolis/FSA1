@@ -958,3 +958,276 @@ fn import_an_unsupported_extension_is_a_validation_refusal() {
         "validation refusal naming the format:\n{out}"
     );
 }
+
+// ---- tree (CLI3): the workbook's complete structure as a read-only nested view ----
+
+/// Create a POSIX symlink `link` -> `target` inside tab `tab` (the FS4 name representation the tree
+/// resolves). Unix-only, matching the model's symlink name form.
+fn symlink(fx: &Fixture, tab: &str, link: &str, target: &str) {
+    let dir = fx.path().join(tab);
+    std::fs::create_dir_all(&dir).expect("create tab dir");
+    std::os::unix::fs::symlink(target, dir.join(link)).expect("create symlink");
+}
+
+/// A stable snapshot of every AUTHORITATIVE entry under `root` (recursively), EXCLUDING the derived
+/// `.cache/` (FS3): each regular file as `path=bytes` and each symlink as `path->target`. Used to prove
+/// `tree` leaves the workbook byte-identical (CORE3).
+fn snapshot(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<String>) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .collect();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for e in entries {
+            let path = e.path();
+            let rel = path
+                .strip_prefix(base)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let ft = e.file_type().unwrap();
+            if ft.is_symlink() {
+                let target = std::fs::read_link(&path).unwrap();
+                out.push(format!("{rel}->{}", target.display()));
+            } else if ft.is_dir() {
+                if rel == ".cache" {
+                    continue; // derived, non-authoritative (FS3)
+                }
+                walk(&path, base, out);
+            } else {
+                out.push(format!("{rel}={}", std::fs::read_to_string(&path).unwrap()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out
+}
+
+/// Build the canonical tree fixture: a formula cell, a multi-row range file, a named-range symlink, a
+/// named-formula ref-file, and a derived `.cache/` that must never appear.
+fn tree_fixture(tag: &str) -> Fixture {
+    let fx = Fixture::new(tag);
+    fx.file("Sheet1", "A1", "Product") // a literal cell
+        .file("Sheet1", "B1", "10") // a literal the formula reads
+        .file("Sheet1", "C1", "=B1*2") // a FORMULA cell
+        .file("Sheet1", "A2:A5", "1\n2\n3\n4") // a MULTI-ROW range file (4 cells)
+        .file("Sheet1", "Rate", "=B1*1.05"); // a named-FORMULA ref-file
+    symlink(&fx, "Sheet1", "Days.begin", "A2"); // a named-RANGE symlink (corner pair)
+    symlink(&fx, "Sheet1", "Days.end", "A5");
+    // A derived .cache/ that tree must exclude (FS3) — a standalone workbook is not a git repo.
+    std::fs::create_dir_all(fx.path().join(".cache")).unwrap();
+    std::fs::write(fx.path().join(".cache").join("junk"), "regenerable").unwrap();
+    fx
+}
+
+#[test]
+fn tree_presents_every_authored_cell_and_name_and_excludes_cache() {
+    // CLI3 completeness + exclusion: every authored cell and name is present; the derived .cache/ never is.
+    let fx = tree_fixture("tree-complete");
+    let (code, out) = run(&["tree", fx.path().to_str().unwrap()]);
+    assert_eq!(code, 0, "clean tree exits 0:\n{out}");
+    // Every authored cell of every file.
+    for cell in ["A1", "B1", "C1", "A2", "A3", "A4", "A5"] {
+        assert!(out.contains(cell), "authored cell {cell} present:\n{out}");
+    }
+    // Both names, each shown by what it resolves to (FS4).
+    assert!(out.contains("Days"), "the named range is present:\n{out}");
+    assert!(out.contains("Rate"), "the named formula is present:\n{out}");
+    assert!(
+        out.contains("-> Sheet1!A2:A5"),
+        "the symlinked range resolves to its target A1 ref:\n{out}"
+    );
+    // The tab itself.
+    assert!(
+        out.contains("Sheet1/"),
+        "the tab is a directory node:\n{out}"
+    );
+    // The derived .cache/ is NEVER shown (FS3) — neither the dir nor its content.
+    assert!(
+        !out.contains(".cache") && !out.contains("junk"),
+        "the derived .cache/ must be excluded:\n{out}"
+    );
+}
+
+#[test]
+fn tree_functions_shows_source_and_values_shows_computed() {
+    // --functions shows authored formula text; --values shows the computed value (mirroring render).
+    let fx = tree_fixture("tree-modes");
+    let (fc, funcs) = run(&["tree", fx.path().to_str().unwrap(), "--functions"]);
+    assert_eq!(fc, 0, "{funcs}");
+    assert!(
+        funcs.contains("C1  # =B1*2"),
+        "--functions shows the authored formula, not its value:\n{funcs}"
+    );
+    assert!(
+        funcs.contains("Rate  # =B1*1.05"),
+        "--functions shows the named formula's definition:\n{funcs}"
+    );
+
+    let (vc, vals) = run(&["tree", fx.path().to_str().unwrap(), "--values"]);
+    assert_eq!(vc, 0, "{vals}");
+    assert!(
+        vals.contains("C1  # 20"),
+        "--values shows the computed value 10*2=20:\n{vals}"
+    );
+    assert!(
+        vals.contains("Rate  # 10.5"),
+        "--values shows the named formula's computed value 10*1.05=10.5:\n{vals}"
+    );
+    // Default mode is --functions (the structure view shows what an agent edits).
+    let (_, dflt) = run(&["tree", fx.path().to_str().unwrap()]);
+    assert!(
+        dflt.contains("C1  # =B1*2"),
+        "the default mode is --functions:\n{dflt}"
+    );
+}
+
+#[test]
+fn tree_range_expands_a1_ordered_capped_and_elided() {
+    // A multi-cell range file expands to one A1-ordered node per coordinate, capped at ~50 with the
+    // remainder shown as an elided count (a large range never floods the view).
+    let fx = Fixture::new("tree-cap");
+    let body: String = (1..=60)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    fx.file("T", "A1:A60", &body); // 60 authored cells
+    let (code, out) = run(&["tree", fx.path().to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}");
+    // A1-ordered: A1 comes before A50 in the output.
+    let a1 = out.find("A1 ").expect("A1 present");
+    let a50 = out.find("A50 ").expect("A50 present");
+    assert!(a1 < a50, "cells are A1-ordered (A1 before A50):\n{out}");
+    // Capped at 50: the 51st coordinate is NOT a node.
+    assert!(
+        !out.contains("A51 "),
+        "past the cap, a coordinate is elided, not shown:\n{out}"
+    );
+    // The remainder (60 - 50 = 10) is an elided count marker.
+    assert!(
+        out.contains("[+10"),
+        "the 10 over-cap cells are shown as an elided count:\n{out}"
+    );
+}
+
+#[test]
+fn tree_full_lifts_the_cap_so_the_elided_markers_hint_is_honest() {
+    // The elided-count marker borrows annotated-tree's "use --full to expand" text; --full must be a
+    // real, accepted flag that lifts the per-range cap so nothing is elided (the affordance the marker
+    // advertises actually works — an agent following the hint is not refused).
+    let fx = Fixture::new("tree-full");
+    let body: String = (1..=60)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    fx.file("T", "A1:A60", &body); // 60 authored cells — past the default cap of 50
+    let (code, out) = run(&["tree", fx.path().to_str().unwrap(), "--full"]);
+    assert_eq!(code, 0, "--full is an accepted flag (exit 0):\n{out}");
+    // Every coordinate now shows, including ones past the default cap.
+    assert!(
+        out.contains("A51 ") && out.contains("A60 "),
+        "--full expands past the default cap (A51 and A60 present):\n{out}"
+    );
+    // Nothing is elided, so the "use --full to expand" marker is absent.
+    assert!(
+        !out.contains("use --full to expand"),
+        "--full elides nothing, so the expand hint does not appear:\n{out}"
+    );
+}
+
+#[test]
+fn tree_collapses_a_grid5_array_formula_under_functions_and_expands_it_under_values() {
+    // GRID5 mode-conditional collapse (the `fe.array_formula && mode == Functions` branch in
+    // tree.rs cell_nodes): a range file that is a SINGLE array formula is ONE node under --functions
+    // (its formula lives once, at the anchor — no per-cell authored source to show), but expands to
+    // one node per computed A1 coordinate under --values, exactly like any range. A1:A3 = {3;1;2}
+    // and C1:C3 = `=SORT(A1:A3)`, whose computed value is the sorted {1;2;3}.
+    let fx = Fixture::new("tree-grid5");
+    fx.file("Sheet1", "A1:A3", "3\n1\n2")
+        .file("Sheet1", "C1:C3", "=SORT(A1:A3)");
+
+    // --functions: ONE node carrying the array formula at the range's anchor; it does NOT expand.
+    let (fc, funcs) = run(&["tree", fx.path().to_str().unwrap(), "--functions"]);
+    assert_eq!(fc, 0, "{funcs}");
+    assert!(
+        funcs.contains("C1:C3  # =SORT(A1:A3)"),
+        "the array formula is ONE node at the range anchor:\n{funcs}"
+    );
+    assert!(
+        !funcs.contains("C2"),
+        "under --functions the array formula does not expand per coordinate:\n{funcs}"
+    );
+
+    // --values: the array formula expands to one node per computed coordinate (the sorted elements),
+    // and the collapsed range-file node is gone.
+    let (vc, vals) = run(&["tree", fx.path().to_str().unwrap(), "--values"]);
+    assert_eq!(vc, 0, "{vals}");
+    assert!(
+        !vals.contains("C1:C3"),
+        "under --values the range file is expanded, not shown collapsed:\n{vals}"
+    );
+    for (label, elem) in [("C1", "1"), ("C2", "2"), ("C3", "3")] {
+        assert!(
+            vals.contains(&format!("{label}  # {elem}")),
+            "the computed coordinate {label} = {elem} expands under --values:\n{vals}"
+        );
+    }
+}
+
+#[test]
+fn tree_scope_roots_the_view_at_a_tab() {
+    // A <workbook>/<Tab> scope roots the view at that tab: the tab's cells show directly (no tab-dir
+    // header) and the OTHER tab is absent.
+    let fx = Fixture::new("tree-scope");
+    fx.file("Alpha", "A1", "in-alpha")
+        .file("Beta", "A1", "in-beta");
+    let scope = fx.path().join("Alpha");
+    let (code, out) = run(&["tree", scope.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("in-alpha"),
+        "the scoped tab's cell is shown:\n{out}"
+    );
+    assert!(
+        !out.contains("in-beta") && !out.contains("Beta/"),
+        "a tab outside the scope is absent:\n{out}"
+    );
+    assert!(
+        !out.contains("Alpha/"),
+        "the scoped tab is the ROOT (its name is not printed as a dir):\n{out}"
+    );
+}
+
+#[test]
+fn tree_is_read_only_leaving_the_workbook_byte_identical() {
+    // CORE3: tree opens nothing for write; the authoritative workbook is byte-identical after (in both
+    // modes, --values included — the cache is disabled so no derived bytes are written either).
+    let fx = tree_fixture("tree-readonly");
+    let before = snapshot(fx.path());
+    let (fc, _) = run(&["tree", fx.path().to_str().unwrap(), "--functions"]);
+    let (vc, _) = run(&["tree", fx.path().to_str().unwrap(), "--values"]);
+    assert_eq!((fc, vc), (0, 0));
+    let after = snapshot(fx.path());
+    assert_eq!(
+        before, after,
+        "tree must leave every authoritative cell/tab/name byte-identical (CORE3)"
+    );
+}
+
+#[test]
+fn tree_has_no_json_serialization_form() {
+    // Text only — a structure view is not a serialization surface, so --format json is refused (never a
+    // second machine-readable form that would invite re-derivation).
+    let fx = tree_fixture("tree-nojson");
+    let (code, out) = run(&["tree", fx.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(
+        code, 2,
+        "--format json is a bad-args refusal (exit 2):\n{out}"
+    );
+    assert!(
+        out.contains("text-only"),
+        "the refusal explains tree is text-only:\n{out}"
+    );
+}
