@@ -117,26 +117,22 @@ def _grid_literal(literal):
 def charlie_value(cli, wb_dir, formula, tab=TAB):
     """Run ``charlie-cli eval`` and return ``(value_str_or_None, exit_code, note)``.
 
-    ``value_str`` is the string in the JSON envelope's ``data.value`` (present for both a plain value
-    and an error-valued result like ``#DIV/0!``); ``None`` means a parse refusal (only diagnostics).
-    ``tab`` selects the sheet unqualified refs bind to — the per-formula oracle uses the single ``S``
-    tab; the whole-workbook oracle passes each cell's own sheet.
+    ``value_str`` is what ``eval`` prints on stdout — the scalar value, present for both a plain value
+    and an error-valued result like ``#DIV/0!``; ``None`` means a parse refusal (a ``error[…]:``
+    diagnostic instead of a value). ``tab`` selects the sheet unqualified refs bind to — the per-formula
+    oracle uses the single ``S`` tab; the whole-workbook oracle passes each cell's own sheet.
     """
     proc = subprocess.run(
-        [str(cli), "eval", str(wb_dir), "--tab", tab, "--formula", formula, "--format", "json"],
+        [str(cli), "eval", str(wb_dir), "--tab", tab, "--formula", formula],
         capture_output=True,
         text=True,
     )
-    try:
-        envelope = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return None, proc.returncode, f"non-JSON stdout: {proc.stdout.strip()[:80]}"
-    data = envelope.get("data") or {}
-    if "value" in data:
-        return data["value"], proc.returncode, ""
-    diags = data.get("diagnostics") or []
-    msg = diags[0].get("message", "parse refusal") if diags else "parse refusal"
-    return None, proc.returncode, msg
+    out = proc.stdout.strip()
+    # Text is charlie's sole output form: `eval` prints the scalar value (a plain value OR an
+    # error-value like `#DIV/0!`) on stdout, or a `error[<code>]: …` diagnostic for a parse refusal.
+    if out.startswith("error["):
+        return None, proc.returncode, out.splitlines()[0][:80]
+    return out, proc.returncode, ""
 
 
 def classify_ref(value):

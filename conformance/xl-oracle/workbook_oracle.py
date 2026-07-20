@@ -80,7 +80,7 @@ def grade_workbook(cli, xlsx_path, workdir, lib_gaps):
     """
     wb_dir = workdir / "cwb"
     proc = subprocess.run(
-        [str(cli), "import", str(xlsx_path), str(wb_dir), "--format", "json"],
+        [str(cli), "import", str(xlsx_path), str(wb_dir)],
         capture_output=True,
         text=True,
     )
