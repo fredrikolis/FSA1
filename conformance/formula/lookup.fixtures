@@ -14,8 +14,11 @@
 #
 # Approximate match is the classic must-be-SORTED rule: VLOOKUP (default) and MATCH (type 1) assume
 # ascending and return the LARGEST key <= needle; MATCH type -1 assumes descending (smallest >=).
-# INDIRECT/OFFSET are reserved reference-returning functions refused at PARSE (reserved-ref-function),
-# so they are on charlie-ast's diag/parser test surface, NOT a value fixture here.
+# INDIRECT/OFFSET are reference-FORGING functions (ENG6): charlie-ast parses them as Calls and
+# charlie-model's forge pass source-rewrites each to a static reference. That rewrite needs a grid
+# context, so they are graded at the MODEL level (charlie-model forge fitness pins + the xl-oracle
+# whole-workbook track), NOT as an ast-only value fixture here (the ast grader would see the
+# un-rewritten #REF! backstop).
 
 # --- INDEX: 1-based (r,c); r=0 whole column, c=0 whole row; OOB is #REF!; negative is #VALUE! ---
 

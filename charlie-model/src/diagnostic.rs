@@ -71,6 +71,14 @@ pub enum Code {
     /// range has a lone/inverted/cross-sheet corner, or an identifier is defined twice in one scope.
     /// A load-time structural refusal (like a malformed filename) — no cell value, so no `ErrKind`.
     NameRefusal,
+    /// A reference-forging call (`INDIRECT`/`OFFSET`, ENG6) could not be source-rewritten to a static
+    /// reference: its own arguments themselves forge (nested forging, out of restricted v1), its
+    /// argument cone depends on the forger's own output (a forger-arg cycle), or the computed target is
+    /// off-grid / not a valid reference. A located `#REF!`-class refusal — the forger's subtree is left
+    /// as a `#REF!` error value (this code's `err_class`), never a panic (CORE2) and never a wrong
+    /// dynamic guess. A forger with non-forging arguments whose target IS valid is not this refusal — it
+    /// rewrites to a static `Expr::Ref`/`Expr::Range` and is graded in the parity corpus (ENG6).
+    ForgeRefusal,
 }
 
 impl Code {
@@ -93,6 +101,7 @@ impl Code {
         Code::RangeTooLarge,
         Code::CellOutOfRange,
         Code::NameRefusal,
+        Code::ForgeRefusal,
     ];
 
     /// The stable kebab-case code string a consumer switches on and a diagnostic renders as
@@ -116,6 +125,7 @@ impl Code {
             Code::RangeTooLarge => "range-too-large",
             Code::CellOutOfRange => "cell-out-of-range",
             Code::NameRefusal => "name-refusal",
+            Code::ForgeRefusal => "forge-refusal",
         }
     }
 
@@ -142,6 +152,9 @@ impl Code {
             Code::CellOutOfRange => "a traced tab index must be within the workbook's sheets",
             Code::NameRefusal => {
                 "a name must be identified by an identifier, not an A1 address, with matched range corners"
+            }
+            Code::ForgeRefusal => {
+                "a reference-forging call (INDIRECT/OFFSET) must resolve to a static reference: its arguments must not themselves forge, must not cycle back to it, and must name an on-grid target"
             }
         }
     }
@@ -203,6 +216,9 @@ impl Code {
             Code::NameRefusal => {
                 "rename the name entry so its identifier is not an A1 address; give a range name both a `.begin` and a `.end` corner on the same sheet with begin above-left of end"
             }
+            Code::ForgeRefusal => {
+                "rewrite the INDIRECT/OFFSET call so its target is static: avoid nesting a forging call inside another's arguments, avoid an argument that depends on the call's own cell, and keep the computed reference on the grid"
+            }
         }
     }
 
@@ -229,6 +245,9 @@ impl Code {
             // (`crate::Cell::LoadError`) that resolves to `#VALUE!` — a corrupt cell literal, so (like
             // the ragged-grid `#VALUE!` class) it cites the value-error class.
             Code::MalformedEscape => Some(ErrKind::Value),
+            // A forging call that cannot be rewritten is a located `#REF!` (the forger subtree becomes a
+            // `#REF!` error value). Like the cycle refusal, it cites the reference-error class.
+            Code::ForgeRefusal => Some(ErrKind::Ref),
             _ => None,
         }
     }
@@ -416,7 +435,7 @@ mod tests {
     #[test]
     fn registry_is_self_consistent() {
         // Every variant appears in ALL exactly once, and code strings are unique.
-        assert_eq!(Code::ALL.len(), 17);
+        assert_eq!(Code::ALL.len(), 18);
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();
         codes.sort_unstable();
         let before = codes.len();
@@ -449,6 +468,8 @@ mod tests {
         assert_eq!(Code::FormulaSyntax.err_class(), Some(ErrKind::Name));
         // GRID6: a malformed TSV escape surfaces as a `#VALUE!` error VALUE.
         assert_eq!(Code::MalformedEscape.err_class(), Some(ErrKind::Value));
+        // A forging call that cannot be rewritten is a located `#REF!` value.
+        assert_eq!(Code::ForgeRefusal.err_class(), Some(ErrKind::Ref));
     }
 
     #[test]

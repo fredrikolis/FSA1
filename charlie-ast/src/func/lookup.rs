@@ -1,4 +1,4 @@
-// Concern: the LOOKUP & REFERENCE worksheet functions (XLOOKUP INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH CHOOSE ROW COLUMN ROWS COLUMNS ADDRESS, + the reserved INDIRECT/OFFSET refusal) — the search family agreeing on ONE cross-type ordering (`eval::value_cmp`) and ONE wildcard engine (`criteria::wildcard_match`), all IGNORING error cells in the lookup vector via `drop_error_cells` (Excel skips them), with a guaranteed-terminating approximate `binary_search_approx`, XLOOKUP/XMATCH's modern exact-by-default + forward/reverse `search_mode`, ROW/COLUMN yielding the range's coordinate ARRAY, and ADDRESS building an A1/R1C1 address as text | Non-concern: the registry table + dispatch (func/mod.rs), the ordering/wildcard primitives (eval.rs owns `value_cmp`, criteria.rs owns `wildcard_match`), the A1 column-letter renderer (a1.rs owns `format_column`), and the shared `block` helper (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
+// Concern: the LOOKUP & REFERENCE worksheet functions (XLOOKUP INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH CHOOSE ROW COLUMN ROWS COLUMNS ADDRESS, + the INDIRECT/OFFSET forging backstop `reserved_ref_eval`) — the search family agreeing on ONE cross-type ordering (`eval::value_cmp`) and ONE wildcard engine (`criteria::wildcard_match`), all IGNORING error cells in the lookup vector via `drop_error_cells` (Excel skips them), with a guaranteed-terminating approximate `binary_search_approx`, XLOOKUP/XMATCH's modern exact-by-default + forward/reverse `search_mode`, ROW/COLUMN yielding the range's coordinate ARRAY, and ADDRESS building an A1/R1C1 address as text | Non-concern: the registry table + dispatch (func/mod.rs), the ordering/wildcard primitives (eval.rs owns `value_cmp`, criteria.rs owns `wildcard_match`), the A1 column-letter renderer (a1.rs owns `format_column`), and the shared `block` helper (func/helpers.rs) | IO: (`EvalCtx`, the call's unevaluated arg `Expr`s) -> `Value`
 use super::*;
 
 // Lookup & reference batch v1: XLOOKUP INDEX MATCH VLOOKUP CHOOSE ROW COLUMN (+ reserved INDIRECT /
@@ -41,10 +41,11 @@ use super::*;
 // a range. The no-argument current-cell form is deferred (the evaluator has no current-cell seam), so
 // v1 requires the reference argument (arity 1); a non-reference argument is #VALUE!.
 //
-// INDIRECT / OFFSET are reference-returning + dynamic-dependency-forging: they have no v1 node, so
-// they are REGISTERED (recognized names) but their `validate` seam ALWAYS refuses at parse with the
-// located `reserved-ref-function` DiagCode — never a wrong guess, never the generic unknown-function
-// path. `reserved_ref_eval` exists only to keep the row total (eval is unreachable via a parsed tree).
+// INDIRECT / OFFSET are reference-FORGING: they compute a reference from runtime values. The parser
+// now ACCEPTS them as arity-checked `Call` nodes so `charlie-model`'s forge pass can SOURCE-REWRITE
+// each into a static `Expr::Ref`/`Expr::Range` before evaluation (ENG6). They are never evaluated as
+// functions; `reserved_ref_eval` stays a located `#REF!` BACKSTOP for a forger that reaches eval
+// un-rewritten (a hand-synthesized tree, or a nested-forging refusal), so eval never panics (CORE2).
 /// Evaluate a lookup argument to a rectangular block `(rows, cols, cells)` — the one materialization
 /// the lookup family shares (a range/array as itself, a scalar as a `1×1` block, an error propagated).
 /// Identical in spirit to the criteria family's [`block`]; kept a separate call so a future divergence
@@ -780,23 +781,11 @@ fn quote_sheet_name(name: &str) -> String {
     }
 }
 
-/// The eval stub for the RESERVED reference-returning functions (`INDIRECT`/`OFFSET`). Unreachable via
-/// a parsed tree — [`refuse_reserved_ref_function`] refuses the call at parse — but present so the
-/// registry row is total and eval stays panic-free for a hand-synthesized `Call`. Returns `#REF!`.
+/// The eval BACKSTOP for the reference-forging functions (`INDIRECT`/`OFFSET`). The parser accepts a
+/// forger as a `Call`, and `charlie-model`'s forge pass SOURCE-REWRITES it into a static reference
+/// before the engine evaluates — so this is unreachable via a properly-forged tree. It stays as a
+/// located `#REF!` backstop so a forger that DOES reach eval un-rewritten (a hand-synthesized `Call`,
+/// or a nested-forging refusal a caller left in place) is a located refusal, never a panic (CORE2).
 pub(crate) fn reserved_ref_eval(_ctx: &mut EvalCtx, _args: &[Expr]) -> Value {
     Value::Error(ErrKind::Ref)
-}
-
-/// The always-refuse `validate` seam for the reserved reference-returning functions: every call is a
-/// located `reserved-ref-function` refusal on the call name, whatever its arguments. This is the
-/// documented, NAMED refusal path (not a wrong value at eval, not the generic `unknown-function`
-/// path — the name is recognized-but-reserved), kept as registry data rather than a parser hand-fork.
-pub(crate) fn refuse_reserved_ref_function(_args: &[Expr], span: Span) -> Result<(), Diag> {
-    Err(Diag::new(
-        DiagCode::ReservedRefFunction,
-        span,
-        "this reference-returning function (INDIRECT/OFFSET) is reserved for a later phase: it \
-         returns a reference and forges a dynamic dependency the v1 scalar engine has no node for \
-         (scope.md)",
-    ))
 }

@@ -109,7 +109,34 @@ def make_lookup():
     write(wb, "lookup.xlsx")
 
 
+def make_forging():
+    """A reference-forging workbook (ENG6): dynamic OFFSET ranges driven by COUNT, INDIRECT resolving
+    A1 text (bare and cross-sheet), and OFFSET shifts — the 'dynamic named range' + 'dynamic
+    addressing' workhorses. charlie source-rewrites each forger to a static reference before evaluation;
+    the `formulas` reference computes them natively, so both sides agree on the forged value. NESTED
+    forging (a forger whose argument forges) is a deliberate charlie divergence (a located #REF!,
+    restricted v1) and so is deliberately NOT authored here (the parity corpus grades supported cases;
+    the refusal is pinned by the charlie-model forge fitness tests)."""
+    wb = openpyxl.Workbook()
+    s = wb.active
+    s.title = "Forge"
+    # A1..A4 a data column; some formulas forge ranges/refs over it.
+    for i, v in enumerate([10, 20, 30, 40], start=1):
+        s[f"A{i}"] = v
+    s["C1"] = "=SUM(OFFSET($A$1,0,0,3,1))"                     # static -> SUM(A1:A3) = 60
+    s["C2"] = "=SUM(OFFSET($A$1,0,0,COUNT($A$1:$A$4),1))"     # dynamic height -> SUM(A1:A4) = 100
+    s["C3"] = "=OFFSET($A$1,1,0)"                              # single-cell shift -> A2 = 20
+    s["C4"] = '=INDIRECT("A"&2)'                               # A1 text built by concat -> A2 = 20
+    s["C5"] = "=SUM(OFFSET($A$1,1,0,2,1))"                     # shifted 2-tall range -> SUM(A2:A3) = 50
+    # A cross-sheet INDIRECT: resolve a reference on another sheet by text.
+    d = wb.create_sheet("Data")
+    d["B2"] = 77
+    s["C6"] = '=INDIRECT("Data!B2")'                          # cross-sheet forge -> 77
+    write(wb, "forging.xlsx")
+
+
 if __name__ == "__main__":
     make_pnl()
     make_amortization()
     make_lookup()
+    make_forging()

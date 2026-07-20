@@ -213,12 +213,34 @@ values, for transparency). Distorting charlie to chase a wrong reference is forb
   numeric-looking string literals.
 - **Verdict:** `lib-gap` (reference defect). Excluded from pass/fail; charlie is correct.
 
-## Deliberate charlie non-implementations (outside ENG6, NOT lib-gaps)
+## 15. `OFFSET` unimplemented / `INDIRECT` with a concatenated arg — `formulas` returns `#NAME?`
 
-`INDIRECT` and `OFFSET` are registry names but charlie's parser deliberately refuses them (reserved for
-a later phase — they return a *reference* and forge a dynamic dependency the v1 scalar engine has no
-node for; `scope.md`). The `formulas` reference DOES implement `INDIRECT` (charlie is the one not
-implementing it), so this is a **deliberate charlie divergence**, not a reference gap — it falls
-outside the ENG6 parity surface exactly like a reference cycle's located `#REF!` or the no-dynamic-spill
-rule (SPEC ENG6). These two are therefore given **no corpus case** rather than a distorted `lib_gap`
-flag, which is why per-formula function coverage is 251/253 (the 2 reserved names carry no graded case).
+- **Cases:** `forging.xlsx` on the `Forge` sheet — `C1 =SUM(OFFSET($A$1,0,0,3,1))`,
+  `C2 =SUM(OFFSET($A$1,0,0,COUNT($A$1:$A$4),1))`, `C3 =OFFSET($A$1,1,0)`, `C4 =INDIRECT("A"&2)`,
+  `C5 =SUM(OFFSET($A$1,1,0,2,1))` (over `A1:A4 = {10,20,30,40}`).
+- **Correct (Excel & charlie):** `60`, `100`, `20`, `20`, `50` respectively — charlie source-rewrites
+  each forger (ENG6) to its static reference (`SUM($A$1:$A$3)`, `SUM($A$1:$A$4)`, `A2`, `A2`,
+  `SUM($A$2:$A$3)`) and evaluates it.
+- **`formulas` v1.3.4 output:** `#NAME?` for all five. `OFFSET` is absent from the library's function
+  table, so every OFFSET cell is `#NAME?`; and `INDIRECT` with a *concatenated* text argument
+  (`"A"&2`) also returns `#NAME?`, though a plain-literal cross-sheet `INDIRECT("Data!B2")` DOES work
+  and is graded and Matching (`forging.xlsx` `Forge!C6 = 77`).
+- **Coverage instead:** charlie's forging is pinned by the charlie-model forge fitness tests
+  (`workbook::tests::forge::*` — the dynamic OFFSET range, static SUM(OFFSET(...)), INDIRECT A1 /
+  cross-sheet resolution, nested-forging / forger-arg-cycle / off-grid / over-large refusals, the
+  two-pass==naive differential, and the zero-overhead gate) with hand-verified Excel values.
+- **Verdict:** `lib-gap` (reference unsupported). Excluded from pass/fail; charlie is correct. Note the
+  graded MATCH at `Forge!C6` proves the cross-sheet INDIRECT forge against the reference where the lib
+  DOES support it.
+
+## Deliberate charlie divergences on forging (outside ENG6, NOT lib-gaps)
+
+`INDIRECT`/`OFFSET` now PARSE and FORGE (ENG6): a call with non-forging arguments is source-rewritten
+to a static reference and graded in the parity corpus (`forging.xlsx`, gap #15 above for the OFFSET
+cells the reference lib cannot compute). Three forging shapes remain **deliberate charlie divergences**
+(SPEC ENG6), given no parity-corpus case and pinned instead by charlie-model refusal tests: NESTED
+forging (a forger whose own argument forges, e.g. `INDIRECT(INDIRECT(...))`) is a located `#REF!`
+(restricted v1); a forger-arg CYCLE (an argument depending on the forger's own output) is a located
+`#REF!`; and a forged OVER-LARGE range is a located `#NUM!` (the shared `MAX_RANGE_CELLS` bound, where
+Excel would instead give `#REF!` for exceeding the grid). These fall outside the ENG6 parity surface
+exactly like a reference cycle's `#REF!` or the no-dynamic-spill rule.

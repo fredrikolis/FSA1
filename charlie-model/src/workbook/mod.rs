@@ -11,6 +11,7 @@
 
 mod cache;
 mod evaluate;
+mod forge;
 mod hash;
 mod plan;
 mod resolver;
@@ -23,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use charlie_ast::{
-    CellRef, Resolver, SheetId, Value, eval, parse, system_now_secs, unix_secs_to_serial,
+    CellRef, Expr, Resolver, SheetId, Value, eval, parse, system_now_secs, unix_secs_to_serial,
 };
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -33,6 +34,7 @@ use crate::overlap::{Rect, detect_overlaps};
 use crate::{ParsedFile, parse_file};
 
 use cache::{CacheScan, ResultCache};
+use forge::ForgeStore;
 use plan::DepGraph;
 use resolver::Arena;
 
@@ -126,6 +128,18 @@ pub struct Workbook {
     /// per-coordinate "is this an array region?" redirect cost when this is `true`, so a workbook with
     /// no array regions (the overwhelming common case) plans exactly as it did before GRID5.
     has_array_regions: bool,
+    /// Whether ANY loaded formula contains a reference-forging call (`INDIRECT`/`OFFSET`, ENG6), set at
+    /// load exactly as `has_array_regions` is. The ZERO-OVERHEAD gate: when `false`, [`Workbook::demand`]
+    /// skips the forge Pass 0 on a bool branch and [`Workbook::effective_expr`] returns the grid expr on
+    /// a bool check — so a workbook with no forgers (the overwhelming common case) plans and evaluates
+    /// byte-for-byte as it did before forging (a single plan->evaluate), the forge module untouched.
+    has_forgers: bool,
+    /// The forge REWRITE store (ENG6): a demanded forger's `Call` subtree source-rewritten to a static
+    /// `Expr::Ref`/`Expr::Range`, keyed by its cell and handed to the [`Workbook::effective_expr`] seam.
+    /// Address-stable under `&self` (the append-only `Arena` idiom) so the seam returns `&Expr`. Empty
+    /// and never touched when `has_forgers` is `false`. Filled lazily by the demand-driven Pass 0, it
+    /// persists across demands for the immutable workbook's lifetime (a forge target is stable, ENG4).
+    forge: ForgeStore,
     /// The "now" instant [`Resolver::now_serial`] reports. Defaults to the wall clock at load; a test
     /// pins it with [`Workbook::with_now`]. (Production gets wall-clock time for free.)
     now: f64,
@@ -356,10 +370,21 @@ impl Workbook {
             let has_array_regions = out_tabs
                 .iter()
                 .any(|t| t.files.iter().any(|f| f.array_formula));
+            // The ENG6 forging gate, computed exactly like `has_array_regions`: scan every loaded
+            // formula's parsed expr for an INDIRECT/OFFSET call. `false` short-circuits the forge pass.
+            let has_forgers = out_tabs.iter().any(|t| {
+                t.files.iter().any(|f| {
+                    f.grid.cells.iter().any(|c| {
+                        matches!(c, GridCell::Formula { expr, .. } if forge::expr_has_forger(expr))
+                    })
+                })
+            });
             Ok(Workbook {
                 tabs: out_tabs,
                 names: name_table,
                 has_array_regions,
+                has_forgers,
+                forge: ForgeStore::default(),
                 now: system_now_serial(),
                 current_sheet: Cell::new(0),
                 memo: RefCell::new(HashMap::new()),
@@ -485,27 +510,15 @@ impl Workbook {
             };
             Diagnostic::new(Code::FormulaSyntax, loc, message)
         })?;
-        // PLAN the ad-hoc formula's dependency cells (rooted at `sheet`, the ad-hoc home) into a graph,
-        // then EVALUATE it — exactly the two passes a stored formula rides.
-        let deps = self.expr_deps(&expr, sheet);
-        let mut graph = DepGraph::default();
-        let mut scan = CacheScan::new();
-        for &d in &deps {
-            let mut on_stack = HashSet::new();
-            self.plan_visit(d, 0, &mut graph, &mut on_stack, &mut scan);
-        }
-        self.evaluate(&graph);
-        // The EVALUATE pass left `current_sheet`/`current_file` at the last node's context; set the
-        // ad-hoc home so this formula's unqualified refs resolve against `sheet` AND a top-level
-        // eval-time refusal (e.g. an over-large range) anchors on the ad-hoc `Loc::tab(sheet)` rather
-        // than the stale last-node file. The ad-hoc formula has no covering file, so `current_file`
-        // is cleared for its evaluation.
-        let prev_sheet = self.current_sheet.replace(sheet);
-        let prev_file = self.current_file.replace(None);
-        let value = eval(&expr, self);
-        self.current_sheet.set(prev_sheet);
-        self.current_file.set(prev_file);
-        self.finish_pass();
+        // PLAN + EVALUATE the ad-hoc formula's dependency cone, then evaluate it — exactly the two
+        // passes a stored formula rides (the shared [`Workbook::eval_root_expr`] core, which also runs
+        // the forge Pass 0 so a dependency that is itself a forger cell resolves to its static form
+        // before it is read). Unqualified refs resolve against `sheet`; a top-level eval-time refusal
+        // anchors on `sheet`'s tab (the ad-hoc formula has no covering file). NOTE (bounded scope): a
+        // forger written DIRECTLY in the ad-hoc formula (`eval "=OFFSET(...)"`) is not itself rewritten
+        // — the forge pass is keyed by a stored cell — so it hits the `#REF!` backstop; a stored forger
+        // cell it REFERENCES does forge. Rendering/reading workbook cells is the supported forge path.
+        let value = self.eval_root_expr(&expr, sheet);
         let shown = crate::render::display_value(&value);
         Ok(match value {
             Value::Error(_) => FormulaOutcome::Error(shown),
@@ -702,6 +715,52 @@ impl Workbook {
         let (_, file) = self.covering(sheet, col, row)?;
         file.array_formula
             .then_some((sheet, file.region.min_col, file.region.min_row))
+    }
+
+    /// The EFFECTIVE expr for a cell (ENG6): the forge REWRITE if the forge pass produced one, else the
+    /// `grid` expr the caller already read. The single seam through which the plan pass's dependency
+    /// collection and the evaluate pass's `compute_formula` read a cell's references — so a demanded
+    /// forger's `SUM(OFFSET(...))` plans and evaluates as the static `SUM($A$1:$A$3)` its Pass 0
+    /// rewrote. ZERO-OVERHEAD: when `has_forgers` is `false` this is a single bool branch returning the
+    /// grid expr (the store is never consulted), so the non-forger path is byte-for-byte as before. The
+    /// computation hash + volatility deliberately do NOT route through here — they read the ORIGINAL
+    /// grid expr (ENG3 split: content-addressing is over the written source, and a forging cone is
+    /// volatile/uncached regardless, so the hash's dep shape never gates a cache serve).
+    fn effective_expr<'a>(&'a self, key: CellKey, grid: &'a Expr) -> &'a Expr {
+        if self.has_forgers
+            && let Some(rewritten) = self.forge.get(key)
+        {
+            return rewritten;
+        }
+        grid
+    }
+
+    /// Plan + evaluate a root expression's dependency cone, then evaluate the expression itself against
+    /// this workbook — the shared core of the ad-hoc [`Workbook::eval_formula`] and the forge pass's
+    /// argument-cone evaluation. Runs the forge Pass 0 first (gated) so a dependency that is itself a
+    /// forger cell is resolved to its static form before it is planned/read; the expression's
+    /// unqualified references resolve against `sheet` (its home), and a top-level eval-time refusal
+    /// anchors on `sheet`'s tab (no covering file). Ends the pass (`finish_pass`) so its clean results
+    /// promote to the memo, exactly as a stored-formula demand does.
+    fn eval_root_expr(&self, expr: &Expr, sheet: u32) -> Value {
+        let deps = self.expr_deps(expr, sheet);
+        if self.has_forgers {
+            self.resolve_forgers(&deps);
+        }
+        let mut graph = DepGraph::default();
+        let mut scan = CacheScan::new();
+        for &d in &deps {
+            let mut on_stack = HashSet::new();
+            self.plan_visit(d, 0, &mut graph, &mut on_stack, &mut scan);
+        }
+        self.evaluate(&graph);
+        let prev_sheet = self.current_sheet.replace(sheet);
+        let prev_file = self.current_file.replace(None);
+        let value = eval(expr, self);
+        self.current_sheet.set(prev_sheet);
+        self.current_file.set(prev_file);
+        self.finish_pass();
+        value
     }
 }
 

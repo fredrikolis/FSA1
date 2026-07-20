@@ -105,14 +105,6 @@ pub enum DiagCode {
     /// eval via the [`crate::Resolver`] (a [`crate::RefNode`]/[`crate::RangeNode`] carries the parsed
     /// sheet name); only the multi-sheet form stays reserved.
     ReservedCrossSheet,
-    /// A recognized-but-RESERVED reference-returning function (`INDIRECT`, `OFFSET`) — parsed as a
-    /// call name, then refused at parse. These functions return a *reference* (not a value) and forge
-    /// a DYNAMIC dependency edge the v1 scalar engine has no node for (scope.md items 5, and `OFFSET`
-    /// deferred), so a call is refused up front with a located verdict on the name rather than a wrong
-    /// value guess or the generic `unknown-function` path (the name IS recognized — it is reserved,
-    /// not unknown). The refusal is emitted by the row's always-refuse `validate` seam, so it stays
-    /// registry data, not a hand-fork in the parser.
-    ReservedRefFunction,
     /// A `TEXT(value, format)` call whose format is a *literal* string naming no supported v1 code
     /// (the subset `func::text::classify_format` accepts). This is a PARSE verdict, not an eval-time value: a wrong-format guess is
     /// refused up front rather than silently mis-rendered, so the refusal is located and named rather
@@ -151,7 +143,6 @@ impl DiagCode {
         DiagCode::ReservedDynamicRange,
         DiagCode::ReservedName,
         DiagCode::ReservedCrossSheet,
-        DiagCode::ReservedRefFunction,
         DiagCode::UnsupportedFormat,
         DiagCode::MalformedSheetName,
         DiagCode::RecursionLimit,
@@ -177,7 +168,6 @@ impl DiagCode {
             DiagCode::ReservedDynamicRange => "reserved-dynamic-range",
             DiagCode::ReservedName => "reserved-name",
             DiagCode::ReservedCrossSheet => "reserved-cross-sheet",
-            DiagCode::ReservedRefFunction => "reserved-ref-function",
             DiagCode::UnsupportedFormat => "unsupported-format",
             DiagCode::MalformedSheetName => "malformed-sheet-name",
             DiagCode::RecursionLimit => "recursion-limit",
@@ -208,9 +198,6 @@ impl DiagCode {
             DiagCode::ReservedName => "a bare defined-name is reserved (not v1)",
             DiagCode::ReservedCrossSheet => {
                 "a 3D / multi-sheet range reference is reserved (not v1)"
-            }
-            DiagCode::ReservedRefFunction => {
-                "a reference-returning function (INDIRECT/OFFSET) is reserved (not v1)"
             }
             DiagCode::UnsupportedFormat => "the TEXT format code is not in the supported v1 subset",
             DiagCode::MalformedSheetName => "a quoted sheet name is not well-formed",
@@ -304,13 +291,12 @@ mod tests {
                 | DiagCode::ReservedDynamicRange
                 | DiagCode::ReservedName
                 | DiagCode::ReservedCrossSheet
-                | DiagCode::ReservedRefFunction
                 | DiagCode::UnsupportedFormat
                 | DiagCode::MalformedSheetName
                 | DiagCode::RecursionLimit => c.code_str(),
             };
         }
-        assert_eq!(DiagCode::ALL.len(), 20);
+        assert_eq!(DiagCode::ALL.len(), 19);
     }
 
     #[test]

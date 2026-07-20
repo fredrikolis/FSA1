@@ -7,6 +7,9 @@ use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape};
 // a real temp-dir workbook and the eval-counter instrument), keeping this behavioral file well under
 // the per-file line budget.
 mod cache;
+// The ENG6 reference-FORGING fitness pins (INDIRECT/OFFSET source-rewrite, refusals, the differential,
+// and the zero-overhead gate) live in their own submodule, keeping this file under the line budget.
+mod forge;
 // The FS4 NAME fitness pins (symlink + ref-file representations, scope, refusals, write-through) live
 // in their own submodule — they need a real temp-dir workbook with symlinks, so `load_dir`.
 mod names;
@@ -694,9 +697,15 @@ impl Resolver for NaiveOracle<'_> {
                 GridCell::Formula { expr, .. } => {
                     self.visiting.borrow_mut().insert(key);
                     let prev = self.cur.replace(id.0);
+                    // ENG3: the naive oracle evaluates the SAME effective (forge-rewritten) expr the
+                    // two-pass engine does, so the differential proves the graph equals a per-cell eval
+                    // OVER the resolved references. The forge Pass 0 already ran (the caller's
+                    // `values_at` demanded these cells before the oracle re-evaluates), so a forger cell
+                    // reads its static rewrite here too. Zero effect when the workbook has no forgers.
+                    let eff = self.wb.effective_expr(key, expr);
                     // A stored single-cell formula keeps its array's TOP-LEFT element (the engine's
                     // `cell_scalar` rule), re-derived here — NOT the in-expression `scalarize` (#VALUE!).
-                    let r = Self::cell_top_left(eval(expr, self));
+                    let r = Self::cell_top_left(eval(eff, self));
                     self.cur.set(prev);
                     self.visiting.borrow_mut().remove(&key);
                     r

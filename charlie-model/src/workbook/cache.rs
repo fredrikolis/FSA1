@@ -229,7 +229,14 @@ impl Workbook {
 fn expr_has_volatile(expr: &Expr) -> bool {
     match expr {
         Expr::Call(id, args) => {
-            func::def(*id).is_some_and(|d| d.volatile) || args.iter().any(expr_has_volatile)
+            // ENG7: a reference-forging call (`INDIRECT`/`OFFSET`) is VOLATILE — its resolved target
+            // depends on runtime values the computation hash does not fold, so a forging cone can never
+            // be cached (the same reason TODAY/NOW are volatile). Read here on the ORIGINAL grid expr
+            // (the `cone_volatile_walk` caller passes the grid cell), so the forger is still seen even
+            // after Pass 0 rewrote the effective form — the whole cone is correctly excluded.
+            func::def(*id).is_some_and(|d| d.volatile)
+                || super::forge::is_forger(*id)
+                || args.iter().any(expr_has_volatile)
         }
         Expr::Unary(_, e) | Expr::ImplicitIntersect(e) | Expr::SpillRef(e) => expr_has_volatile(e),
         Expr::Binary(_, a, b) => expr_has_volatile(a) || expr_has_volatile(b),

@@ -810,25 +810,29 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         volatile: false,
         broadcast: &[],
     },
-    // The two RESERVED reference-returning functions. Arity is left wide open (`0..`) on purpose so the
-    // arity gate never fires FIRST — every call, whatever its argument count, reaches the always-refuse
-    // `validate` seam and is turned into a located `reserved-ref-function` refusal on the call name
-    // (never a wrong value, never the generic `unknown-function` path — the name IS recognized).
+    // The two REFERENCE-FORGING functions (INDIRECT/OFFSET). The parser now ACCEPTS them into the tree
+    // as ordinary `Call` nodes (arity-checked below), so `charlie-model`'s forge pass can detect and
+    // SOURCE-REWRITE each into a static `Expr::Ref`/`Expr::Range` before the two-pass engine runs (ENG6:
+    // a forging call with non-forging arguments is supported and graded in the parity corpus). They are
+    // never EVALUATED as functions — `reserved_ref_eval` stays a located `#REF!` BACKSTOP so a forger
+    // that ever reaches eval un-rewritten (a hand-synthesized tree, or a nested-forging refusal the
+    // model left in place) is a located refusal, never a panic (CORE2). Arity mirrors Excel: `INDIRECT(
+    // ref_text, [a1])` is 1-2; `OFFSET(reference, rows, cols, [height], [width])` is 3-5.
     FuncDef {
         name: "INDIRECT",
-        min_args: 0,
-        max_args: None,
+        min_args: 1,
+        max_args: Some(2),
         eval: reserved_ref_eval,
-        validate: Some(refuse_reserved_ref_function),
+        validate: None,
         volatile: false,
         broadcast: &[],
     },
     FuncDef {
         name: "OFFSET",
-        min_args: 0,
-        max_args: None,
+        min_args: 3,
+        max_args: Some(5),
         eval: reserved_ref_eval,
-        validate: Some(refuse_reserved_ref_function),
+        validate: None,
         volatile: false,
         broadcast: &[],
     },

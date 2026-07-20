@@ -126,8 +126,8 @@ functions =
   ROWS : 1
   COLUMNS : 1
   XMATCH : 2-4
-  INDIRECT : 0+
-  OFFSET : 0+
+  INDIRECT : 1-2
+  OFFSET : 3-5
   ISBLANK : 1
   ISNUMBER : 1
   ISTEXT : 1

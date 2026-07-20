@@ -96,9 +96,13 @@ The interesting behaviors the seed pins, all from Excel semantics:
   `1`/`-1` for the next-larger/next-smaller key; **`INDEX`** 1-based with `r=0`/`c=0` selecting a whole
   column/row (an out-of-bounds index `#REF!`, a blank single cell reading as `0`); **`CHOOSE`** a
   1-based selector (out-of-range `#VALUE!`); **`ROW`/`COLUMN`** the 1-based coordinate of a reference
-  NODE (top-left of a range; a non-reference argument `#VALUE!`). **`INDIRECT`/`OFFSET`** are reserved
-  reference-returning functions REFUSED at parse (the located `reserved-ref-function` DiagCode), so —
-  like every parse-refusal — they are on charlie-ast's `diag`/parser test surface, not a value fixture.
+  NODE (top-left of a range; a non-reference argument `#VALUE!`). **`INDIRECT`/`OFFSET`** are
+  reference-FORGING functions (ENG6): charlie-ast now PARSES them as arity-checked `Call`s, and
+  charlie-model's forge pass SOURCE-REWRITES each to a static reference before evaluation. Because that
+  rewrite needs a grid context (the calls reference cells), they are graded at the MODEL level (the
+  `charlie-model` forge fitness pins + the whole-workbook xl-oracle track), not as ast-only value
+  fixtures here — the ast grader evaluates a bare parse tree, where an un-rewritten forger is the located
+  `#REF!` eval backstop, never the forged value.
 - **Information batch** (`info.fixtures`, the `ISBLANK ISNUMBER ISTEXT ISERROR NA TYPE` family — the
   ONE error-TRANSPARENT group in the engine). The EXPECTED values were computed by a standalone python3
   oracle (`info_oracle.py`, pasted at the head of `info.fixtures`) that models the family FROM SCRATCH:

@@ -226,7 +226,10 @@ impl<'w> Tracer<'w> {
         let GridCell::Formula { expr, .. } = cell else {
             return Vec::new();
         };
-        sort_dedup(self.wb.expr_deps(expr, sheet))
+        // Trace reads the EFFECTIVE expr (ENG6/CLI2): a user tracing a forger sees it depend on the
+        // RESOLVED references (`SUM` reading `$A$1:$A$3`), matching the engine's dependency relation.
+        // The forge pass already ran (each `walk` calls `value_at` first), so the rewrite is present.
+        sort_dedup(self.wb.expr_deps(self.wb.effective_expr(key, expr), sheet))
     }
 
     /// Classify a cell: literal/blank from its grid kind; a formula is `Cycle` (a discovered cycle

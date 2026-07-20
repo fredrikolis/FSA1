@@ -163,7 +163,20 @@ impl Workbook {
     fn compute_formula(&self, id: FileId, dr: u32, dc: u32) -> Value {
         let file = &self.tabs[id.0 as usize].files[id.1];
         match file.grid.cell_at(dr, dc) {
-            GridCell::Formula { expr, .. } => cell_scalar(eval(expr, self)),
+            // Evaluate the EFFECTIVE expr (the forge rewrite if the ENG6 Pass 0 produced one, else the
+            // grid expr) so a forger cell computes its static rewritten form, never the un-forged Call.
+            // ZERO-OVERHEAD: only a forging workbook builds the key and consults the store; the
+            // non-forger path is byte-for-byte the pre-forging `eval(expr, self)` (mirrors the
+            // `has_array_regions` treatment — the key tuple is not even constructed).
+            GridCell::Formula { expr, .. } => {
+                let effective = if self.has_forgers {
+                    let key = (id.0, file.region.min_col + dc, file.region.min_row + dr);
+                    self.effective_expr(key, expr)
+                } else {
+                    expr
+                };
+                cell_scalar(eval(effective, self))
+            }
             // `compute_formula` is only reached for a formula node; a literal / GRID6 load-error cell is
             // total-passed-through defensively (its located error value) rather than panicking.
             GridCell::Value(v) => v.clone(),

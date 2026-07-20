@@ -356,6 +356,55 @@ fn h_a_volatile_cone_recomputes_against_the_clock_and_is_never_cached() {
 }
 
 #[test]
+fn a_forging_cone_is_never_cached_but_its_non_forger_sibling_is() {
+    // ENG7 (ENG6 forging): a forger cone (INDIRECT/OFFSET) is VOLATILE — its resolved target depends on
+    // runtime values the computation hash does not fold — so it is never written to `.cache/`, while an
+    // ordinary sibling still caches. B1 = SUM(OFFSET($A$1,0,0,3,1)) forges; C1 = 1+1 does not.
+    let base = temp_base("forge");
+    write_files(
+        &base,
+        &[
+            ("S", "A1", "1"),
+            ("S", "A2", "2"),
+            ("S", "A3", "3"),
+            ("S", "B1", "=SUM(OFFSET($A$1,0,0,3,1))"),
+            ("S", "C1", "=1+1"),
+        ],
+    );
+
+    // Warm run: B1 forges to SUM($A$1:$A$3) = 6; C1 = 2. Only C1 (the non-forger) is written.
+    let wb1 = load(&base);
+    assert_eq!(wb1.value_at(0, 1, 0), Value::Number(6.0)); // B1
+    assert_eq!(wb1.value_at(0, 2, 0), Value::Number(2.0)); // C1
+    assert_eq!(
+        cache_entry_count(&base),
+        1,
+        "only the non-forger C1 is cached; the forging B1 cone is never written"
+    );
+
+    // Second run: C1 is served (no eval), B1 recomputes (its cone is uncacheable) to the same value.
+    let wb2 = load(&base);
+    assert_eq!(wb2.value_at(0, 2, 0), Value::Number(2.0)); // C1 served
+    assert_eq!(
+        wb2.eval_count(),
+        0,
+        "the non-forger C1 is served, not recomputed"
+    );
+    assert_eq!(wb2.value_at(0, 1, 0), Value::Number(6.0)); // B1 recomputes to the same value
+    assert!(
+        wb2.eval_count() > 0,
+        "the forging B1 recomputes (its cone is never served)"
+    );
+    assert_eq!(
+        cache_entry_count(&base),
+        1,
+        "B1 is never written across runs"
+    );
+
+    fs::remove_dir_all(&base).ok();
+}
+
+#[test]
 fn i_a_served_mid_cell_is_reused_at_varying_depth_in_one_batch() {
     // Test (g) uses a pure linear chain in which EVERY cell is depth-tainted, so no cell is ever
     // cache-served across the depth boundary — it exercises only the fresh-walk refusal. This locks the

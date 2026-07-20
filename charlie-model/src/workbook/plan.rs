@@ -61,6 +61,12 @@ impl Workbook {
     /// pass over it. Each demanded cell accretes into the SAME [`DepGraph`] (a shared dependency
     /// becomes one node); an already-memoized cell is a resolved leaf and is not re-planned (ENG4).
     pub(super) fn demand(&self, roots: &[CellKey]) {
+        // Pass 0 (ENG6, gated): source-rewrite every forger in the demanded cone to a static reference
+        // BEFORE planning, so the plan/evaluate passes operate on the fully-static effective form. A
+        // single bool branch when the workbook has no forgers — the non-forger path is unchanged.
+        if self.has_forgers {
+            self.resolve_forgers(roots);
+        }
         let mut graph = DepGraph::default();
         // One cache scan shared across the pass so each cell's content cone hashes at most once (ENG7).
         let mut scan = CacheScan::new();
@@ -131,7 +137,10 @@ impl Workbook {
             return;
         }
         on_stack.insert(key);
-        let deps = self.expr_deps(expr, sheet);
+        // Read the EFFECTIVE expr (the forge rewrite if one exists, else the grid expr) so the graph
+        // reflects the RESOLVED references (ENG3) — a demanded `SUM(OFFSET(...))` plans the static
+        // `SUM($A$1:$A$3)` it was rewritten to. Zero-overhead when the workbook has no forgers.
+        let deps = self.expr_deps(self.effective_expr(key, expr), sheet);
         for &d in &deps {
             self.plan_visit(d, depth + 1, graph, on_stack, scan);
         }
@@ -159,9 +168,11 @@ impl Workbook {
     }
 
     /// The dependency cells of a formula's parsed tree, resolved to `(sheet, col, row)` keys against
-    /// `home` (the sheet an unqualified reference binds to). Every reference is static in v1 (there are
-    /// no reference-forging functions — `INDIRECT`/`OFFSET` are reserved refusals), so this is the
-    /// formula's complete dependency set. A range expands to its cells; a range over
+    /// `home` (the sheet an unqualified reference binds to). Callers pass the EFFECTIVE expr
+    /// ([`Workbook::effective_expr`]) so a reference-forging call (`INDIRECT`/`OFFSET`, ENG6) already
+    /// rewritten to a static reference contributes its RESOLVED dependency cells; on the grid expr every
+    /// reference is static, so this is the formula's complete dependency set. A range expands to its
+    /// cells; a range over
     /// [`MAX_RANGE_CELLS`] is left unexpanded (the resolver refuses it as `#NUM!` at evaluate rather
     /// than allocating a key per cell); an unknown sheet name resolves to no cell (the evaluator maps
     /// it to `#REF!`).

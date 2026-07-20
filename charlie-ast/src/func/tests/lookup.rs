@@ -1,4 +1,4 @@
-// Concern: UNIT-TEST pins for the lookup & reference family built-ins (INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH XLOOKUP CHOOSE ROW COLUMN ROWS COLUMNS ADDRESS + the reserved INDIRECT/OFFSET) exercised through `FUNCS` dispatch — scalar/whole-row/whole-col indexing with bounds, INDEX's omitted-middle-argument (whole column), exact-vs-approximate matching in both directions, the whole family SKIPPING error cells in the lookup vector, horizontal + vector lookups, shape queries, ROW/COLUMN yielding the range's coordinate ARRAY, XMATCH's reverse/binary search_mode, ADDRESS's A1/R1C1 forms, lazy CHOOSE, reference-node reads, and the parse-time reserved-ref-function refusals | Non-concern: the lookup impls (`func/lookup.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`arr`/`n`/`t`/`text`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
+// Concern: UNIT-TEST pins for the lookup & reference family built-ins (INDEX MATCH VLOOKUP HLOOKUP LOOKUP XMATCH XLOOKUP CHOOSE ROW COLUMN ROWS COLUMNS ADDRESS + the now-parse-accepted forging INDIRECT/OFFSET) exercised through `FUNCS` dispatch — scalar/whole-row/whole-col indexing with bounds, INDEX's omitted-middle-argument (whole column), exact-vs-approximate matching in both directions, the whole family SKIPPING error cells in the lookup vector, horizontal + vector lookups, shape queries, ROW/COLUMN yielding the range's coordinate ARRAY, XMATCH's reverse/binary search_mode, ADDRESS's A1/R1C1 forms, lazy CHOOSE, reference-node reads, and the forging INDIRECT/OFFSET now parsing as arity-checked Calls (with the un-rewritten `#REF!` eval backstop) | Non-concern: the lookup impls (`func/lookup.rs`) and the shared test fixtures (the parent `tests` module owns `num`/`call`/`arr`/`n`/`t`/`text`) | IO: in-memory `Grid` fixtures + literal `Expr`s -> asserted `Value`s
 use super::*;
 
 #[test]
@@ -681,19 +681,42 @@ fn address_builds_a1_and_r1c1_forms() {
 }
 
 #[test]
-fn indirect_and_offset_are_reserved_ref_function_refusals() {
+fn indirect_and_offset_now_parse_as_calls_for_the_forge_pass() {
     use crate::diag::DiagCode;
-    // Both refuse at PARSE with the located reserved-ref-function code — never unknown-function,
-    // never a value. The span points at the call name (offset 1, right after `=`).
-    for (formula, name_len) in [("=INDIRECT(\"A1\")", 8), ("=OFFSET(A1,1,1)", 6)] {
-        let err = crate::parse(formula).expect_err("reserved ref function refuses");
-        assert_eq!(err.code, DiagCode::ReservedRefFunction, "{formula}");
-        assert_eq!(err.span.start, 1, "located on the name: {formula}");
-        assert_eq!(err.span.end, 1 + name_len, "spans the name: {formula}");
+    use crate::expr::Expr;
+    // The forging functions are ACCEPTED into the tree as `Call` nodes (arity-checked) so the model's
+    // forge pass can source-rewrite them. They are no longer a parse refusal.
+    for formula in [
+        "=INDIRECT(\"A1\")",
+        "=OFFSET(A1,1,1)",
+        "=SUM(OFFSET(A1,0,0,3,1))",
+    ] {
+        let expr = crate::parse(formula).unwrap_or_else(|d| panic!("{formula} must parse: {d}"));
+        // Each contains at least one `Call` (the forger itself, possibly wrapped by SUM).
+        assert!(matches!(expr, Expr::Call(..)), "{formula} -> {expr:?}");
     }
-    // The refusal fires REGARDLESS of argument count (arity never gates first).
+    // Arity is enforced like any function: INDIRECT is 1-2 args, OFFSET is 3-5.
     assert_eq!(
-        crate::parse("=INDIRECT()").expect_err("still refuses").code,
-        DiagCode::ReservedRefFunction
+        crate::parse("=INDIRECT()").expect_err("under-arity").code,
+        DiagCode::BadArity
     );
+    assert_eq!(
+        crate::parse("=OFFSET(A1,1)").expect_err("under-arity").code,
+        DiagCode::BadArity
+    );
+    assert_eq!(
+        crate::parse("=INDIRECT(\"A1\",TRUE,1)")
+            .expect_err("over-arity")
+            .code,
+        DiagCode::BadArity
+    );
+}
+
+#[test]
+fn a_forger_reaching_eval_unrewritten_is_a_ref_backstop_never_a_panic() {
+    // A parsed forger that is evaluated DIRECTLY (no forge rewrite — e.g. the conformance grader's
+    // ast-only path, or a hand-built tree) hits the located `#REF!` backstop, never a panic (CORE2).
+    let expr = crate::parse("=INDIRECT(\"A1\")").expect("parses");
+    let g = Grid::new(1, vec![Value::Number(1.0)]);
+    assert_eq!(eval(&expr, &g), Value::Error(ErrKind::Ref));
 }
