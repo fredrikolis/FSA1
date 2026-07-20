@@ -1,4 +1,4 @@
-// Concern: the ENG4 persistent-cache + FS3 FITNESS pins — over a REAL temp-dir workbook loaded through `Workbook::load_dir` (the only path that attaches a `.cache/`): (a) SOUNDNESS, a `.cache`-deleted run yields byte-identical values to a warm-cache run across a multi-formula workbook incl. a GRID5 region; (b) REUSE, a warm re-run performs materially FEWER formula evals (the test-visible `eval_count` instrument, not just matching values); (c) INVALIDATION, editing an upstream cell makes the dependent reflect the edit (new hash) while an unrelated cached cell still HITS; (d) CYCLE, a cyclic cell is never written to `.cache/` (only the cacheable sibling is); (e) `--no-cache` (`disable_cache`) neither reads nor writes `.cache/`, with identical values; (f) FS3, a workbook with `.cache/` present loads with the correct tab set; (g) DEPTH SOUNDNESS, a warm run of a deep chain cannot short-circuit a pull-depth `#NUM!` refusal a cache-deleted run raises (a mid-chain cell cached clean when demanded shallowly is NOT served into a deeper demand — warm equals cold at the depth boundary); (h) VOLATILE, a TODAY/NOW cone is never written to `.cache/` and recomputes against the pinned clock (never served a stale instant) while a non-volatile sibling still HITS; (i) SERVE-AT-VARYING-DEPTH, a diamond/multi-root batch where a mid cell cached clean when demanded SHALLOW is cache-served at depth 0 and then reached DEEP through a long chain (the deep root dedups onto the served leaf) yields warm==cold values AND eval counts — locking the ENG4 soundness invariant (a served cell's cone is wholly in-bound, so serving prunes no `#NUM!` terminal) against a future reordering of the graph-dedup vs cache_serve steps | Non-concern: the cache codec internals (`workbook::cache` owns encode/decode + atomicity) and the in-memory behavioral pins (the parent `tests` module owns those) | IO: temp-dir workbook trees on disk -> asserted `Value`s / eval counts / on-disk `.cache/` state
+// Concern: the ENG4 persistent-cache + FS3 FITNESS pins — over a REAL temp-dir workbook loaded through `Workbook::load_dir` (the only path that attaches a `.cache/`): (a) SOUNDNESS, a `.cache`-deleted run yields byte-identical values to a warm-cache run across a multi-formula workbook incl. a GRID5 region; (b) REUSE, a warm re-run performs materially FEWER formula evals (the test-visible `eval_count` instrument, not just matching values); (c) INVALIDATION, editing an upstream cell makes the dependent reflect the edit (new hash) while an unrelated cached cell still HITS; (d) CYCLE, a cyclic cell is never written to `.cache/` (only the cacheable sibling is); (e) `--no-cache` (`disable_cache`) neither reads nor writes `.cache/`, with identical values; (f) FS3, a workbook with `.cache/` present loads with the correct tab set; (g) DEPTH SOUNDNESS, a warm run of a deep chain cannot short-circuit a pull-depth `#NUM!` refusal a cache-deleted run raises (a mid-chain cell cached clean when demanded shallowly is NOT served into a deeper demand — warm equals cold at the depth boundary); (h) VOLATILE, a TODAY/NOW cone is never written to `.cache/` and recomputes against the pinned clock (never served a stale instant) while a non-volatile sibling still HITS; (i) SERVE-AT-VARYING-DEPTH, a diamond/multi-root batch where a mid cell cached clean when demanded SHALLOW is cache-served at depth 0 and then reached DEEP through a long chain (the deep root dedups onto the served leaf) yields warm==cold values AND eval counts — locking the ENG4 soundness invariant (a served cell's cone is wholly in-bound, so serving prunes no `#NUM!` terminal) against a future reordering of the graph-dedup vs cache_serve steps; (j) SELF-POSITIONAL (ENG6), the no-argument `ROW()`/`COLUMN()` forms depend on the COMPUTING cell's own coordinate (which the hash never folds, VAL1), so `=ROW()` at A1 and A9 hash identically — such a cone is never written to `.cache/` and recomputes its own row/column warm (A1 stays 1, never served A9's 9), while the static-arg `ROW(Z9)` and an ordinary sibling still cache | Non-concern: the cache codec internals (`workbook::cache` owns encode/decode + atomicity) and the in-memory behavioral pins (the parent `tests` module owns those) | IO: temp-dir workbook trees on disk -> asserted `Value`s / eval counts / on-disk `.cache/` state
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -399,6 +399,65 @@ fn a_forging_cone_is_never_cached_but_its_non_forger_sibling_is() {
         cache_entry_count(&base),
         1,
         "B1 is never written across runs"
+    );
+
+    fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn j_a_no_arg_row_column_cone_is_never_cached_but_its_static_sibling_is() {
+    // ENG6/ENG4 parity: the no-argument ROW()/COLUMN() forms make a cell's value depend on its OWN
+    // coordinate — a runtime input the computation hash never folds (VAL1: content, not address), so
+    // `=ROW()` at A1 and at A9 hash IDENTICALLY. Left cacheable, one cell's value would be served for the
+    // other on a warm run (A1 collapsing to 9). Like TODAY/NOW and INDIRECT/OFFSET, the no-arg form is
+    // VOLATILE and never written; the WITH-arg form (`ROW(Z9)`, a static node coordinate the source fixes)
+    // stays cacheable, as does an ordinary sibling.
+    let base = temp_base("selfpos");
+    write_files(
+        &base,
+        &[
+            ("S", "A1", "=ROW()"),    // no-arg: the computing cell's row -> 1 (uncacheable)
+            ("S", "A9", "=ROW()"), // no-arg: same formula text, different cell -> 9 (uncacheable)
+            ("S", "B1", "=COLUMN()"), // no-arg: the computing cell's column -> 2 (uncacheable)
+            ("S", "Z9", "7"),      // a plain literal, the static-arg cell's referent
+            ("S", "C1", "=ROW(Z9)"), // with-arg: a STATIC node coordinate -> 9 (cacheable)
+            ("S", "D1", "=1+1"),   // an ordinary sibling -> 2 (cacheable)
+        ],
+    );
+
+    // Warm run: every cell computes fresh and correct (this always held — the DEFECT surfaces only warm).
+    let wb1 = load(&base);
+    assert_eq!(wb1.value_at(0, 0, 0), Value::Number(1.0)); // A1 = ROW() = 1
+    assert_eq!(wb1.value_at(0, 0, 8), Value::Number(9.0)); // A9 = ROW() = 9
+    assert_eq!(wb1.value_at(0, 1, 0), Value::Number(2.0)); // B1 = COLUMN() = 2
+    assert_eq!(wb1.value_at(0, 2, 0), Value::Number(9.0)); // C1 = ROW(Z9) = 9
+    assert_eq!(wb1.value_at(0, 3, 0), Value::Number(2.0)); // D1 = 1+1 = 2
+    // Only the two CACHEABLE formula cells are written — C1 (static-arg) and D1 (ordinary); the Z9
+    // literal is read from the grid, never cached. The three no-arg self-positional cones are never
+    // persisted (had they been, A1 and A9 would share the one file).
+    assert_eq!(
+        cache_entry_count(&base),
+        2,
+        "only the static-arg C1 and ordinary D1 are cached; no no-arg ROW()/COLUMN() is written"
+    );
+
+    // Second (warm) run — the regression pin. Before the carve-out, A1 and A9 shared one hash and A1
+    // rendered 9 (the other cell's value). Each no-arg cell must RECOMPUTE its own coordinate.
+    let wb2 = load(&base);
+    assert_eq!(
+        wb2.value_at(0, 0, 0),
+        Value::Number(1.0),
+        "A1 = ROW() must stay 1 warm, never serve A9's cached 9"
+    );
+    assert_eq!(wb2.value_at(0, 0, 8), Value::Number(9.0)); // A9 = ROW() = 9
+    assert_eq!(wb2.value_at(0, 1, 0), Value::Number(2.0)); // B1 = COLUMN() = 2
+    assert_eq!(wb2.value_at(0, 2, 0), Value::Number(9.0)); // C1 served, still 9
+    assert_eq!(wb2.value_at(0, 3, 0), Value::Number(2.0)); // D1 served, still 2
+    // No self-positional entry appears across runs either.
+    assert_eq!(
+        cache_entry_count(&base),
+        2,
+        "no no-arg ROW()/COLUMN() entry is ever written"
     );
 
     fs::remove_dir_all(&base).ok();

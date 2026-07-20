@@ -1,5 +1,5 @@
 charlie-formula-conformance/v1
-# captured_unix=1784564729 git_commit=4f9fe0750037bb7f0272c2494ead4c66578c6f59 git_dirty=true tool=conformance 0.1.0
+# captured_unix=1784568025 git_commit=39b7b37d241437b0122669024cca815c3104c2c2 git_dirty=true tool=conformance 0.1.0
 # coverage modeled=78 target=70 registry=253 functions=ABS,AND,AVERAGE,AVERAGEIF,AVERAGEIFS,CEILING,CHOOSE,COLUMN,CONCAT,COUNT,COUNTA,COUNTBLANK,COUNTIF,COUNTIFS,DATE,DATEDIF,DAY,EDATE,FIND,FLOOR,IF,IFERROR,IFNA,IFS,INDEX,INT,IRR,ISBLANK,ISERROR,ISNUMBER,ISTEXT,LEFT,LEN,LOWER,MATCH,MAX,MAXIFS,MEDIAN,MID,MIN,MINIFS,MOD,MONTH,NA,NETWORKDAYS.INTL,NOT,NOW,NPV,OR,PMT,POWER,PRODUCT,RANK,REPLACE,REPT,RIGHT,ROUND,ROUNDDOWN,ROUNDUP,ROW,SEARCH,SQRT,SUBSTITUTE,SUM,SUMIF,SUMIFS,SUMPRODUCT,SWITCH,TEXT,TEXTJOIN,TODAY,TRIM,TYPE,UPPER,VALUE,VLOOKUP,XLOOKUP,YEAR
 # columns: VERDICT<TAB>key[<TAB>detail]
 MATCH	aggregation/average-mixed-range
@@ -176,8 +176,11 @@ MATCH	logical_v1/switch-no-match-no-default-is-na
 MATCH	logical_v1/switch-text-match-is-case-insensitive
 MATCH	lookup/choose-basic
 MATCH	lookup/choose-out-of-range-is-value-error
+MATCH	lookup/column-no-arg-at-a1
+MATCH	lookup/column-no-arg-at-e3
 MATCH	lookup/column-of-cell
 MATCH	lookup/column-of-range-is-horizontal-array
+MATCH	lookup/column-with-arg-unchanged-at-e3
 MATCH	lookup/index-out-of-bounds-is-ref
 MATCH	lookup/index-scalar
 MATCH	lookup/index-single-column-two-arg
@@ -187,9 +190,13 @@ MATCH	lookup/match-approx-descending
 MATCH	lookup/match-exact
 MATCH	lookup/match-exact-miss-is-na
 MATCH	lookup/match-text-wildcard-exact
+MATCH	lookup/row-no-arg-at-a1
+MATCH	lookup/row-no-arg-at-c5
+MATCH	lookup/row-no-arg-in-arithmetic-at-b7
 MATCH	lookup/row-of-cell
 MATCH	lookup/row-of-non-reference-is-value-error
 MATCH	lookup/row-of-range-is-vertical-array
+MATCH	lookup/row-with-arg-unchanged-at-c5
 MATCH	lookup/vlookup-approx-default-between-keys
 MATCH	lookup/vlookup-col-index-out-of-range-is-ref
 MATCH	lookup/vlookup-exact-false

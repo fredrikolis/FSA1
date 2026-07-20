@@ -16,17 +16,51 @@ use crate::value::{ErrKind, Value};
 /// stack-safe"). Kept above the parser bound so the parser's limit is the one users normally meet.
 const EVAL_DEPTH_LIMIT: u32 = 512;
 
-/// The evaluator's working context: its entire view of the outside world ([`Resolver`]) plus the
-/// live recursion depth. Threaded (`&mut`) through [`eval`] and every registry function so depth is
-/// tracked across the whole walk.
+/// The evaluator's working context: its entire view of the outside world ([`Resolver`]), the live
+/// recursion depth, and the coordinate of the cell being computed. Threaded (`&mut`) through [`eval`]
+/// and every registry function so depth — and the current-cell seam — is tracked across the whole walk.
 pub struct EvalCtx<'r> {
     resolver: &'r dyn Resolver,
     depth: u32,
+    /// The 0-based `(row, col)` of the cell whose formula is being computed — the engine-internal seam
+    /// the no-argument `ROW()`/`COLUMN()` forms read. `None` when there is NO computing cell (an ad-hoc
+    /// [`eval`] with no home cell): the no-arg forms then anchor to A1 (row 1 / column 1). It is never a
+    /// [`Value`] and never surfaced through the [`Resolver`] (engine-internal evaluator context only).
+    current_cell: Option<(u32, u32)>,
 }
 
 impl<'r> EvalCtx<'r> {
+    /// A context with NO computing cell — the ad-hoc entry ([`eval`]). No-arg `ROW()`/`COLUMN()`
+    /// anchor to A1 (row 1 / column 1) here, as there is no home cell to report.
     pub fn new(resolver: &'r dyn Resolver) -> EvalCtx<'r> {
-        EvalCtx { resolver, depth: 0 }
+        EvalCtx {
+            resolver,
+            depth: 0,
+            current_cell: None,
+        }
+    }
+
+    /// A context anchored at the 0-based cell `(row, col)` whose formula is being computed — the seam
+    /// `charlie-model`'s compute-formula pass sets so no-arg `ROW()`/`COLUMN()` yield this cell's
+    /// 1-based row/column.
+    pub fn at_cell(resolver: &'r dyn Resolver, row: u32, col: u32) -> EvalCtx<'r> {
+        EvalCtx {
+            resolver,
+            depth: 0,
+            current_cell: Some((row, col)),
+        }
+    }
+
+    /// The 1-based ROW of the cell being computed — the no-argument `ROW()` seam. With no computing
+    /// cell (ad-hoc [`eval`]) this anchors to A1, so it is `1`.
+    pub(crate) fn current_row(&self) -> u32 {
+        self.current_cell.map_or(0, |(row, _)| row) + 1
+    }
+
+    /// The 1-based COLUMN of the cell being computed — the no-argument `COLUMN()` seam. With no
+    /// computing cell (ad-hoc [`eval`]) this anchors to A1, so it is `1`.
+    pub(crate) fn current_col(&self) -> u32 {
+        self.current_cell.map_or(0, |(_, col)| col) + 1
     }
 
     /// The "now" instant the VOLATILE `TODAY`/`NOW` built-ins read, as an Excel date-time serial, from
@@ -226,9 +260,18 @@ fn unop_scalar(op: UnOp, v: &Value) -> Value {
     }
 }
 
-/// Evaluate a whole formula tree against a resolver — the crate's top-level eval entry.
+/// Evaluate a whole formula tree against a resolver — the crate's top-level eval entry. There is no
+/// computing cell, so the no-argument `ROW()`/`COLUMN()` forms anchor to A1 (row 1 / column 1); use
+/// [`eval_at`] to supply the home cell.
 pub fn eval(expr: &Expr, resolver: &dyn Resolver) -> Value {
     EvalCtx::new(resolver).eval(expr)
+}
+
+/// Evaluate a whole formula tree against a resolver, ANCHORED at the 0-based cell `(row, col)` whose
+/// formula this is — so the no-argument `ROW()`/`COLUMN()` forms yield that cell's 1-based
+/// row/column. `charlie-model`'s compute-formula pass calls this with the cell it is evaluating.
+pub fn eval_at(expr: &Expr, resolver: &dyn Resolver, row: u32, col: u32) -> Value {
+    EvalCtx::at_cell(resolver, row, col).eval(expr)
 }
 
 /// Apply a scalar arithmetic operator to two already-coerced numbers, mapping the Excel

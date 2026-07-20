@@ -24,7 +24,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use charlie_ast::{
-    CellRef, Expr, Resolver, SheetId, Value, eval, parse, system_now_secs, unix_secs_to_serial,
+    CellRef, Expr, Resolver, SheetId, Value, eval, eval_at, parse, system_now_secs,
+    unix_secs_to_serial,
 };
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -536,7 +537,7 @@ impl Workbook {
         // forger written DIRECTLY in the ad-hoc formula (`eval "=OFFSET(...)"`) is not itself rewritten
         // — the forge pass is keyed by a stored cell — so it hits the `#REF!` backstop; a stored forger
         // cell it REFERENCES does forge. Rendering/reading workbook cells is the supported forge path.
-        let value = self.eval_root_expr(&expr, sheet);
+        let value = self.eval_root_expr(&expr, sheet, None);
         let shown = crate::render::display_value(&value);
         Ok(match value {
             Value::Error(_) => FormulaOutcome::Error(shown),
@@ -788,7 +789,14 @@ impl Workbook {
     /// unqualified references resolve against `sheet` (its home), and a top-level eval-time refusal
     /// anchors on `sheet`'s tab (no covering file). Ends the pass (`finish_pass`) so its clean results
     /// promote to the memo, exactly as a stored-formula demand does.
-    fn eval_root_expr(&self, expr: &Expr, sheet: u32) -> Value {
+    ///
+    /// `anchor` is the 0-based `(row, col)` of the home cell whose formula owns this expression — the
+    /// no-argument `ROW()`/`COLUMN()` seam (HARD RULE 4 / ENG6 parity). The forge pass passes the
+    /// FORGER cell's coordinate so a no-arg `ROW()`/`COLUMN()` inside a forging argument (e.g.
+    /// `INDIRECT("A"&ROW())` at C5) anchors at the forger cell, matching Excel. The ad-hoc
+    /// [`Workbook::eval_formula`] passes `None` — an ad-hoc formula has no home cell, so no-arg forms
+    /// anchor to A1, exactly as before this seam existed.
+    fn eval_root_expr(&self, expr: &Expr, sheet: u32, anchor: Option<(u32, u32)>) -> Value {
         let deps = self.expr_deps(expr, sheet);
         if self.has_forgers {
             self.resolve_forgers(&deps);
@@ -802,7 +810,10 @@ impl Workbook {
         self.evaluate(&graph);
         let prev_sheet = self.current_sheet.replace(sheet);
         let prev_file = self.current_file.replace(None);
-        let value = eval(expr, self);
+        let value = match anchor {
+            Some((row, col)) => eval_at(expr, self, row, col),
+            None => eval(expr, self),
+        };
         self.current_sheet.set(prev_sheet);
         self.current_file.set(prev_file);
         self.finish_pass();

@@ -747,7 +747,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
     },
     FuncDef {
         name: "ROW",
-        min_args: 1,
+        min_args: 0,
         max_args: Some(1),
         eval: row_fn,
         validate: None,
@@ -756,7 +756,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
     },
     FuncDef {
         name: "COLUMN",
-        min_args: 1,
+        min_args: 0,
         max_args: Some(1),
         eval: column_fn,
         validate: None,

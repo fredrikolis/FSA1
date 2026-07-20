@@ -25,6 +25,11 @@ pub struct Fixture {
     /// against. `sheet` is `None` for the default (unqualified) sheet, or `Some(name)` for a cell on
     /// a named sheet (`cell Data!A1: 5`) that a cross-sheet reference resolves.
     pub cells: Vec<(Option<String>, u32, u32, Value)>,
+    /// The 0-based `(row, col)` of the cell the formula is COMPUTED IN, when the fixture pins a
+    /// computing cell (`at: C5`) — the seam the no-argument `ROW()`/`COLUMN()` forms read. Stored
+    /// row-first to match `eval_at(.., row, col)`'s argument order (no swap at the grade callsite).
+    /// `None` for the overwhelming majority of fixtures, which are context-free (ad-hoc) probes.
+    pub at: Option<(u32, u32)>,
 }
 
 /// The corpus directory: `<crate>/formula`, anchored to the manifest dir so it resolves from any cwd.
@@ -79,6 +84,7 @@ struct Pending {
     formula: Option<String>,
     expect: Option<Value>,
     cells: Vec<(Option<String>, u32, u32, Value)>,
+    at: Option<(u32, u32)>,
 }
 
 /// Parse one `.fixtures` file's records into `out`. Grammar (line-based):
@@ -89,6 +95,8 @@ struct Pending {
 /// - `expect: <literal>` → the EXPECTED value (required);
 /// - `cell <A1>: <literal>` → one context cell (canonical A1 only — no `$`/lowercase/leading-zero),
 ///   optionally sheet-qualified as `cell <Sheet>!<A1>: <literal>` for a cross-sheet reference;
+/// - `at: <A1>` → the COMPUTING cell (unqualified canonical A1), so no-argument `ROW()`/`COLUMN()`
+///   report that cell's coordinate; omitted for a context-free (ad-hoc) probe;
 /// - `note: …` → a free-form author note (ignored by the grader).
 fn parse_file(category: &str, text: &str, out: &mut Vec<Fixture>) -> Result<(), String> {
     let mut pending: Option<Pending> = None;
@@ -146,6 +154,17 @@ fn parse_file(category: &str, text: &str, out: &mut Vec<Fixture>) -> Result<(), 
             }
             "formula" => rec.formula = Some(val.to_string()),
             "expect" => rec.expect = Some(literal::parse(val).map_err(&at)?),
+            "at" => {
+                // The computing cell for the no-argument ROW()/COLUMN() forms — an unqualified
+                // canonical A1 (a cross-sheet computing cell is not a v1 concept).
+                let (sheet, col, row) = parse_cell_addr(val).map_err(&at)?;
+                if sheet.is_some() {
+                    return Err(at(
+                        "an `at:` computing cell must be an unqualified A1 address".to_string(),
+                    ));
+                }
+                rec.at = Some((row, col));
+            }
             "note" => {}
             other => return Err(at(format!("unknown key {other:?}"))),
         }
@@ -172,6 +191,7 @@ fn finish(category: &str, p: Pending) -> Result<Fixture, String> {
         formula,
         expect,
         cells: p.cells,
+        at: p.at,
     })
 }
 
@@ -257,6 +277,23 @@ expect: 42
             f.cells[1],
             (Some("Data".to_string()), 0, 0, Value::Number(42.0))
         );
+    }
+
+    #[test]
+    fn parses_an_at_computing_cell() {
+        let text = "\
+[row-at-c5]
+funcs: ROW
+at: C5
+formula: =ROW()
+expect: 5
+";
+        let fx = parse_one("lookup", text).unwrap();
+        assert_eq!(fx.len(), 1);
+        // C5 is 0-based (row 4, col 2) — stored row-first to match `eval_at`'s order.
+        assert_eq!(fx[0].at, Some((4, 2)));
+        // A sheet-qualified `at:` is refused (the computing cell is a v1 single-sheet notion).
+        assert!(parse_one("c", "[x]\nat: Data!A1\nformula: =ROW()\nexpect: 1\n").is_err());
     }
 
     #[test]

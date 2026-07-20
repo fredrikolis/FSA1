@@ -1,7 +1,7 @@
 // Concern: the EVALUATE pass of the two-pass engine (ENG2/ENG3/ENG4) — compute every [`DepGraph`] node exactly once in dependency order (`topo_order` gives an iterative, stack-safe post-order; `evaluate` walks it, turning terminal `Cycle`/`DepthRefused` nodes into their located error values and computing each `Formula` node via `compute_formula` through `charlie_ast::eval` with the resolver reading already-computed deps), then `finish_pass` promotes the clean (non-depth-tainted) results into the memo and clears the per-pass scratch | Non-concern: BUILDING the graph or detecting cycles/depth (the `plan` sibling owns the PLAN pass), reading cell/range values (the `resolver` sibling owns the `Resolver` impl + arena), and the graph types (defined in `plan`, consumed here as `pub(super)`) | IO: a populated `DepGraph` + the `Workbook`'s grids -> per-cell `Value`s written into the pass `results`, then promoted into the `memo`
 use std::collections::HashSet;
 
-use charlie_ast::{ErrKind, Shape, Value, eval};
+use charlie_ast::{ErrKind, Shape, Value, eval_at};
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::grid::Cell as GridCell;
@@ -175,7 +175,12 @@ impl Workbook {
                 } else {
                     expr
                 };
-                cell_scalar(eval(effective, self))
+                // Anchor the no-argument ROW()/COLUMN() forms at this cell's absolute 0-based
+                // coordinate (the file region's top-left plus the in-file offset), so `=ROW()` at C5
+                // yields 5 (ENG6). Every other formula ignores the anchor.
+                let row = file.region.min_row + dr;
+                let col = file.region.min_col + dc;
+                cell_scalar(eval_at(effective, self, row, col))
             }
             // `compute_formula` is only reached for a formula node; a literal / GRID6 load-error cell is
             // total-passed-through defensively (its located error value) rather than panicking.
@@ -199,7 +204,9 @@ impl Workbook {
         let rows = region.max_row - region.min_row + 1;
         let cols = region.max_col - region.min_col + 1;
         let value = match file.grid.cell_at(0, 0) {
-            GridCell::Formula { expr, .. } => eval(expr, self),
+            // Anchor no-arg ROW()/COLUMN() at the region's top-left (v1 keeps ROW()/COLUMN() scalar:
+            // the region's ONE formula reports its anchor coordinate, not an array of coordinates).
+            GridCell::Formula { expr, .. } => eval_at(expr, self, region.min_row, region.min_col),
             // Defensive: an array region is always a formula file (`parse_file` guarantees a lone
             // `=formula` — a load-error / literal single cell fills its 1x1 range instead, never a
             // region — but stay total for either).

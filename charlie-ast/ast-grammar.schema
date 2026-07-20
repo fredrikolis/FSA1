@@ -119,8 +119,8 @@ functions =
   MATCH : 2-3
   VLOOKUP : 3-4
   CHOOSE : 2+
-  ROW : 1
-  COLUMN : 1
+  ROW : 0-1
+  COLUMN : 0-1
   HLOOKUP : 3-4
   LOOKUP : 2-3
   ROWS : 1

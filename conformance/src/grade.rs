@@ -4,7 +4,7 @@
 //! the shipping engine, not a re-implementation of it. The oracle (the expected value) is authored
 //! externally (`formula/PROVENANCE.md`); this never edits it to match a divergence.
 
-use charlie_ast::{eval, parse};
+use charlie_ast::{eval, eval_at, parse};
 
 use crate::corpus::Fixture;
 use crate::literal::show;
@@ -23,7 +23,14 @@ pub fn grade(fx: &Fixture) -> Verdict {
         ),
         Ok(expr) => {
             let resolver = StubResolver::build(&fx.cells, &expr);
-            let got = eval(&expr, &resolver);
+            // A fixture that pins a computing cell (`at: C5`) evaluates the SAME shipping seam
+            // charlie-model's compute-formula pass uses, so no-argument ROW()/COLUMN() report that
+            // cell; a context-free fixture stays on the ad-hoc `eval` path (A1-anchored).
+            let got = match fx.at {
+                // `Fixture.at` is stored `(row, col)` to match `eval_at`'s argument order directly.
+                Some((row, col)) => eval_at(&expr, &resolver, row, col),
+                None => eval(&expr, &resolver),
+            };
             if got == fx.expect {
                 Verdict::matched(&fx.key)
             } else {
@@ -60,6 +67,7 @@ mod tests {
             formula: formula.to_string(),
             expect,
             cells,
+            at: None,
         }
     }
 
@@ -77,6 +85,16 @@ mod tests {
     fn an_error_valued_fixture_matches_the_error() {
         let m = grade(&fx("t/div0", "=1/0", Value::Error(ErrKind::Div0), vec![]));
         assert_eq!(m.kind, VerdictKind::Match);
+    }
+
+    #[test]
+    fn an_at_fixture_grades_no_arg_row_column_against_its_computing_cell() {
+        // `at: (row 4, col 2)` = C5 → ROW() must be 5; without `at` the ad-hoc path anchors to A1 → 1.
+        let mut f = fx("t/row-at", "=ROW()", Value::Number(5.0), vec![]);
+        f.at = Some((4, 2));
+        assert_eq!(grade(&f).kind, VerdictKind::Match);
+        let ad_hoc = fx("t/row-adhoc", "=ROW()", Value::Number(1.0), vec![]);
+        assert_eq!(grade(&ad_hoc).kind, VerdictKind::Match);
     }
 
     #[test]

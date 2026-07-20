@@ -38,8 +38,10 @@ use super::*;
 // a 1-D array, or (on a 2-D array) selects the whole `r`-th row.
 //
 // ROW/COLUMN read the STATIC coordinate of a reference NODE (never its value) — 1-based, top-left of
-// a range. The no-argument current-cell form is deferred (the evaluator has no current-cell seam), so
-// v1 requires the reference argument (arity 1); a non-reference argument is #VALUE!.
+// a range. With NO argument they return the current cell's own 1-based row/column, read from the
+// engine's current-cell seam (`EvalCtx::current_row`/`current_col`, set by charlie-model's compute-
+// formula pass); with no computing cell (ad-hoc eval) that seam anchors to A1. A non-reference
+// argument is #VALUE!.
 //
 // INDIRECT / OFFSET are reference-FORGING: they compute a reference from runtime values. The parser
 // now ACCEPTS them as arity-checked `Call` nodes so `charlie-model`'s forge pass can SOURCE-REWRITE
@@ -423,14 +425,16 @@ pub(crate) fn choose(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
     ctx.eval(&args[idx as usize])
 }
 
-/// `ROW(reference)` — the 1-based row number of a reference (the top row of a range). Reads the
-/// STATIC coordinate of the reference NODE, never its value, so it does not consult the resolver; a
-/// non-reference argument is `#VALUE!`. (The no-arg current-cell form is deferred — the evaluator has
-/// no current-cell seam — so v1's arity requires the reference.)
-pub(crate) fn row_fn(_ctx: &mut EvalCtx, args: &[Expr]) -> Value {
-    match &args[0] {
-        Expr::Ref(r) => Value::Number((r.row + 1) as f64),
-        Expr::Range(rn) => {
+/// `ROW([reference])` — the 1-based row number of a reference (the top row of a range). With NO
+/// argument it is the ROW of the cell being computed, read from [`EvalCtx::current_row`] (anchored to
+/// A1 in an ad-hoc eval with no home cell). With an argument it reads the STATIC coordinate of the
+/// reference NODE, never its value, so it does not consult the resolver; a non-reference argument is
+/// `#VALUE!`.
+pub(crate) fn row_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match args.first() {
+        None => Value::Number(ctx.current_row() as f64),
+        Some(Expr::Ref(r)) => Value::Number((r.row + 1) as f64),
+        Some(Expr::Range(rn)) => {
             // Excel `ROW(A1:A3)` is the VERTICAL array `{1;2;3}` — one row number per row the range
             // spans, needed by array idioms (`SUM(ROW(..))`, `INDEX(..,ROW(..))`). A single-row range
             // (`ROW(A1:C1)`) is the scalar top row (its array would be 1×1, which collapses anyway).
@@ -446,16 +450,19 @@ pub(crate) fn row_fn(_ctx: &mut EvalCtx, args: &[Expr]) -> Value {
                 )
             }
         }
-        _ => Value::Error(ErrKind::Value),
+        Some(_) => Value::Error(ErrKind::Value),
     }
 }
 
-/// `COLUMN(reference)` — the 1-based column number of a reference (the left column of a range). The
-/// column dual of [`row_fn`]; reads the reference NODE's static coordinate, never its value.
-pub(crate) fn column_fn(_ctx: &mut EvalCtx, args: &[Expr]) -> Value {
-    match &args[0] {
-        Expr::Ref(r) => Value::Number((r.col + 1) as f64),
-        Expr::Range(rn) => {
+/// `COLUMN([reference])` — the 1-based column number of a reference (the left column of a range). The
+/// column dual of [`row_fn`]: with NO argument it is the COLUMN of the cell being computed (via
+/// [`EvalCtx::current_col`], anchored to A1 in an ad-hoc eval); with an argument it reads the
+/// reference NODE's static coordinate, never its value.
+pub(crate) fn column_fn(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
+    match args.first() {
+        None => Value::Number(ctx.current_col() as f64),
+        Some(Expr::Ref(r)) => Value::Number((r.col + 1) as f64),
+        Some(Expr::Range(rn)) => {
             // Excel `COLUMN(A1:C1)` is the HORIZONTAL array `{1,2,3}` — one column number per column
             // the range spans (the column dual of `row_fn`). A single-column range is the scalar left
             // column (its 1×1 array would collapse anyway).
@@ -473,7 +480,7 @@ pub(crate) fn column_fn(_ctx: &mut EvalCtx, args: &[Expr]) -> Value {
                 )
             }
         }
-        _ => Value::Error(ErrKind::Value),
+        Some(_) => Value::Error(ErrKind::Value),
     }
 }
 

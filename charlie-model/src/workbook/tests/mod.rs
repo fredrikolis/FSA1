@@ -1,7 +1,7 @@
 // Concern: the two-pass engine's BEHAVIORAL pins — demand-driven chains, cycle/self-reference/cross-sheet #REF! refusals, the explicit-grid VAL1 rule, diamond/deep-DAG compute-once, memoization stability, the pull-depth and range-materialization #NUM! bounds and their order-independence (depth-tainted values/ranges never poison a shallower demand), ad-hoc `eval_formula`, batch `values_at` sharing, the computation-hash (ENG4) determinism/sensitivity/cycle=None/VAL1/GRID5-anchor pins, the trace (CLI2) upstream/downstream/shared-dep-repeated/cycle/depth-cap/GRID5-region + out-of-range pins, and the NAIVE-oracle differential test proving the graph EQUALS a per-cell evaluation (over scalar chains AND GRID5 array-formula regions — the dep_key sharing that collapses region coordinates onto one anchor node) | Non-concern: the engine's internal graph shape/node-count/traversal order (asserted nowhere — only VALUES are graded, so a future parallel-execution refactor stays free) and the formula language itself (charlie-ast owns it) | IO: in-memory (and one temp-dir) `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `FormulaOutcome`s
 use super::*;
 
-use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape};
+use charlie_ast::{ArrayView, ErrKind, RangeRef, Shape, eval_at};
 
 // The ENG4 persistent-cache + FS3 fitness pins live in their own concern-scoped submodule (they need
 // a real temp-dir workbook and the eval-counter instrument), keeping this behavioral file well under
@@ -648,7 +648,9 @@ impl<'w> NaiveOracle<'w> {
         self.visiting.borrow_mut().insert(key);
         let prev = self.cur.replace(id.0);
         let value = match file.grid.cell_at(0, 0) {
-            GridCell::Formula { expr, .. } => eval(expr, self),
+            // Anchor no-arg ROW()/COLUMN() at the region's top-left, exactly as the engine's
+            // `fill_array_region` does, so the differential stays faithful for a region formula.
+            GridCell::Formula { expr, .. } => eval_at(expr, self, region.min_row, region.min_col),
             GridCell::Value(v) => v.clone(),
             GridCell::LoadError { diag, .. } => crate::grid::load_error_value(diag),
         };
@@ -705,7 +707,8 @@ impl Resolver for NaiveOracle<'_> {
                     let eff = self.wb.effective_expr(key, expr);
                     // A stored single-cell formula keeps its array's TOP-LEFT element (the engine's
                     // `cell_scalar` rule), re-derived here — NOT the in-expression `scalarize` (#VALUE!).
-                    let r = Self::cell_top_left(eval(eff, self));
+                    // Anchor no-arg ROW()/COLUMN() at this cell (parity with `compute_formula`).
+                    let r = Self::cell_top_left(eval_at(eff, self, cell.row, cell.col));
                     self.cur.set(prev);
                     self.visiting.borrow_mut().remove(&key);
                     r

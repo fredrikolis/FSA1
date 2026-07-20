@@ -267,3 +267,58 @@ funcs: COLUMN
 note: COLUMN of a multi-column range is the HORIZONTAL array of its column numbers, C5:E9 -> {3,4,5}.
 formula: =COLUMN(C5:E9)
 expect: {3,4,5}
+
+# --- ROW() / COLUMN() with NO argument: the 1-based row/column of the CELL being computed (Excel).
+#     The `at:` line pins that computing cell; the with-argument forms above are UNCHANGED. ---
+
+[row-no-arg-at-c5]
+funcs: ROW
+note: =ROW() computed in C5 is that cell's own row number, 5 (Excel).
+at: C5
+formula: =ROW()
+expect: 5
+
+[column-no-arg-at-e3]
+funcs: COLUMN
+note: =COLUMN() computed in E3 is that cell's own column number, 5 (column E).
+at: E3
+formula: =COLUMN()
+expect: 5
+
+[row-no-arg-at-a1]
+funcs: ROW
+note: =ROW() in the top-left cell A1 is 1.
+at: A1
+formula: =ROW()
+expect: 1
+
+[column-no-arg-at-a1]
+funcs: COLUMN
+note: =COLUMN() in A1 is 1.
+at: A1
+formula: =COLUMN()
+expect: 1
+
+[row-no-arg-in-arithmetic-at-b7]
+funcs: ROW
+note: no-arg ROW() participates in ordinary arithmetic — ROW()*10 in B7 is 70.
+at: B7
+formula: =ROW()*10
+expect: 70
+
+# Regression guard: the WITH-ARGUMENT ROW(ref)/COLUMN(ref) forms are unchanged by the arity
+# relaxation, and are independent of the computing cell (`at:` present but ignored by the arg form).
+
+[row-with-arg-unchanged-at-c5]
+funcs: ROW
+note: ROW(A10) is 10 regardless of the computing cell — the reference form is unchanged.
+at: C5
+formula: =ROW(A10)
+expect: 10
+
+[column-with-arg-unchanged-at-e3]
+funcs: COLUMN
+note: COLUMN(C1) is 3 regardless of the computing cell — the reference form is unchanged.
+at: E3
+formula: =COLUMN(C1)
+expect: 3

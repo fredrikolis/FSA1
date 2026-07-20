@@ -288,6 +288,36 @@ fn row_and_column_read_the_reference_node() {
 }
 
 #[test]
+fn row_and_column_no_argument_read_the_current_cell() {
+    use crate::eval::eval_at;
+    let g = Grid::new(1, vec![Value::Blank]);
+    // No-argument ROW()/COLUMN() anchored at the computing cell (0-based row 4, col 2 → E3-style):
+    // ROW() = row+1, COLUMN() = col+1.
+    assert_eq!(eval_at(&call("ROW", vec![]), &g, 4, 2), n(5.0));
+    assert_eq!(eval_at(&call("COLUMN", vec![]), &g, 4, 2), n(3.0));
+    // With NO computing cell (ad-hoc eval) the no-arg forms anchor to A1 → row 1 / column 1.
+    assert_eq!(eval(&call("ROW", vec![]), &g), n(1.0));
+    assert_eq!(eval(&call("COLUMN", vec![]), &g), n(1.0));
+    // The with-argument form is UNCHANGED by the arity relaxation: ROW(A10) = 10, COLUMN(C1) = 3.
+    let a10 = Expr::Ref(crate::refs::RefNode {
+        col: 0,
+        row: 9,
+        col_abs: false,
+        row_abs: false,
+        sheet: None,
+    });
+    let c1 = Expr::Ref(crate::refs::RefNode {
+        col: 2,
+        row: 0,
+        col_abs: false,
+        row_abs: false,
+        sheet: None,
+    });
+    assert_eq!(eval_at(&call("ROW", vec![a10]), &g, 4, 2), n(10.0));
+    assert_eq!(eval_at(&call("COLUMN", vec![c1]), &g, 4, 2), n(3.0));
+}
+
+#[test]
 fn hlookup_horizontal_exact_and_approximate() {
     let g = Grid::new(1, vec![Value::Blank]);
     // {1,2,3;10,20,30} — first row sorted ascending, second row the payload.

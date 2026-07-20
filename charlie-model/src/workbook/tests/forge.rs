@@ -1,4 +1,4 @@
-// Concern: the ENG6 reference-FORGING fitness pins — over in-memory workbooks whose cells contain INDIRECT/OFFSET: (a) a dynamic OFFSET range driven by a COUNT sums the resolved rectangle; (b) a static SUM(OFFSET(...)) rewrites to a range the existing SUM reducer consumes; (c) INDIRECT resolves an A1 text (built by concat) and a sheet-qualified text; (d) nested forging (a forger whose own argument forges) is a located #REF! ForgeRefusal (restricted v1); (e) a forged OVER-LARGE range is left for the resolver's #NUM! (MAX_RANGE_CELLS); (f) a forger-arg cycle (an argument depending on the forger's own output) is a located #REF!; (g) the ENG3 two-pass==naive differential holds over forger cones (the naive oracle applies the SAME rewrite); (h) trace (CLI2) shows a forger's RESOLVED dependencies; (i) ZERO-OVERHEAD — a non-forging workbook has `has_forgers=false` and never records a forge rewrite, while a forging one does; (j) a forger reachable ONLY through another forger's forged range is discovered by the fixpoint's per-round effective-cone re-collection and resolved (no false-reject, not a silent backstop #REF!); (k) a numeric-zero `a1` flag is coerced to FALSE -> the R1C1 ForgeRefusal | Non-concern: the ENG4 forger-cone non-caching pin (the `cache` submodule owns the temp-dir `.cache/` instrument) and the charlie-ast parse-accept of the forgers (charlie-ast owns that) — this grades the model's forge pass on VALUES | IO: in-memory `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `TraceNode`s
+// Concern: the ENG6 reference-FORGING fitness pins — over in-memory workbooks whose cells contain INDIRECT/OFFSET: (a) a dynamic OFFSET range driven by a COUNT sums the resolved rectangle; (b) a static SUM(OFFSET(...)) rewrites to a range the existing SUM reducer consumes; (c) INDIRECT resolves an A1 text (built by concat) and a sheet-qualified text; (d) nested forging (a forger whose own argument forges) is a located #REF! ForgeRefusal (restricted v1); (e) a forged OVER-LARGE range is left for the resolver's #NUM! (MAX_RANGE_CELLS); (f) a forger-arg cycle (an argument depending on the forger's own output) is a located #REF!; (g) the ENG3 two-pass==naive differential holds over forger cones (the naive oracle applies the SAME rewrite); (h) trace (CLI2) shows a forger's RESOLVED dependencies; (i) ZERO-OVERHEAD — a non-forging workbook has `has_forgers=false` and never records a forge rewrite, while a forging one does; (j) a forger reachable ONLY through another forger's forged range is discovered by the fixpoint's per-round effective-cone re-collection and resolved (no false-reject, not a silent backstop #REF!); (k) a numeric-zero `a1` flag is coerced to FALSE -> the R1C1 ForgeRefusal; (l) a no-argument ROW()/COLUMN() inside a forging ARGUMENT anchors at the FORGER cell, not A1 (ENG6 Excel parity) | Non-concern: the ENG4 forger-cone non-caching pin (the `cache` submodule owns the temp-dir `.cache/` instrument) and the charlie-ast parse-accept of the forgers (charlie-ast owns that) — this grades the model's forge pass on VALUES | IO: in-memory `Workbook`s -> asserted `Value`s / `Diagnostic` codes / `TraceNode`s
 use charlie_ast::{ErrKind, Value};
 
 use super::{assert_agrees, load_one_tab};
@@ -249,4 +249,36 @@ fn a_forging_workbook_records_rewrites_only_for_its_forgers() {
     assert!(wb.has_forgers, "a forger -> the gate is on");
     assert_eq!(wb.value_at(0, 1, 0), Value::Number(5.0)); // B1 -> A1
     assert_eq!(wb.forge.len(), 1, "only B1 is rewritten");
+}
+
+#[test]
+fn indirect_argument_no_arg_row_anchors_at_the_forger_cell() {
+    // ENG6/HARD RULE 4 parity: a no-argument ROW() inside a forging ARGUMENT anchors at the FORGER
+    // cell, not A1. C5 = INDIRECT("A"&ROW()): ROW() at C5 is 5, so the text is "A5" -> A5 = 42 (Excel).
+    // The pre-fix bug anchored the forge-argument eval at A1, resolving "A1" -> 99 (a silent wrong
+    // value on a supported non-forging-argument idiom). C5 is 0-based col 2, row 4.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[("A1", "99"), ("A5", "42"), ("C5", "=INDIRECT(\"A\"&ROW())")],
+    );
+    assert_eq!(wb.value_at(0, 2, 4), Value::Number(42.0)); // C5 -> A5
+    assert!(wb.eval_diagnostics().is_empty());
+}
+
+#[test]
+fn offset_argument_no_arg_column_anchors_at_the_forger_cell() {
+    // The COLUMN() analogue in an OFFSET argument: C1 = OFFSET($A$1, 0, COLUMN()). COLUMN() at C1 is 3,
+    // so the column shift is 3 from A -> D1 = 42 (Excel). Anchoring at A1 would give COLUMN()=1 -> shift
+    // 1 -> B1 = 99, the silent wrong value the pre-fix path produced. C1 is 0-based col 2, row 0.
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1", "1"),
+            ("B1", "99"),
+            ("D1", "42"),
+            ("C1", "=OFFSET($A$1,0,COLUMN())"),
+        ],
+    );
+    assert_eq!(wb.value_at(0, 2, 0), Value::Number(42.0)); // C1 -> D1
+    assert!(wb.eval_diagnostics().is_empty());
 }

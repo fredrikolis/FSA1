@@ -399,6 +399,7 @@ mod tests {
                 formula: "=SUM(A1:A2)".into(),
                 expect: Value::Number(3.0),
                 cells: vec![],
+                at: None,
             },
             Fixture {
                 key: "agg/unimplemented".into(),
@@ -406,6 +407,7 @@ mod tests {
                 formula: "=LAMBDA(A1,A1:A2)".into(),
                 expect: Value::Number(3.0),
                 cells: vec![],
+                at: None,
             },
             Fixture {
                 key: "agg/round-bad".into(),
@@ -413,6 +415,7 @@ mod tests {
                 formula: "=ROUND(1,0)".into(),
                 expect: Value::Number(99.0),
                 cells: vec![],
+                at: None,
             },
             Fixture {
                 key: "agg/mislabeled".into(),
@@ -420,6 +423,7 @@ mod tests {
                 formula: "=1+1".into(),
                 expect: Value::Number(2.0),
                 cells: vec![],
+                at: None,
             },
         ];
         let verdicts = vec![

@@ -308,7 +308,7 @@ impl Workbook {
             // Excel coerces the `a1` flag to a LOGICAL: FALSE — and equally a numeric 0 or the text
             // "FALSE" — selects R1C1 style (refused in restricted v1). Coerce BEFORE the check so
             // `INDIRECT(text, 0)` is treated as R1C1, not mistaken for A1.
-            match coerce_logical(self.eval_root_expr(a1_arg, home)) {
+            match coerce_logical(self.eval_root_expr(a1_arg, home, Some((key.2, key.1)))) {
                 Ok(false) => {
                     self.refuse(self.forge_diag(
                         key,
@@ -321,7 +321,7 @@ impl Workbook {
                 Err(k) => return Expr::Lit(Value::Error(k)), // error / non-logical text
             }
         }
-        let text = match self.eval_root_expr(&args[0], home) {
+        let text = match self.eval_root_expr(&args[0], home, Some((key.2, key.1))) {
             Value::Text(s) => s,
             Value::Error(k) => return Expr::Lit(Value::Error(k)),
             _ => {
@@ -372,26 +372,32 @@ impl Workbook {
                 return Expr::Lit(Value::Error(ErrKind::Ref));
             }
         };
-        let rows = match coerce_offset_int(self.eval_root_expr(&args[1], home)) {
-            Ok(n) => n,
-            Err(k) => return Expr::Lit(Value::Error(k)),
-        };
-        let cols = match coerce_offset_int(self.eval_root_expr(&args[2], home)) {
-            Ok(n) => n,
-            Err(k) => return Expr::Lit(Value::Error(k)),
-        };
-        let height = match args.get(3) {
-            Some(a) => match coerce_offset_int(self.eval_root_expr(a, home)) {
+        let rows =
+            match coerce_offset_int(self.eval_root_expr(&args[1], home, Some((key.2, key.1)))) {
                 Ok(n) => n,
                 Err(k) => return Expr::Lit(Value::Error(k)),
-            },
+            };
+        let cols =
+            match coerce_offset_int(self.eval_root_expr(&args[2], home, Some((key.2, key.1)))) {
+                Ok(n) => n,
+                Err(k) => return Expr::Lit(Value::Error(k)),
+            };
+        let height = match args.get(3) {
+            Some(a) => {
+                match coerce_offset_int(self.eval_root_expr(a, home, Some((key.2, key.1)))) {
+                    Ok(n) => n,
+                    Err(k) => return Expr::Lit(Value::Error(k)),
+                }
+            }
             None => i64::from(base_h),
         };
         let width = match args.get(4) {
-            Some(a) => match coerce_offset_int(self.eval_root_expr(a, home)) {
-                Ok(n) => n,
-                Err(k) => return Expr::Lit(Value::Error(k)),
-            },
+            Some(a) => {
+                match coerce_offset_int(self.eval_root_expr(a, home, Some((key.2, key.1)))) {
+                    Ok(n) => n,
+                    Err(k) => return Expr::Lit(Value::Error(k)),
+                }
+            }
             None => i64::from(base_w),
         };
         let new_top = i64::from(top) + rows;

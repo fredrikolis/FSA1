@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
-use charlie_ast::{ErrKind, Expr, Shape, Value, func};
+use charlie_ast::{ErrKind, Expr, FuncId, Shape, Value, func};
 
 use crate::grid::Cell as GridCell;
 
@@ -236,12 +236,24 @@ fn expr_has_volatile(expr: &Expr) -> bool {
             // after Pass 0 rewrote the effective form — the whole cone is correctly excluded.
             func::def(*id).is_some_and(|d| d.volatile)
                 || super::forge::is_forger(*id)
+                || is_self_positional(*id, args)
                 || args.iter().any(expr_has_volatile)
         }
         Expr::Unary(_, e) | Expr::ImplicitIntersect(e) | Expr::SpillRef(e) => expr_has_volatile(e),
         Expr::Binary(_, a, b) => expr_has_volatile(a) || expr_has_volatile(b),
         Expr::Lit(_) | Expr::Ref(_) | Expr::Range(_) => false,
     }
+}
+
+/// Whether a `Call` is the no-argument, POSITION-DEPENDENT `ROW()`/`COLUMN()` form (ENG6). Its value is
+/// the COMPUTING cell's own 1-based row/column — a runtime input (the cell's anchor coordinate) that the
+/// computation hash never folds (VAL1: the hash is over content, not the cell's address), so `=ROW()` at
+/// A1 and at A9 share ONE hash and a cached value would be served for the wrong cell. Like TODAY/NOW and
+/// INDIRECT/OFFSET, such a cone is VOLATILE and must never be cached. The WITH-argument form (`ROW(A9)`)
+/// reads a STATIC node coordinate the verbatim source already fixes and the hash folds, so it stays
+/// cacheable. Reads the name from the registry (never a hard-coded `FuncId`), mirroring `is_forger`.
+fn is_self_positional(id: FuncId, args: &[Expr]) -> bool {
+    args.is_empty() && func::def(id).is_some_and(|d| d.name == "ROW" || d.name == "COLUMN")
 }
 
 // ----------------------------------------------------------------------------------------------
