@@ -565,7 +565,8 @@ fn cmd_sample(rest: &[String]) -> u8 {
         "wrote a sample workbook to {path} (tabs: Orders, Summary)\n\
          \n\
          next:\n  \
-         charlie-cli render {path}               # draw the Orders tab\n  \
+         charlie-cli tree   {path}               # see the whole workbook (both tabs, every cell)\n  \
+         charlie-cli render {path}               # draw the Orders tab as a grid\n  \
          charlie-cli render {path} --functions   # show the formulas, not their values\n  \
          charlie-cli check  {path}               # lint it (clean)\n  \
          charlie-cli eval   {path} --formula '=Orders!D5'  # evaluate a cell (110)\n  \
@@ -607,8 +608,9 @@ fn cmd_import(rest: &[String]) -> u8 {
                 "imported {src} -> {dest} ({} tab(s), {} cell file(s) written)\n\
                  \n\
                  next:\n  \
-                 charlie-cli render {dest}          # draw the first tab\n  \
-                 charlie-cli check  {dest}          # lint the imported workbook\n",
+                 charlie-cli tree   {dest}          # see the whole workbook — every tab, cell, name\n  \
+                 charlie-cli render {dest}          # draw one tab as a grid\n  \
+                 charlie-cli check  {dest}          # lint it\n",
                 report.tabs.len(),
                 report.files,
             );
