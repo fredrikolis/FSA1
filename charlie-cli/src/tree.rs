@@ -1,4 +1,4 @@
-// Concern: the `charlie-cli tree` subcommand (CLI3) — present a workbook's COMPLETE authored structure (every tab, every cell of every cell/range file, every FS4 name) as a single read-only nested text view: parse `tree <scope> [--values|--functions] [--range A1:B9]` (combined content mode is the default; an explicit range is a tab-scoped viewport shown IN FULL, cap overridden), load the workbook (`Workbook::load_dir`, cache disabled so the view writes nothing), enumerate each tab's files (`Workbook::tab_files`) + the resolved names (`Workbook::name_table`), turn each into an annotated-tree `DirNode`/`FileNode` (a single-cell file → one node; a multi-cell range → one node per A1-ordered coordinate, capped at TREE_CELL_CAP with the remainder as an elided count; a GRID5 array-formula file → ONE node under `--functions`, expanded under `--values`), EXCLUDING `.cache/` (the loader already drops it, FS3), and draw it with `for_format(Format::Text)` to stdout | Non-concern: WHAT a cell computes to or how a name resolves (charlie-model owns render/value spelling via `render`/`eval_formula` and the A1-vs-name classification via `NameTable`/`tab_files` — this never re-parses), the other subcommands (main.rs owns dispatch), the JSON envelope (tree is text-only — `--format json` is refused), and the tree GLYPHS (annotated-tree owns the text renderer) | IO: (a workbook `<scope>` path + a content mode) -> the structure tree on stdout; a located refusal (bad args / not found / load diagnostics) via the envelope + its exit code
+// Concern: the `charlie-cli tree` subcommand (CLI3) — present a workbook's COMPLETE authored structure (every tab, every cell of every cell/range file, every FS4 name) as a single read-only nested text view: parse `tree <scope> [--values|--functions] [--range A1:B9]` (combined content mode is the default; an explicit range is a tab-scoped viewport shown IN FULL, cap overridden), load the workbook (`Workbook::load_dir`, cache disabled so the view writes nothing), enumerate each tab's files (`Workbook::tab_files`) + the resolved names (`Workbook::name_table`), turn each into an annotated-tree `DirNode`/`FileNode` (a single-cell file → one node; a multi-cell range → one node per A1-ordered coordinate, capped at TREE_CELL_CAP with the remainder as an elided count; a GRID5 array-formula file → ONE node under `--functions`, expanded under `--values`), EXCLUDING `.cache/` (the loader already drops it, FS3), and draw it with `for_format(Format::Text)` to stdout | Non-concern: WHAT a cell computes to or how a name resolves (charlie-model owns render/value spelling via `render`/`eval_formula` and the A1-vs-name classification via `NameTable`/`tab_files` — this never re-parses), the other subcommands (main.rs owns dispatch), and the tree GLYPHS (annotated-tree owns the text renderer) | IO: (a workbook `<scope>` path + a content mode) -> the structure tree on stdout; a located refusal (bad args / not found / load diagnostics) via `output` + its exit code
 //! `charlie-cli tree` (CLI3): the workbook's complete structure as a read-only nested text view.
 //!
 //! The RENDERING MECHANISM lives in `plans/tree-command-plan.md` (the spec states only the need). This
@@ -15,7 +15,7 @@ use charlie_model::{
     combined_cell, parse_viewport, render, viewport_cell_count,
 };
 
-use crate::output::{ErrorCode, Format, emit_validation_diagnostics};
+use crate::output::{ErrorCode, emit_validation_diagnostics};
 use crate::{bad_arg, fail, split_flag, take_value};
 
 /// The per-file coordinate cap: a range file expands to at most this many A1-ordered per-cell nodes,
@@ -33,19 +33,9 @@ const TREE_CELL_CAP: u32 = 50;
 /// (computed). `--range <A1:B9>` (requires a `<workbook>/<Tab>` scope) shows EXACTLY that viewport's
 /// cells, ALL of them, with the per-range cap OVERRIDDEN (an explicit range is shown in full). `--full`
 /// lifts the per-range coordinate cap on the whole-structure view so nothing is elided (making the
-/// elided-count marker's own "use --full to expand" instruction honest). Text only — `--format json` is
-/// refused (a structure view is not a serialization surface). Read-only (CORE3): the cache is disabled,
-/// so the command writes nothing.
-pub fn cmd_tree(fmt: Format, rest: &[String]) -> u8 {
-    // A structure view has ONE serialization: text. The global `--format json` is refused rather than
-    // silently drawn, so an agent never scrapes a machine surface that does not exist (plan: no JSON).
-    if fmt == Format::Json {
-        return bad_arg(
-            fmt,
-            "tree is a text-only structure view; it has no --format json form",
-        );
-    }
-
+/// elided-count marker's own "use --full to expand" instruction honest). Read-only (CORE3): the cache
+/// is disabled, so the command writes nothing.
+pub fn cmd_tree(rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     let mut modes: Vec<RenderMode> = Vec::new();
     let mut range: Option<String> = None;
@@ -60,21 +50,21 @@ pub fn cmd_tree(fmt: Format, rest: &[String]) -> u8 {
             // gets every cell of it). Requires a tab scope so the range names one tab.
             "--range" => match take_value(inline, &mut it) {
                 Some(v) => range = Some(v),
-                None => return bad_arg(fmt, "--range needs an A1 range like A1:B9"),
+                None => return bad_arg("--range needs an A1 range like A1:B9"),
             },
             // Lift the per-range coordinate cap: expand every cell, eliding nothing. The elided-count
             // marker (annotated-tree's own "use --full to expand") thus names a flag that truly exists.
             "--full" => full = true,
-            f if f.starts_with('-') => return bad_arg(fmt, &format!("unknown flag {f:?}")),
+            f if f.starts_with('-') => return bad_arg(&format!("unknown flag {f:?}")),
             _ => {
                 if path.replace(arg.clone()).is_some() {
-                    return bad_arg(fmt, "tree takes exactly one <scope>");
+                    return bad_arg("tree takes exactly one <scope>");
                 }
             }
         }
     }
     if modes.len() > 1 {
-        return bad_arg(fmt, "choose at most one of --values / --functions");
+        return bad_arg("choose at most one of --values / --functions");
     }
     // `--full` removes the cap entirely (u32::MAX coordinates), so `expand_range` never elides and the
     // borrowed "use --full to expand" hint never contradicts what the tool accepts.
@@ -85,12 +75,11 @@ pub fn cmd_tree(fmt: Format, rest: &[String]) -> u8 {
 
     let Some(path) = path else {
         return bad_arg(
-            fmt,
             "tree needs a <scope> — the workbook directory, or <workbook>/<Tab> to root at a tab",
         );
     };
 
-    let (wb, tab_filter) = match resolve_scope(fmt, &path) {
+    let (wb, tab_filter) = match resolve_scope(&path) {
         Ok(pair) => pair,
         Err(code) => return code,
     };
@@ -101,13 +90,12 @@ pub fn cmd_tree(fmt: Format, rest: &[String]) -> u8 {
         Some(r) => {
             let Some(sheet) = tab_filter else {
                 return bad_arg(
-                    fmt,
                     "tree --range needs a tab scope: pass <workbook>/<Tab> so the range names one tab",
                 );
             };
             let viewport = match parse_viewport(&r) {
                 Ok(rect) => rect,
-                Err(msg) => return bad_arg(fmt, &msg),
+                Err(msg) => return bad_arg(&msg),
             };
             // Bound the viewport before materializing a node per cell (a syntactically-valid but
             // enormous range would OOM) — the same guard `render` applies (fail-fast, never a crash).
@@ -116,7 +104,7 @@ pub fn cmd_tree(fmt: Format, rest: &[String]) -> u8 {
                 let msg = format!(
                     "--range spans {cells} cells, over the bound of {MAX_VIEWPORT_CELLS} -- narrow the range"
                 );
-                return bad_arg(fmt, &msg);
+                return bad_arg(&msg);
             }
             build_range_map(&wb, sheet, viewport, mode)
         }
@@ -154,7 +142,7 @@ fn build_range_map(wb: &Workbook, sheet: u32, viewport: Rect, mode: RenderMode) 
 /// reading AND the fall-through refusal, never re-loaded (a `<workbook>/<Tab>` scope additionally loads
 /// the PARENT workbook once, which is unavoidable). The cache is disabled on every returned workbook,
 /// so the read-only `tree` writes nothing (CORE3).
-fn resolve_scope(fmt: Format, scope: &str) -> Result<(Workbook, Option<u32>), u8> {
+fn resolve_scope(scope: &str) -> Result<(Workbook, Option<u32>), u8> {
     let p = Path::new(scope);
     // Parse `p` once; its outcome drives every interpretation below.
     let loaded = Workbook::load_dir(p);
@@ -189,14 +177,14 @@ fn resolve_scope(fmt: Format, scope: &str) -> Result<(Workbook, Option<u32>), u8
             wb.disable_cache();
             Ok((wb, None))
         }
-        Ok(Err(diags)) => Err(emit_validation_diagnostics(fmt, &diags)),
+        Ok(Err(diags)) => Err(emit_validation_diagnostics(&diags)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let msg = format!("no such workbook directory {:?}", p.display());
-            Err(fail(fmt, ErrorCode::NotFound, &msg))
+            Err(fail(ErrorCode::NotFound, &msg))
         }
         Err(e) => {
             let msg = format!("cannot read {:?}: {e}", p.display());
-            Err(fail(fmt, ErrorCode::Io, &msg))
+            Err(fail(ErrorCode::Io, &msg))
         }
     }
 }
@@ -326,7 +314,7 @@ fn name_nodes(wb: &Workbook, mode: RenderMode, want: impl Fn(&NameScope) -> bool
 fn name_text(wb: &Workbook, name: &Name, mode: RenderMode) -> String {
     match &name.target {
         // A symlinked name always shows its target A1 reference (its resolution IS that reference).
-        NameTarget::Ref(a1) => format!("-> {a1}"),
+        NameTarget::Ref(a1) => format!("→ {a1}"),
         NameTarget::Expr(expr) => {
             let source = format!("={expr}");
             match mode {

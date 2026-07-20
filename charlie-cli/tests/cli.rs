@@ -1,4 +1,4 @@
-// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, BOTH output forms selected by `--format` (the human ASCII table / scalar on stdout in text mode, and the `{status,data|error}` JSON envelope on stdout in json mode — success data, the diagnostics[] array, the eval value, and error/not-found/validation envelopes), the on-disk `sample` workbook + its never-clobber refusal, the `import` of a real `.ods`/`.xlsx` into a renderable workbook (+ its unsupported-extension/conflict/not-found refusals), the `--guide` text, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/import/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval or an unsupported import format · 4 sample/import target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT), the ODS/xlsx conversion LOGIC (charlie-ingest's own tests own it), the envelope serialization (main.rs `output` owns it), and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, reads committed `.ods`/`.xlsx` fixtures, asserts on stdout + exit status
+// Concern: the CLI CONTRACT integration test — drive the built `charlie-cli` binary end-to-end against temp workbooks and lock the observable surface the model's unit tests cannot: the argv dispatch, the human text output (the ASCII table / scalar / prose on stdout, the located diagnostics, the eval value), the `--version` JSON handshake, the on-disk `sample` workbook + its never-clobber refusal, the `import` of a real `.ods`/`.xlsx` into a renderable workbook (+ its unsupported-extension/conflict/not-found refusals), the `--guide` text, that a removed `--format json` is now an unknown flag, and the EXIT CODE an agent branches on (0 clean render/check/eval/sample/import/guide · 2 bad args · 3 error-severity diagnostics or error-valued eval or an unsupported import format · 4 sample/import target-dir conflict · 24 not found) | Non-concern: the render/lint/eval LOGIC (charlie-model's own tests own value spelling, demand-driven eval, array broadcasting, diagnostic detection, and the sample CONTENT), the ODS/xlsx conversion LOGIC (charlie-ingest's own tests own it), the text emitters (main.rs `output` owns them), and comfy-table's internals | IO: spawns `$CARGO_BIN_EXE_charlie-cli`, writes temp workbook dirs, reads committed `.ods`/`.xlsx` fixtures, asserts on stdout + exit status
 //! End-to-end tests of the `charlie-cli` binary: exit codes and stdout for `render`, `check`, `eval`,
 //! `sample`, `--guide`, `--version`, and misuse. The spreadsheet logic is tested in `charlie-model`;
 //! this locks the thin shell's own contract.
@@ -54,7 +54,8 @@ fn run(args: &[&str]) -> (i32, String) {
 }
 
 #[test]
-fn render_values_draws_the_computed_cone() {
+fn render_default_draws_the_computed_cone() {
+    // No mode flag → the COMBINED default (not --values): the demand-driven value B1 still computes.
     let fx = Fixture::new("render");
     fx.file("Sheet1", "A1", "20000")
         .file("Sheet1", "B1", "=A1*2");
@@ -645,198 +646,16 @@ fn guide_prints_and_exits_zero() {
     );
 }
 
-// ---- `--format json`: the machine envelope surface (cli-interface-standards Part 2). ----
+// ---- `--format` is gone: text is the sole output form; the flag is now an unknown flag. ----
 
 #[test]
-fn render_json_emits_a_success_envelope_with_columns_and_rows() {
-    let fx = Fixture::new("render-json");
-    fx.file("Sheet1", "A1", "20000")
-        .file("Sheet1", "B1", "=A1*2");
-    let (code, out) = run(&["render", fx.path().to_str().unwrap(), "--format", "json"]);
-    assert_eq!(code, 0, "clean render exits 0; got:\n{out}");
-    assert!(
-        out.contains("\"status\":\"success\""),
-        "success envelope on stdout:\n{out}"
-    );
-    assert!(out.contains("\"columns\""), "grid columns:\n{out}");
-    assert!(out.contains("\"rows\""), "grid rows:\n{out}");
-    // The computed value rides in the structured data, not a scraped ASCII cell.
-    assert!(out.contains("40000"), "B1 computes to 40000:\n{out}");
-}
-
-#[test]
-fn check_clean_json_is_a_success_envelope_with_empty_diagnostics() {
-    let fx = Fixture::new("check-clean-json");
-    fx.file("Sheet1", "A1", "1").file("Sheet1", "B1", "=A1+1");
-    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--format", "json"]);
-    assert_eq!(code, 0, "clean check exits 0:\n{out}");
-    assert!(out.contains("\"status\":\"success\""), "success:\n{out}");
-    assert!(
-        out.contains("\"diagnostics\":[]"),
-        "empty diagnostics array:\n{out}"
-    );
-}
-
-#[test]
-fn check_cycle_json_is_an_error_envelope_with_a_located_diagnostic() {
-    let fx = Fixture::new("check-cycle-json");
-    fx.file("Sheet1", "A1", "=B1").file("Sheet1", "B1", "=A1");
-    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--format", "json"]);
-    assert_eq!(code, 3, "a cycle is a validation error -> exit 3:\n{out}");
-    assert!(
-        out.contains("\"status\":\"error\""),
-        "error envelope:\n{out}"
-    );
-    assert!(
-        out.contains("\"code\":\"validation_error\""),
-        "validation_error code:\n{out}"
-    );
-    // The diagnostic carries the stable dispatch code and a machine location (never a scraped table).
-    assert!(out.contains("\"code\":\"cycle\""), "the cycle code:\n{out}");
-    assert!(out.contains("\"location\""), "a located diagnostic:\n{out}");
-}
-
-#[test]
-fn check_json_completes_the_location_and_carries_a_fix_for_a_non_canonical_filename() {
-    // A lowercase filename is a load-time refusal with a DETERMINISTIC canonical rename: the JSON
-    // diagnostic completes its byte `span` {offset,length} AND carries a machine-applicable `fix`
-    // (cli-interface-standards Part 2 "Diagnostics"), so an agent can apply the rename unattended.
-    let fx = Fixture::new("check-noncanon-json");
-    fx.file("Sheet1", "a1", "42");
-    let (code, out) = run(&["check", fx.path().to_str().unwrap(), "--format", "json"]);
-    assert_eq!(
-        code, 3,
-        "a non-canonical filename rejects -> exit 3:\n{out}"
-    );
-    assert!(
-        out.contains("\"code\":\"lowercase-column\""),
-        "the lowercase code:\n{out}"
-    );
-    // The location is a byte span {offset,length}, never a bare `byte`.
-    assert!(
-        out.contains("\"span\":{\"offset\":0,\"length\":2}"),
-        "completed byte span:\n{out}"
-    );
-    // A machine-applicable fix with the deterministic canonical replacement.
-    assert!(
-        out.contains("\"fix\":{\"applicability\":\"machine_applicable\""),
-        "a machine-applicable fix:\n{out}"
-    );
-    assert!(
-        out.contains("\"replacement\":\"A1\""),
-        "the canonical rename:\n{out}"
-    );
-    // The envelope carries the standard `meta` block.
-    assert!(
-        out.contains("\"meta\":{\"timestamp\":"),
-        "envelope meta block:\n{out}"
-    );
-}
-
-#[test]
-fn eval_parse_error_json_locates_a_body_span_with_start_and_end() {
-    // An unparseable ad-hoc formula is a located Body diagnostic: the JSON carries BOTH `start` and
-    // `end` {line,column} for the offending token (cli-interface-standards Part 2 "Diagnostics").
-    let fx = Fixture::new("eval-parse-json");
+fn format_json_is_now_an_unknown_flag() {
+    // The global `--format text|json` selector was removed (text is the only output form). `--format`
+    // is no longer recognized, so `--format json` is a plain unknown flag → bad args (exit 2).
+    let fx = Fixture::new("format-gone");
     fx.file("Sheet1", "A1", "1");
-    let (code, out) = run(&[
-        "eval",
-        fx.path().to_str().unwrap(),
-        "--formula",
-        "=1+*2",
-        "--format",
-        "json",
-    ]);
-    assert_eq!(code, 3, "a parse error rejects -> exit 3:\n{out}");
-    assert!(
-        out.contains("\"code\":\"formula-syntax\""),
-        "the syntax code:\n{out}"
-    );
-    assert!(
-        out.contains("\"start\":{\"line\":1,\"column\":4}") && out.contains("\"end\":{"),
-        "a body span with start AND end:\n{out}"
-    );
-}
-
-#[test]
-fn eval_json_wraps_the_value_in_a_success_envelope() {
-    let fx = Fixture::new("eval-json");
-    fx.file("Sheet1", "A1:A3", "1\n2\n3");
-    let (code, out) = run(&[
-        "eval",
-        fx.path().to_str().unwrap(),
-        "--formula",
-        "=SUM(A1:A3)",
-        "--format",
-        "json",
-    ]);
-    assert_eq!(code, 0, "clean eval exits 0:\n{out}");
-    assert!(
-        out.contains("\"status\":\"success\""),
-        "success envelope:\n{out}"
-    );
-    assert!(out.contains("\"value\":\"6\""), "value in data:\n{out}");
-}
-
-#[test]
-fn eval_error_value_json_is_an_error_envelope_carrying_the_value() {
-    let fx = Fixture::new("eval-errval-json");
-    fx.file("Sheet1", "A1", "1");
-    let (code, out) = run(&[
-        "eval",
-        fx.path().to_str().unwrap(),
-        "--formula",
-        "=1/0",
-        "--format",
-        "json",
-    ]);
-    assert_eq!(code, 3, "an error-valued result exits 3:\n{out}");
-    assert!(
-        out.contains("\"status\":\"error\""),
-        "error envelope:\n{out}"
-    );
-    assert!(
-        out.contains("\"value\":\"#DIV/0!\""),
-        "the error value in data:\n{out}"
-    );
-}
-
-#[test]
-fn a_bad_arg_json_error_envelope_is_on_stdout() {
-    // An operational error is DATA in json mode: the envelope prints to STDOUT (not prose to stderr),
-    // so an agent can parse the failure. Exit code stays 2 (bad args).
-    let (code, out) = run(&["frobnicate", "--format", "json"]);
-    assert_eq!(code, 2, "an unknown command is exit 2:\n{out}");
-    assert!(
-        out.contains("\"status\":\"error\""),
-        "error on stdout:\n{out}"
-    );
-    assert!(
-        out.contains("\"code\":\"invalid_arguments\""),
-        "the invalid_arguments code:\n{out}"
-    );
-}
-
-#[test]
-fn a_not_found_json_error_envelope_is_on_stdout() {
-    let (code, out) = run(&["check", "/no/such/charlie/workbook/xyz", "--format", "json"]);
-    assert_eq!(code, 24, "not found is exit 24:\n{out}");
-    assert!(
-        out.contains("\"status\":\"error\""),
-        "error on stdout:\n{out}"
-    );
-    assert!(
-        out.contains("\"code\":\"not_found\""),
-        "the not_found code:\n{out}"
-    );
-}
-
-#[test]
-fn an_invalid_format_value_is_bad_args() {
-    let fx = Fixture::new("badformat");
-    fx.file("Sheet1", "A1", "1");
-    let (code, _) = run(&["render", fx.path().to_str().unwrap(), "--format", "yaml"]);
-    assert_eq!(code, 2, "an unknown --format value is exit 2 (bad args)");
+    let (code, _) = run(&["render", fx.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(code, 2, "`--format json` is now an unknown flag (exit 2)");
 }
 
 /// A committed `.ods` fixture from the sibling `charlie-ingest` crate (the CLI test tree has none of
@@ -852,20 +671,10 @@ fn import_ods_then_render_and_eval_the_converted_workbook() {
     let fx = Fixture::new("import");
     let dest = fx.path().join("wb"); // absent -> import creates it
     let src = ingest_fixture("smoke.ods");
-    let (code, out) = run(&[
-        "import",
-        src.to_str().unwrap(),
-        dest.to_str().unwrap(),
-        "--format",
-        "json",
-    ]);
+    let (code, out) = run(&["import", src.to_str().unwrap(), dest.to_str().unwrap()]);
     assert_eq!(code, 0, "import should succeed:\n{out}");
     assert!(
-        out.contains("\"status\":\"success\""),
-        "success envelope:\n{out}"
-    );
-    assert!(
-        out.contains("\"files\":5"),
+        out.contains("5 cell file(s)"),
         "five per-cell files written (Sheet1: A1,A2,A3,B1; Sheet2: A1):\n{out}"
     );
 
@@ -912,18 +721,8 @@ fn import_into_a_non_empty_dir_is_a_conflict() {
 fn import_a_missing_source_is_not_found() {
     let fx = Fixture::new("import-missing");
     let dest = fx.path().join("wb");
-    let (code, out) = run(&[
-        "import",
-        "/no/such/file.ods",
-        dest.to_str().unwrap(),
-        "--format",
-        "json",
-    ]);
-    assert_eq!(code, 24, "a missing source is not found (exit 24):\n{out}");
-    assert!(
-        out.contains("\"code\":\"not_found\""),
-        "not_found code:\n{out}"
-    );
+    let (code, _) = run(&["import", "/no/such/file.ods", dest.to_str().unwrap()]);
+    assert_eq!(code, 24, "a missing source is not found (exit 24)");
 }
 
 #[test]
@@ -933,16 +732,10 @@ fn import_xlsx_then_eval_the_converted_workbook() {
     let fx = Fixture::new("import-xlsx");
     let dest = fx.path().join("wb");
     let src = ingest_fixture("smoke.xlsx");
-    let (code, out) = run(&[
-        "import",
-        src.to_str().unwrap(),
-        dest.to_str().unwrap(),
-        "--format",
-        "json",
-    ]);
+    let (code, out) = run(&["import", src.to_str().unwrap(), dest.to_str().unwrap()]);
     assert_eq!(code, 0, "xlsx import should succeed:\n{out}");
     assert!(
-        out.contains("\"files\":5"),
+        out.contains("5 cell file(s)"),
         "five per-cell files written (Sheet1: A1,A2,A3,B1; Sheet2: A1):\n{out}"
     );
 
@@ -973,20 +766,10 @@ fn import_an_unsupported_extension_is_a_validation_refusal() {
     let src = fx.path().join("data.csv");
     std::fs::write(&src, "a,b\n1,2\n").unwrap();
     let dest = fx.path().join("wb");
-    let (code, out) = run(&[
-        "import",
-        src.to_str().unwrap(),
-        dest.to_str().unwrap(),
-        "--format",
-        "json",
-    ]);
+    let (code, _) = run(&["import", src.to_str().unwrap(), dest.to_str().unwrap()]);
     assert_eq!(
         code, 3,
-        "an unsupported extension is a validation error (exit 3):\n{out}"
-    );
-    assert!(
-        out.contains("\"code\":\"validation_error\"") && out.contains("unsupported source format"),
-        "validation refusal naming the format:\n{out}"
+        "an unsupported extension is a validation error (exit 3)"
     );
 }
 
@@ -1067,7 +850,7 @@ fn tree_presents_every_authored_cell_and_name_and_excludes_cache() {
     assert!(out.contains("Days"), "the named range is present:\n{out}");
     assert!(out.contains("Rate"), "the named formula is present:\n{out}");
     assert!(
-        out.contains("-> Sheet1!A2:A5"),
+        out.contains("→ Sheet1!A2:A5"),
         "the symlinked range resolves to its target A1 ref:\n{out}"
     );
     // The tab itself.
@@ -1298,17 +1081,10 @@ fn tree_is_read_only_leaving_the_workbook_byte_identical() {
 }
 
 #[test]
-fn tree_has_no_json_serialization_form() {
-    // Text only — a structure view is not a serialization surface, so --format json is refused (never a
-    // second machine-readable form that would invite re-derivation).
+fn tree_rejects_the_removed_format_flag_as_an_unknown_flag() {
+    // Text is the sole output form; `--format` no longer exists, so `tree ... --format json` is a plain
+    // unknown-flag refusal (exit 2) — there is no second machine-readable form to re-derive from.
     let fx = tree_fixture("tree-nojson");
-    let (code, out) = run(&["tree", fx.path().to_str().unwrap(), "--format", "json"]);
-    assert_eq!(
-        code, 2,
-        "--format json is a bad-args refusal (exit 2):\n{out}"
-    );
-    assert!(
-        out.contains("text-only"),
-        "the refusal explains tree is text-only:\n{out}"
-    );
+    let (code, _) = run(&["tree", fx.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(code, 2, "`--format json` is now an unknown flag (exit 2)");
 }
