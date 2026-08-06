@@ -1,4 +1,4 @@
-# Concern: runs every mechanical gate on each push, across three OSes | Non-concern: publishing a release (plugin-release.yml), deploying the site (deploy-site.yml) | IO: (a push) -> per-job verdicts
+# Concern: runs every mechanical gate across three OSes | Non-concern: publishing a release (plugin-release.yml), deploying the site (deploy-site.yml) | IO: (a push or a manual run) -> per-job verdicts
 name: ci
 
 # The mechanical commit gate (.githooks/pre-commit + commit-msg), plus the checks that need a clean
@@ -9,6 +9,7 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch: {}
 
 env:
   CARGO_TERM_COLOR: always
