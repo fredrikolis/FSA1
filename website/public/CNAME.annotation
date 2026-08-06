@@ -1,0 +1,1 @@
+Concern: binds the custom domain fsa1.sh to the published site | Non-concern: the DNS records it needs, the deploy (deploy-site.yml) | IO: none

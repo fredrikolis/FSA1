@@ -1,26 +1,55 @@
+# Concern: publishes website/ to GitHub Pages | Non-concern: the page's content (website/src/ owns it), the plugin release (plugin-release.yml) | IO: (a push touching website/) -> a Pages deployment
+# The Pages source must be set to GitHub Actions, NOT a branch: a branch source can only publish the
+# repo root or /docs, and the site lives in website/ so the root stays a Rust workspace.
+# No generator is wired because the page needs none — it is one file with inline CSS and JS that
+# makes no external request. When one is chosen, its build lands in "Stage the site" and nothing
+# below that step changes.
 name: deploy-site
 
-# STUB — created during the FSA1 monorepo reorganization. It builds and publishes NOTHING.
-#
-# It is deliberately `workflow_dispatch`-only: no push trigger, so it can never fire on a merge and
-# quietly deploy an empty site. Wiring it up is blocked on choosing a static-site generator for
-# website/ (see website/README.md), which the rename deliberately did not decide.
-#
-# When that lands, this job gains: a build step, actions/upload-pages-artifact, and a deploy job
-# with `permissions: pages: write, id-token: write`. Until then it only reports that it is a stub,
-# so a curious `workflow_dispatch` run explains itself rather than looking broken.
-
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["website/**", ".github/workflows/deploy-site.yml"]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
+
+# A newer push waits rather than cancelling: a half-finished deploy would leave the live site on a
+# mix of two commits.
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
-  stub:
+  deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Report that no site build is wired yet
+      - uses: actions/checkout@v4
+
+      - name: Stage the site
         run: |
-          echo "deploy-site is a stub: website/ has no generator chosen yet."
-          echo "See website/README.md."
+          mkdir -p _site
+          cp -r website/src/. _site/
+          # Static assets served as-is. Annotation sidecars are repo metadata, never content, so
+          # they are dropped rather than published beside the page they describe.
+          cp -r website/public/. _site/
+          find _site -name '*.annotation' -delete
+          # A deploy missing either of these still LOOKS like a working site: without index.html
+          # Pages serves a directory listing, and without CNAME it silently drops the custom domain
+          # and moves to *.github.io. Both are checked because neither failure announces itself.
+          test -f _site/index.html
+          test -f _site/CNAME
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
