@@ -29,7 +29,7 @@ rendered value:
 2. **Drag-fill bodies were expanded to explicit grids.** Every range file whose body was a single
    drag-fill `=formula` was rewritten to the **explicit per-cell grid it denoted**: each cell holds
    its own offset formula (relative refs shifted with position, `$`-absolute refs pinned). E.g.
-   `Amortization/D2:D13` went from the single body `=B2*Inputs!$B$5` to twelve rows
+   `Amortization/D2-D13` went from the single body `=B2*Inputs!$B$5` to twelve rows
    `=B2*Inputs!$B$5` / `=B3*Inputs!$B$5` / … / `=B13*Inputs!$B$5`. Because each expanded cell
    evaluates its own formula exactly as the old loader would have offset it, **rendered values are
    unchanged** — proven by the render zero-divergence gate

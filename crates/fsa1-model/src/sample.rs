@@ -35,6 +35,28 @@ mod tests {
     use crate::workbook::Workbook;
     use fsa1_ast::Value;
 
+    /// The tutorial is the first thing a new user runs, so it has to be writable wherever they
+    /// are. The table is canonical `:` on every host, so this runs the same everywhere: each range
+    /// has a `-` spelling naming the same region, which is what a Windows run writes instead.
+    #[test]
+    fn every_tutorial_range_has_a_windows_legal_spelling() {
+        for (rel, _) in sample_workbook() {
+            let name = rel
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("a file name");
+            let here = crate::parse_filename(name).expect("the table is well-formed");
+            if here.declared_shape.rows == 1 && here.declared_shape.cols == 1 {
+                continue; // a single cell carries no separator to re-spell
+            }
+            let win = crate::reseparate_range_name(name, crate::RANGE_SEP_WINDOWS)
+                .expect("every range in the table has a Windows spelling");
+            assert!(!win.contains(':'), "{win} is not writable on Windows");
+            let there = crate::parse_filename(&win).expect("the re-spelling parses");
+            assert_eq!(there.region, here.region, "{name} and {win} differ");
+        }
+    }
+
     #[test]
     fn the_sample_workbook_loads_clean_and_renders_the_pinned_totals() {
         let base = std::env::temp_dir().join(format!(

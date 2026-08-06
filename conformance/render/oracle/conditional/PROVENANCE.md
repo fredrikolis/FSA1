@@ -8,7 +8,7 @@ tool against itself is forbidden. No spreadsheet engine, no FSA1 CLI, was involv
 ## Method
 
 `compute_oracle.py` (in this directory) transcribes the spend inputs verbatim from
-`Customers/B2:B13.range` and re-implements, from scratch, the two rules the sheet expresses:
+`Customers/B2-B13.range` and re-implements, from scratch, the two rules the sheet expresses:
 
 1. **Tier** — an independent reimplementation of
    `=IFERROR(IFS(B2>100000,"Gold",B2>50000,"Silver",TRUE,"Bronze"),"Bronze")`:

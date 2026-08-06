@@ -13,7 +13,7 @@ import os
 NA = "#N/A"  # sentinel matching FORMAT.md error-literal lexing
 
 # --- Inputs, transcribed by hand from the artifact literal blocks (NOT read via FSA1) ---
-# Products/A2:C7  (product_id, product_name, unit_price)
+# Products/A2-C7  (product_id, product_name, unit_price)
 products = {
     "P001": 2.50,
     "P002": 5.00,
@@ -23,7 +23,7 @@ products = {
     "P006": 0.40,
 }
 
-# Orders/A2:C11  (order_id, product_id, qty)
+# Orders/A2-C11  (order_id, product_id, qty)
 orders = [
     ("O1001", "P001", 4),
     ("O1002", "P003", 10),

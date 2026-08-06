@@ -28,7 +28,7 @@ import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONTACTS = os.path.normpath(os.path.join(
-    HERE, "..", "..", "artifacts", "text", "contacts-clean", "Contacts"))
+    HERE, "..", "..", "..", "encoding", "artifacts", "text", "contacts-clean", "Contacts"))
 
 FIRST_ROW = 2
 LAST_ROW = 13
@@ -75,8 +75,8 @@ def excel_mid(s, start, n):
 
 
 def main():
-    names = read_literal_column(os.path.join(CONTACTS, "A2:A13.range"))
-    emails = read_literal_column(os.path.join(CONTACTS, "B2:B13.range"))
+    names = read_literal_column(os.path.join(CONTACTS, "A2-A13"))
+    emails = read_literal_column(os.path.join(CONTACTS, "B2-B13"))
     n = LAST_ROW - FIRST_ROW + 1
     assert len(names) == n, f"expected {n} names, got {len(names)}: {names!r}"
     assert len(emails) == n, f"expected {n} emails, got {len(emails)}: {emails!r}"

@@ -1,7 +1,7 @@
 <!-- Concern: the expected reject verdict for a ragged TSV grid (unequal field counts per line) | Non-concern: the other illegal-forms cases | IO: output -->
 # EXPECTED — illegal-forms: ragged TSV grid
 
-**Fixture:** `Sheet/A1:C2`
+**Fixture:** `Sheet/A1-C2`
 **Rule under test:** SPEC.md GRID2 (the TSV deserializer) — a grid's rows must have equal field counts.
 
 ## Inputs
@@ -22,7 +22,7 @@ check.
 ## Expected diagnostic (verbatim)
 ```
 error[ragged-grid]: ragged TSV grid: row 2 has 2 field(s), expected 3 (#VALUE!-class)
-  A1:C2 (grid row 2 = file line 2)
+  A1-C2 (grid row 2 = file line 2)
 ```
 The refusal is located at file line 2 — the offending grid row. (With the whole file now the grid,
 grid row `n` is file line `n`; there is no annotation line to offset by, so this is one line earlier

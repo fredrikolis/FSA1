@@ -1,11 +1,11 @@
 <!-- Concern: the expected reject verdict for a grid that does not fill its declared closed range | Non-concern: overlap and illegal-forms (separate fixtures) | IO: output -->
 # EXPECTED — shape-mismatch → dimension error (GRID4)
 
-**Fixture:** `Grid/A1:C3`
+**Fixture:** `Grid/A1-C3`
 **Rule under test:** SPEC.md GRID4 (the grid fills its file's closed range exactly).
 
 ## Inputs
-- **Declared shape** (from filename `A1:C3`, FS2): `(R, C) = (3, 3)`.
+- **Declared shape** (from filename `A1-C3`, FS2): `(R, C) = (3, 3)`.
 - **Body** (TSV, GRID2): two lines of three fields each ⇒ a `2×3` grid.
 
 ## Verdict: **REJECT — located dimension error at load.**
@@ -16,8 +16,8 @@ refuses this **statically at load**.
 
 ## Expected diagnostic (verbatim)
 ```
-error[dimension-mismatch]: the grid is 2x3 but the file's range "A1:C3" declares 3x3: the grid must fill the closed range exactly (GRID4)
-  A1:C3
+error[dimension-mismatch]: the grid is 2x3 but the file's range "A1-C3" declares 3x3: the grid must fill the closed range exactly (GRID4)
+  A1-C3
 ```
 
 ## Why (citation)

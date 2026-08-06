@@ -18,13 +18,11 @@ permissions:
   contents: read
 
 jobs:
-  # fmt + clippy + the full test gate on the POSIX OSes FSA1's on-disk representation supports.
-  # windows-latest is DELIBERATELY excluded: a cell/range filename is its A1 range (FS2), e.g.
-  # `A1:E1` / `F2:F11`, and `:` is a reserved character in Windows filenames — so `git checkout`
-  # of the conformance corpus fails there before any test runs (macOS/APFS allows `:` at the POSIX
-  # layer, so it stays). Native Windows support would need a Windows-safe range delimiter — a spec
-  # representation decision, tracked, not a CI setting. fail-fast: false so one OS still reports the
-  # other.
+  # fmt + clippy + the full test gate. windows-latest is still excluded, but NOT for the reason it
+  # used to be: no tracked filename carries `:` any more, so a Windows `git checkout` no longer
+  # fails on the corpus. What remains is that tests still write `:` names of their own, so turning
+  # the row on is a change with work behind it, not a one-line edit. fail-fast: false so one OS
+  # still reports the other.
   test:
     strategy:
       fail-fast: false

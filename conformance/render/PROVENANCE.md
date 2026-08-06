@@ -76,7 +76,7 @@ recorded as standing FACTS in the anchor.
 
 **That standing class is now RESOLVED — by aligning the corpus to VAL1, never by adding drag-fill.**
 Each derived column is now an **explicit per-cell grid**: the range file spells out one formula per
-row with its own literal references (e.g. `conformance/encoding/artifacts/lookup-join/Orders/D2:D11`
+row with its own literal references (e.g. `conformance/encoding/artifacts/lookup-join/Orders/D2-D11`
 writes `=XLOOKUP(B2,Products!$A$2:$A$7,Products!$C$2:$C$7)` through `=XLOOKUP(B11,…)` in full), which
 is exactly what FSA1's own-content rule evaluates. The harness in this directory now enforces a
 **zero-divergence** gate and passes **542/542** with `Diverge = 0` — the previously-diverging cells

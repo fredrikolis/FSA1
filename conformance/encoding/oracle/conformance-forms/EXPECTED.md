@@ -19,7 +19,7 @@ trivially preserved.
 
 | Fixture | File | Declared (R×C) | Verdict | Diagnostic code | SPEC.md |
 |---|---|---|---|---|---|
-| degenerate-1×1-range | `Cell/A1:A1` | 1×1 (rejected at filename) | **REJECT** | `degenerate-range` | FS2 |
+| degenerate-1×1-range | `Cell/A1-A1` | 1×1 (rejected at filename) | **REJECT** | `degenerate-range` | FS2 |
 
 ## The degenerate-range edge case
 `A1:A1` is a `left:right` spelling of a single cell. A closed range's endpoints must differ; a 1×1

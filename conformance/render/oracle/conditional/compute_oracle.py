@@ -3,8 +3,8 @@
 """Independently compute the rendered values for artifacts/conditional/customer_tiers.
 
 Ground truth is derived here in plain python, NOT by FSA1 (oracle-input purity).
-The spend inputs are transcribed verbatim from Customers/B2:B13.range; the tier rule and
-the count rule mirror the formulas in Customers/C2:C13.range and Customers/F2:F4.range but
+The spend inputs are transcribed verbatim from Customers/B2-B13.range; the tier rule and
+the count rule mirror the formulas in Customers/C2-C13.range and Customers/F2-F4.range but
 are re-implemented independently below.
 """
 import csv
@@ -15,7 +15,7 @@ import os
 # Write outputs next to THIS script (portable: no cwd dependence, no hardcoded paths).
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# --- inputs transcribed from Customers/A2:A13.range and Customers/B2:B13.range ---
+# --- inputs transcribed from Customers/A2-A13.range and Customers/B2-B13.range ---
 # ERROR sentinel models the #VALUE! error literal in B13.
 class Err:
     def __init__(self, kind): self.kind = kind

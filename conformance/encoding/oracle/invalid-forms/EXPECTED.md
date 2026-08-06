@@ -17,10 +17,10 @@ REJECT** — the ruler passes iff FSA1 refuses each fixture with the cited reaso
 
 | Fixture | File(s) | Defect (the ONE rule under test) | Diagnostic code | Diagnostic names | SPEC.md |
 |---|---|---|---|---|---|
-| shape-mismatch | `Grid/A1:C3` | `2×3` grid does not fill the `3×3` range | `dimension-mismatch` | file, grid 2×3, declared 3×3 | GRID4 |
-| overlap | `Orders/A1:C3` + `Orders/B2:D4` | two files claim intersecting ranges | `overlap` | **both files** + contested `B2:C3` | model overlap rule |
-| illegal-name | `Sheet/G8:A3` | non-canonical spelling (bottom-right:top-left) | `non-canonical-range` | file; fix → `A3:G8` | FS2 |
-| ragged-block | `Sheet/A1:C2` | ragged TSV grid (3 fields then 2) | `ragged-grid` | file; offending row | GRID2 |
+| shape-mismatch | `Grid/A1-C3` | `2×3` grid does not fill the `3×3` range | `dimension-mismatch` | file, grid 2×3, declared 3×3 | GRID4 |
+| overlap | `Orders/A1-C3` + `Orders/B2-D4` | two files claim intersecting ranges | `overlap` | **both files** + contested `B2:C3` | model overlap rule |
+| illegal-name | `Sheet/G8-A3` | non-canonical spelling (bottom-right:top-left) | `non-canonical-range` | file; fix → `A3-G8` | FS2 |
+| ragged-block | `Sheet/A1-C2` | ragged TSV grid (3 fields then 2) | `ragged-grid` | file; offending row | GRID2 |
 | stray-dollar | `Sheet/$A$1` | `$` absolute marker in a filename | `dollar-in-filename` | file; fix → `A1` | FS2 |
 
 ## Notes on isolation (each fixture triggers exactly ONE rule)

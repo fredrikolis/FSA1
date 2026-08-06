@@ -20,7 +20,7 @@ workbook would drift, and the tests pin that one. This is a different, smaller s
 is to be legible on GitHub without running anything:
 
 ```
-Budget/A1:C1   Category<TAB>Budget<TAB>Actual
+Budget/A1-C1   Category<TAB>Budget<TAB>Actual
 Budget/B6      =SUM(B2:B5)
 Summary/B4     =ROUND(Budget!C6-Budget!B6,2)
 ```
