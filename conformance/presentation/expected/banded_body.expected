@@ -1,0 +1,18 @@
+# banded_body.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 05.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+#
+# Derived by hand: the six rows are dense, so occupancy cuts ONE block A1:B6. Rows 2, 4 and 6
+# carry the shade and rows 1, 3 and 5 carry nothing, so the modal background is UNSET and no `td`
+# rule is written. The shaded lines are {2,4,6}, which is exactly the class of 1..=6 congruent to
+# 0 modulo 2 -- not merely inside it -- so the three row rules collapse to the one periodic rule.
+file: Report/A1:B6
+|North	10
+|South	20
+|East	30
+|West	40
+|Inland	50
+|Coast	60
+|@scope {
+|  tr:nth-child(2n) td { background-color: #f2f2f2 }
+|}

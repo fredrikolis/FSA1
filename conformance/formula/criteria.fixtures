@@ -1,0 +1,401 @@
+# Criteria-aggregation family: SUMIF SUMIFS COUNTIF COUNTIFS AVERAGEIF AVERAGEIFS MINIFS MAXIFS.
+# EXPECTED values are derived INDEPENDENTLY of FSA1 (a hand/python model of Excel's criteria
+# mini-language + the *IF(S) reduction rules — see PROVENANCE.md), never by running FSA1.
+#
+# The criteria mini-language pinned here: comparison operators (">10", "<=5", "<>x"); case-insensitive
+# text match with wildcards (`*` any run, `?` one char, `~` escape); `">"&ref` CONCATENATED criteria
+# (the `&` is folded by the evaluator before the string reaches the criteria parser). The
+# range-conformance call: every criteria range and the value range must share the SAME shape — a
+# mismatch is a STATIC #VALUE! (FSA1's static-conformance stance, not Excel's legacy reshape).
+# Excel result-shape calls also pinned: AVERAGEIF/AVERAGEIFS over no match = #DIV/0!; MINIFS/MAXIFS
+# over no match = 0; COUNTIF counts a matching cell of ANY type; summing forms take only numbers.
+
+# ---- SUMIF(range, criteria, [sum_range]) ----
+
+[sumif-numeric-gt]
+funcs: SUMIF
+cell A1: 5
+cell A2: 15
+cell A3: 25
+cell A4: 10
+cell A5: 30
+formula: =SUMIF(A1:A5,">10")
+expect: 70
+
+[sumif-with-sum-range-text-key]
+funcs: SUMIF
+cell A1: "apple"
+cell A2: "banana"
+cell A3: "apple"
+cell A4: "cherry"
+cell B1: 10
+cell B2: 20
+cell B3: 30
+cell B4: 40
+formula: =SUMIF(A1:A4,"apple",B1:B4)
+expect: 40
+
+[sumif-wildcard-question-mark]
+funcs: SUMIF
+cell A1: "cat"
+cell A2: "car"
+cell A3: "dog"
+cell B1: 1
+cell B2: 2
+cell B3: 3
+formula: =SUMIF(A1:A3,"ca?",B1:B3)
+expect: 3
+
+[sumif-nonconforming-sum-range-is-value-error]
+funcs: SUMIF
+note: sum_range (2x1) does not match range (3x1) — static #VALUE! (conformance), not a reshape.
+cell A1: 1
+cell A2: 2
+cell A3: 3
+cell B1: 10
+cell B2: 20
+formula: =SUMIF(A1:A3,">0",B1:B2)
+expect: #VALUE!
+
+# ---- SUMIFS(sum_range, criteria_range1, criteria1, …) ----
+
+[sumifs-two-criteria]
+funcs: SUMIFS
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell B1: "x"
+cell B2: "x"
+cell B3: "y"
+cell B4: "x"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =SUMIFS(C1:C4,A1:A4,"N",B1:B4,"x")
+expect: 500
+
+[sumifs-numeric-and-text-criteria]
+funcs: SUMIFS
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =SUMIFS(C1:C4,C1:C4,">=200",A1:A4,"N")
+expect: 700
+
+[sumifs-no-match-is-zero]
+funcs: SUMIFS
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =SUMIFS(C1:C4,A1:A4,"W")
+expect: 0
+
+[sumifs-nonconforming-ranges-is-value-error]
+funcs: SUMIFS
+note: value range C (4x1) does not conform to criteria range A1:A3 (3x1) — static #VALUE!.
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =SUMIFS(C1:C4,A1:A3,"N")
+expect: #VALUE!
+
+# ---- COUNTIF(range, criteria) ----
+
+[countif-numeric-gt]
+funcs: COUNTIF
+cell A1: 5
+cell A2: 15
+cell A3: 25
+cell A4: 10
+cell A5: 30
+formula: =COUNTIF(A1:A5,">10")
+expect: 3
+
+[countif-text-wildcard-star]
+funcs: COUNTIF
+cell A1: "apple"
+cell A2: "apricot"
+cell A3: "banana"
+cell A4: "avocado"
+formula: =COUNTIF(A1:A4,"a*")
+expect: 3
+
+[countif-not-equal-text]
+funcs: COUNTIF
+cell A1: "apple"
+cell A2: "apricot"
+cell A3: "banana"
+cell A4: "avocado"
+formula: =COUNTIF(A1:A4,"<>banana")
+expect: 3
+
+[countif-concatenated-criteria]
+funcs: COUNTIF
+note: `">"&C1` folds to the string ">10" before the criteria parser sees it.
+cell A1: 5
+cell A2: 15
+cell A3: 25
+cell A4: 10
+cell A5: 30
+cell C1: 10
+formula: =COUNTIF(A1:A5,">"&C1)
+expect: 3
+
+[countif-error-criterion-propagates]
+funcs: COUNTIF
+note: the criterion itself evaluates to an error — it propagates (error path).
+cell A1: 1
+cell A2: 2
+cell A3: 3
+formula: =COUNTIF(A1:A3,1/0)
+expect: #DIV/0!
+
+# ---- COUNTIFS(criteria_range1, criteria1, …) ----
+
+[countifs-two-criteria]
+funcs: COUNTIFS
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell B1: "x"
+cell B2: "x"
+cell B3: "y"
+cell B4: "x"
+formula: =COUNTIFS(A1:A4,"N",B1:B4,"x")
+expect: 2
+
+[countifs-single-numeric]
+funcs: COUNTIFS
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =COUNTIFS(C1:C4,">=200")
+expect: 3
+
+[countifs-nonconforming-ranges-is-value-error]
+funcs: COUNTIFS
+note: criteria ranges A1:A4 (4x1) and B1:B3 (3x1) disagree — static #VALUE! (error path).
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell B1: "x"
+cell B2: "x"
+cell B3: "y"
+formula: =COUNTIFS(A1:A4,"N",B1:B3,"x")
+expect: #VALUE!
+
+# ---- AVERAGEIF(range, criteria, [average_range]) ----
+
+[averageif-numeric-gt]
+funcs: AVERAGEIF
+cell A1: 5
+cell A2: 20
+cell A3: 30
+cell A4: 10
+cell A5: 40
+formula: =AVERAGEIF(A1:A5,">10")
+expect: 30
+
+[averageif-with-average-range]
+funcs: AVERAGEIF
+cell A1: "x"
+cell A2: "y"
+cell A3: "x"
+cell A4: "x"
+cell B1: 10
+cell B2: 20
+cell B3: 30
+cell B4: 50
+formula: =AVERAGEIF(A1:A4,"x",B1:B4)
+expect: 30
+
+[averageif-ignores-nonnumeric-in-average-range]
+funcs: AVERAGEIF
+note: a matching cell that is text is excluded from the mean (edge case).
+cell A1: "a"
+cell A2: "a"
+cell A3: "a"
+cell B1: 10
+cell B2: "x"
+cell B3: 20
+formula: =AVERAGEIF(A1:A3,"a",B1:B3)
+expect: 15
+
+[averageif-no-match-is-div0]
+funcs: AVERAGEIF
+note: no cell matches — the mean of nothing is #DIV/0! (error path).
+cell A1: 5
+cell A2: 20
+cell A3: 30
+cell A4: 10
+cell A5: 40
+formula: =AVERAGEIF(A1:A5,">1000")
+expect: #DIV/0!
+
+# ---- AVERAGEIFS(average_range, criteria_range1, criteria1, …) ----
+
+[averageifs-two-criteria]
+funcs: AVERAGEIFS
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell B1: "x"
+cell B2: "x"
+cell B3: "y"
+cell B4: "x"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =AVERAGEIFS(C1:C4,A1:A4,"N",B1:B4,"x")
+expect: 250
+
+[averageifs-no-match-is-div0]
+funcs: AVERAGEIFS
+note: no match — #DIV/0! (error path).
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =AVERAGEIFS(C1:C4,A1:A4,"W")
+expect: #DIV/0!
+
+# ---- MINIFS(min_range, criteria_range1, criteria1, …) ----
+
+[minifs-basic]
+funcs: MINIFS
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =MINIFS(C1:C4,A1:A4,"N")
+expect: 100
+
+[minifs-no-match-is-zero]
+funcs: MINIFS
+note: MINIFS over an empty match is 0 (Excel), NOT #NUM! and NOT an error (edge case).
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =MINIFS(C1:C4,A1:A4,"W")
+expect: 0
+
+# ---- MAXIFS(max_range, criteria_range1, criteria1, …) ----
+
+[maxifs-basic]
+funcs: MAXIFS
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =MAXIFS(C1:C4,A1:A4,"N")
+expect: 400
+
+[maxifs-two-criteria]
+funcs: MAXIFS
+note: the max_range doubles as a criteria range (self-referential criterion, edge case).
+cell A1: "N"
+cell A2: "S"
+cell A3: "N"
+cell A4: "N"
+cell C1: 100
+cell C2: 200
+cell C3: 300
+cell C4: 400
+formula: =MAXIFS(C1:C4,A1:A4,"N",C1:C4,"<400")
+expect: 300
+
+# ---- Text/wildcard criteria over a MIXED (number + text) range: Excel matches TEXT cells ONLY ----
+# Excel's *IF(S) wildcard/text criteria select TEXT cells exclusively — a number/bool cell is NEVER
+# coerced to its text form and matched by a text pattern. It only satisfies `<>` (it is "not equal"
+# to any text pattern). Expected values hand-derived from that rule (see PROVENANCE.md). These pin the
+# text-only wildcard semantics over a MIXED range — the exact seam a text-only rule governs.
+
+[countif-star-over-mixed-counts-text-only]
+funcs: COUNTIF
+note: `*` matches any TEXT cell — the numbers 5 and 10 are not text, so only apple/pear count.
+cell A1: "apple"
+cell A2: 5
+cell A3: 10
+cell A4: "pear"
+formula: =COUNTIF(A1:A4,"*")
+expect: 2
+
+[countif-prefix-wildcard-over-mixed-number-and-text]
+funcs: COUNTIF
+note: "1*" matches the TEXT "1x"; the numbers 15 and 25 never match a text pattern.
+cell A1: 15
+cell A2: 25
+cell A3: "1x"
+formula: =COUNTIF(A1:A3,"1*")
+expect: 1
+
+[countif-question-mark-over-mixed-counts-text-only]
+funcs: COUNTIF
+note: "?" matches a one-char TEXT cell ("a"); the number 5 is not text, so it does not match.
+cell A1: "a"
+cell A2: 5
+cell A3: "ab"
+formula: =COUNTIF(A1:A3,"?")
+expect: 1
+
+[countif-not-equal-text-over-mixed-counts-numbers]
+funcs: COUNTIF
+note: `<>apple` selects cells not equal to the text "apple" — the numbers 5/10 (not equal to any text) AND the non-matching text "pear"; only "apple" is excluded.
+cell A1: "apple"
+cell A2: 5
+cell A3: 10
+cell A4: "pear"
+formula: =COUNTIF(A1:A4,"<>apple")
+expect: 3
+
+[sumif-wildcard-over-mixed-key-range]
+funcs: SUMIF
+note: a text wildcard key range mixing text and numbers — "a*" matches the text keys apple/apricot only (numeric keys 5/10 never match a text pattern), summing B1 and B3.
+cell A1: "apple"
+cell A2: 5
+cell A3: "apricot"
+cell A4: 10
+cell B1: 1
+cell B2: 2
+cell B3: 3
+cell B4: 4
+formula: =SUMIF(A1:A4,"a*",B1:B4)
+expect: 4

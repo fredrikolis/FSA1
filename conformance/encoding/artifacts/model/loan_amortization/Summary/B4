@@ -1,0 +1,1 @@
+=COUNTIF(Amortization!B2:B13,">0")

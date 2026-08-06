@@ -1,0 +1,7 @@
+[
+  { "name": "arith_precedence", "category": "arithmetic", "inputs": {}, "formula": "=2+3*4-1" },
+  { "name": "arith_unary_power", "category": "arithmetic", "inputs": {}, "formula": "=-2^2" },
+  { "name": "arith_percent", "category": "arithmetic", "inputs": {}, "formula": "=10+5%" },
+  { "name": "arith_parens", "category": "arithmetic", "inputs": {}, "formula": "=(2+3)*4/2" },
+  { "name": "arith_concat_amp", "category": "arithmetic", "inputs": {}, "formula": "=\"a\"&\"b\"&1" }
+]

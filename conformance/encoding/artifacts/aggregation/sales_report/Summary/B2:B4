@@ -1,0 +1,3 @@
+=SUMIFS(Sales!E$2:E$13, Sales!B$2:B$13, A2)
+=SUMIFS(Sales!E$2:E$13, Sales!B$2:B$13, A3)
+=SUMIFS(Sales!E$2:E$13, Sales!B$2:B$13, A4)

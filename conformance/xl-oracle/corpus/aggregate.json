@@ -1,0 +1,7 @@
+[
+  { "name": "sum_range", "category": "aggregate", "inputs": {"A1":3,"A2":1,"A3":4,"A4":1,"A5":5}, "formula": "=SUM(A1:A5)" },
+  { "name": "average_range", "category": "aggregate", "inputs": {"A1":3,"A2":1,"A3":4,"A4":1,"A5":5}, "formula": "=AVERAGE(A1:A5)" },
+  { "name": "if_basic", "category": "aggregate", "inputs": {"A1":8}, "formula": "=IF(A1>5,\"big\",\"small\")" },
+  { "name": "ifs_basic", "category": "aggregate", "inputs": {"A1":8}, "formula": "=IFS(A1>10,\"hi\",A1>5,\"mid\",TRUE,\"lo\")" },
+  { "name": "round_basic", "category": "aggregate", "inputs": {}, "formula": "=ROUND(3.14159,2)" }
+]

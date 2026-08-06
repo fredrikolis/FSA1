@@ -1,0 +1,46 @@
+# Concern: the comment-budget + file-size thresholds cargo-lint-extra denies on | Non-concern: the annotation charter rules (.annotated-tree.toml owns those), the judgment standard | IO: none
+#
+# Thresholds are VERBATIM from upstream and are not tuned to this repo. The bound is the detector; a
+# bigger number only hides what it found. Never raise one to pass — see docs/comment-standards.md.
+
+[global]
+exclude = ["target"]
+
+[rules.line-length]
+level = "deny"
+soft_limit = 300
+hard_limit = 300
+url_exception = true
+
+[rules.file-length]
+level = "deny"
+soft_limit = 2000
+hard_limit = 2000
+
+[rules.inline-comments]        # function bodies only; never counts `///`
+level = "deny"
+max_ratio = 0.20
+max_consecutive = 1
+
+[rules.file-comments]          # whole file, including doc comments
+level = "deny"
+max_ratio = 0.30
+count_doc_comments = true
+max_consecutive = 1
+max_doc_consecutive = 4
+
+# Off deliberately, not by omission: performance/style opinions this repo does not adopt.
+[rules.string-alloc-in-loop]
+level = "allow"
+[rules.clone-density]
+level = "allow"
+[rules.verbose-result-handling]
+level = "allow"
+[rules.redundant-comments]
+level = "allow"
+
+# On at warn: real, but a separate backlog from comment volume. Not folded into a sweep.
+[rules.glob-imports]
+level = "warn"
+[rules.todo-comments]
+level = "warn"

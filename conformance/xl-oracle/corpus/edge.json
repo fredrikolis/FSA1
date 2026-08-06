@@ -1,0 +1,17 @@
+[
+  { "name": "power_left_assoc", "category": "edge", "inputs": {}, "formula": "=2^3^2" },
+  { "name": "mod_negative", "category": "edge", "inputs": {}, "formula": "=MOD(-7,3)" },
+  { "name": "round_half_away", "category": "edge", "inputs": {}, "formula": "=ROUND(2.5,0)" },
+  { "name": "round_half_away_neg", "category": "edge", "inputs": {}, "formula": "=ROUND(-2.5,0)" },
+  { "name": "text_coercion_add", "category": "edge", "inputs": {}, "formula": "=\"3\"+2" },
+  { "name": "int_floor_negative", "category": "edge", "inputs": {}, "formula": "=INT(-2.5)" },
+  { "name": "concat_number_text", "category": "edge", "inputs": {}, "formula": "=1/4&\"\"" },
+  {
+    "name": "sumproduct_bool_coerce",
+    "category": "edge",
+    "inputs": {"A1":1,"A2":2,"A3":3},
+    "formula": "=SUMPRODUCT(--(A1:A3>1))",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 does not array-broadcast a range comparison through unary minus: A1:A3>1 collapses to scalar FALSE, so --(A1:A3>1) yields 0 (Excel & FSA1: 2). See KNOWN-LIB-GAPS.md."
+  }
+]

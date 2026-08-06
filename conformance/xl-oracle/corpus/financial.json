@@ -1,0 +1,21 @@
+[
+  { "name": "pmt_loan", "category": "financial", "inputs": {}, "formula": "=PMT(0.05/12,60,-20000)", "tol": 1e-6 },
+  { "name": "npv_stream", "category": "financial", "inputs": {"A1":100,"A2":200,"A3":300}, "formula": "=NPV(0.1,A1:A3)", "tol": 1e-6 },
+  { "name": "irr_stream", "category": "financial", "inputs": {"A1":-1000,"A2":500,"A3":600}, "formula": "=IRR(A1:A3)", "tol": 1e-6 },
+  { "name": "xirr_dated", "category": "financial", "inputs": {"A1":-1000,"A2":500,"A3":600,"B1":43831,"B2":44013,"B3":44197}, "formula": "=XIRR(A1:A3,B1:B3)", "tol": 1e-5 },
+  { "name": "fv_savings", "category": "financial", "inputs": {}, "formula": "=FV(0.05/12,60,-200)", "tol": 1e-6 },
+  { "name": "pv_annuity", "category": "financial", "inputs": {}, "formula": "=PV(0.05/12,60,-200)", "tol": 1e-6 },
+  { "name": "mirr_stream", "category": "financial", "inputs": {"A1":-1000,"A2":300,"A3":400,"A4":500}, "formula": "=MIRR(A1:A4,0.1,0.12)", "tol": 1e-6 },
+  { "name": "cumipmt_year1", "category": "financial", "inputs": {}, "formula": "=CUMIPMT(0.05/12,60,20000,1,12,0)", "tol": 1e-6 },
+  { "name": "cumprinc_year1", "category": "financial", "inputs": {}, "formula": "=CUMPRINC(0.05/12,60,20000,1,12,0)", "tol": 1e-6 },
+  { "name": "sln_basic", "category": "financial", "inputs": {}, "formula": "=SLN(10000,1000,5)", "tol": 1e-6 },
+  { "name": "syd_period2", "category": "financial", "inputs": {}, "formula": "=SYD(10000,1000,5,2)", "tol": 1e-6 },
+  { "name": "db_period2", "category": "financial", "inputs": {}, "formula": "=DB(10000,1000,5,2)", "tol": 1e-6 },
+  { "name": "db_partial_month", "category": "financial", "inputs": {}, "formula": "=DB(10000,1000,5,6,6)", "tol": 1e-6 },
+  { "name": "ddb_period2", "category": "financial", "inputs": {}, "formula": "=DDB(10000,1000,5,2)", "tol": 1e-6 },
+  { "name": "ddb_fractional", "category": "financial", "inputs": {}, "formula": "=DDB(10000,1000,5,2.5)", "tol": 1e-6 },
+  { "name": "effect_quarterly", "category": "financial", "inputs": {}, "formula": "=EFFECT(0.0525,4)", "tol": 1e-6 },
+  { "name": "nominal_quarterly", "category": "financial", "inputs": {}, "formula": "=NOMINAL(0.053543,4)", "tol": 1e-6 },
+  { "name": "pduration_double", "category": "financial", "inputs": {}, "formula": "=PDURATION(0.05,1000,2000)", "tol": 1e-6 },
+  { "name": "rri_growth", "category": "financial", "inputs": {}, "formula": "=RRI(96,10000,11000)", "tol": 1e-6 }
+]

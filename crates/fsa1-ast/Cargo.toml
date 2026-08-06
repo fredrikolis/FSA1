@@ -1,0 +1,8 @@
+# Concern: declares the package and NO dependencies at all | Non-concern: the deny edges that keep it a leaf (.annotated-tree.toml) | IO: none
+[package]
+name = "fsa1-ast"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]

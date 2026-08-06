@@ -1,0 +1,203 @@
+# v1 date/time batch: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW.
+#
+# EPOCH: the Excel 1900 date-serial system, WITH Excel's 1900 leap-year bug replicated (serial 60 =
+# the fictional 1900-02-29; serials >= 61 shift back one day, so 44927 = 2023-01-01). The serial<->date
+# maps are single-sourced: the forward `serial_to_ymd` in func::text (TEXT's date render needs it), its
+# inverse `serial_from_ymd` in func/date.rs. TODAY/NOW are VOLATILE and read the
+# resolver's INJECTABLE clock, PINNED in conformance to 2023-01-01T12:00:00 = serial 44927.5
+# (fsa1_ast::PINNED_NOW_SERIAL) so every fixture is reproducible.
+#
+# EXPECTED values are derived INDEPENDENTLY of FSA1 by a standalone python3 model of the Excel
+# date semantics (proleptic-Gregorian via date.toordinal(), Excel serial = toordinal - 693594 for
+# dates on/after 1900-03-01; cross-checked against the well-known anchor 44927 = 2023-01-01) — NEVER
+# by running FSA1 (see PROVENANCE.md).
+#
+# python3 model output (authoring run):
+#   DATE(2023,1,1)=44927 · DATE(2008,14,2)=39846 · DATE(108,1,2)=39449 · DATE(2023,3,0)=44985
+#   DATE(10000,1,1)=#NUM! · DATE(2020,1,31)=43861 · DATE(2020,1,1)=43831 · DATE(2023,6,1)=45078
+#   serial 44927 -> (2023,1,1) · serial 44957 -> (2023,1,31) · serial 60 -> phantom 1900-02-29
+#   YEAR(44927)=2023 · MONTH(44927)=1 · DAY(44957)=31 · YEAR(60)=1900 · MONTH(60)=2 · DAY(60)=29
+#   EDATE(44927,1)=44958 (2023-02-01) · EDATE(43861,1)=43890 (2020-02-29, clamped) ·
+#   EDATE(44927,-2)=44866 (2022-11-01)
+#   DATEDIF(44927,44957,"D")=30 · DATEDIF(43831,45078,"Y")=3 · DATEDIF(43831,45078,"M")=41
+#   DATEDIF(43845,43910,"MD")=5 · DATEDIF(43845,45097,"YM")=5 · DATEDIF(43845,45005,"YD")=65
+#   DATEDIF(44957,44927,"D")=#NUM! (start>end) · DATEDIF(44927,44957,"Q")=#NUM! (bad unit)
+#   TODAY()=44927 (floor 44927.5) · NOW()=44927.5 · NOW()-TODAY()=0.5
+#   (serials for the DATEDIF fixtures: DATE(2020,1,1)=43831, DATE(2023,6,1)=45078,
+#    DATE(2020,1,15)=43845, DATE(2020,3,20)=43910, DATE(2023,6,20)=45097, DATE(2023,3,20)=45005)
+#
+# The Excel-semantics calls pinned here:
+#   * DATE truncates its args toward zero and NORMALIZES an out-of-range month/day (roll-over), folding
+#     a year 0..=1899 by +1900; a year outside 0..=9999 or a result outside [1,2958465] is #NUM!.
+#   * YEAR/MONTH/DAY floor the serial and read it through the leap-bug-faithful mapping (serial 60 =
+#     1900-02-29); a serial < 1 is #NUM!.
+#   * EDATE adds whole months and CLAMPS the day to the target month's last day.
+#   * DATEDIF "Y"/"M"/"D" are complete years/months/days; "MD"/"YM"/"YD" are the remainders; the unit
+#     folds case; start>end and an unknown unit are #NUM!.
+#   * TODAY floors the pinned clock to an integer serial; NOW keeps the time-of-day fraction.
+
+# ---- DATE(year, month, day) ----
+
+[date-basic]
+funcs: DATE
+formula: =DATE(2023, 1, 1)
+expect: 44927
+
+[date-normalizes-month-rollover]
+funcs: DATE
+formula: =DATE(2008, 14, 2)
+expect: 39846
+
+[date-day-zero-rolls-back]
+funcs: DATE
+formula: =DATE(2023, 3, 0)
+expect: 44985
+
+[date-two-digit-year-rule]
+funcs: DATE
+formula: =DATE(108, 1, 2)
+expect: 39449
+
+[date-year-past-9999-is-num-error]
+funcs: DATE
+formula: =DATE(10000, 1, 1)
+expect: #NUM!
+
+# ---- YEAR / MONTH / DAY (read a serial) ----
+
+[year-basic]
+funcs: YEAR
+formula: =YEAR(44927)
+expect: 2023
+
+[year-leap-bug-phantom]
+funcs: YEAR
+formula: =YEAR(60)
+expect: 1900
+
+[year-before-epoch-is-num-error]
+funcs: YEAR
+formula: =YEAR(0)
+expect: #NUM!
+
+[month-basic]
+funcs: MONTH
+formula: =MONTH(44927)
+expect: 1
+
+[month-leap-bug-phantom]
+funcs: MONTH
+formula: =MONTH(60)
+expect: 2
+
+[month-of-a-cell-serial]
+funcs: MONTH
+cell A1: 45078
+formula: =MONTH(A1)
+expect: 6
+
+[day-end-of-month]
+funcs: DAY
+formula: =DAY(44957)
+expect: 31
+
+[day-leap-bug-phantom]
+funcs: DAY
+formula: =DAY(60)
+expect: 29
+
+[day-non-numeric-is-value-error]
+funcs: DAY
+formula: =DAY("nope")
+expect: #VALUE!
+
+# ---- EDATE(start_date, months) ----
+
+[edate-one-month-forward]
+funcs: EDATE
+formula: =EDATE(44927, 1)
+expect: 44958
+
+[edate-clamps-to-end-of-month]
+funcs: EDATE
+formula: =EDATE(43861, 1)
+expect: 43890
+
+[edate-negative-months]
+funcs: EDATE
+formula: =EDATE(44927, -2)
+expect: 44866
+
+[edate-non-numeric-start-is-value-error]
+funcs: EDATE
+formula: =EDATE("x", 1)
+expect: #VALUE!
+
+# ---- DATEDIF(start_date, end_date, unit) ----
+
+[datedif-days]
+funcs: DATEDIF
+formula: =DATEDIF(44927, 44957, "D")
+expect: 30
+
+[datedif-complete-years]
+funcs: DATEDIF
+formula: =DATEDIF(43831, 45078, "Y")
+expect: 3
+
+[datedif-complete-months]
+funcs: DATEDIF
+formula: =DATEDIF(43831, 45078, "M")
+expect: 41
+
+[datedif-md-day-remainder]
+funcs: DATEDIF
+formula: =DATEDIF(43845, 43910, "MD")
+expect: 5
+
+[datedif-ym-month-remainder]
+funcs: DATEDIF
+formula: =DATEDIF(43845, 45097, "YM")
+expect: 5
+
+[datedif-yd-day-of-year-remainder]
+funcs: DATEDIF
+formula: =DATEDIF(43845, 45005, "YD")
+expect: 65
+
+[datedif-unit-folds-case]
+funcs: DATEDIF
+formula: =DATEDIF(44927, 44957, "d")
+expect: 30
+
+[datedif-start-after-end-is-num-error]
+funcs: DATEDIF
+formula: =DATEDIF(44957, 44927, "D")
+expect: #NUM!
+
+[datedif-unknown-unit-is-num-error]
+funcs: DATEDIF
+formula: =DATEDIF(44927, 44957, "Q")
+expect: #NUM!
+
+# ---- TODAY() / NOW() — VOLATILE, reading the PINNED clock (44927.5 = 2023-01-01T12:00) ----
+
+[today-pinned]
+funcs: TODAY
+formula: =TODAY()
+expect: 44927
+
+[today-is-a-number-usable-in-arithmetic]
+funcs: TODAY
+formula: =TODAY()+1
+expect: 44928
+
+[now-pinned]
+funcs: NOW
+formula: =NOW()
+expect: 44927.5
+
+[now-minus-today-is-the-time-fraction]
+funcs: NOW, TODAY
+formula: =NOW()-TODAY()
+expect: 0.5

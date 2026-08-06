@@ -1,0 +1,81 @@
+# Concern: cross-builds fsa1-cli for every host it runs on and attaches them to a Release | Non-concern: picking the asset a machine needs (bin/fsa1-cli) | IO: (a v* tag) -> release assets
+# The launcher downloads by asset name, so a Release is what makes the plugin work on a machine with
+# no Rust toolchain. Built with the toolchain pinned in rust-toolchain.toml.
+name: plugin-release
+
+on:
+  push:
+    tags: ["v*"]           # e.g. git tag v0.1.0 && git push --tags
+  workflow_dispatch: {}    # or run manually from the Actions tab
+
+permissions:
+  contents: write          # needed to create/update the Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: fsa1-cli-linux-x86_64
+            ext: ""
+          # The launcher resolves linux-aarch64 too (Apple-silicon containers, ARM cloud sandboxes);
+          # without this asset those hosts fall all the way through to building from source.
+          - os: ubuntu-24.04-arm
+            asset: fsa1-cli-linux-aarch64
+            ext: ""
+          - os: macos-13          # Intel runner
+            asset: fsa1-cli-macos-x86_64
+            ext: ""
+          - os: macos-14          # Apple-silicon runner
+            asset: fsa1-cli-macos-aarch64
+            ext: ""
+          - os: windows-latest
+            asset: fsa1-cli-windows-x86_64.exe
+            ext: ".exe"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs exactly the toolchain in rust-toolchain.toml (channel is honored by rustup).
+      - name: Install Rust
+        run: rustup show
+
+      - name: Build fsa1-cli (release)
+        run: cargo build --release -p fsa1-cli
+
+      # Normalize the artifact name to the asset the launcher expects.
+      - name: Stage artifact (unix)
+        if: matrix.ext == ''
+        run: |
+          mkdir -p out
+          cp "target/release/fsa1-cli" "out/${{ matrix.asset }}"
+          chmod +x "out/${{ matrix.asset }}"
+      - name: Stage artifact (windows)
+        if: matrix.ext == '.exe'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item "target/release/fsa1-cli.exe" "out/${{ matrix.asset }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/${{ matrix.asset }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true

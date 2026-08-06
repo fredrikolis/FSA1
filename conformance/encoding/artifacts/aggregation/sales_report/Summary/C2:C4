@@ -1,0 +1,3 @@
+=COUNTIFS(Sales!B$2:B$13, A2)
+=COUNTIFS(Sales!B$2:B$13, A3)
+=COUNTIFS(Sales!B$2:B$13, A4)

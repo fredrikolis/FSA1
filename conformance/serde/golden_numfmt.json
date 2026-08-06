@@ -1,0 +1,18 @@
+{
+  "_note": "12 externally-authored ECMA-376 numFmt golden vectors — the EXTERNAL anchor for the SER2 render-equivalence FORMAT dimension. Both renderers (fsa1-ast's numFmt engine via `fsa1_ast::format_value`, asserted in a Rust `cargo test`; and `conformance/serde/numfmt_render.py`, asserted in run.sh/CI) must reproduce every `expected` string exactly — any disagreement is a BUILD FAILURE. NEVER FSA1-generated (see PROVENANCE.md): each vector is hand-derived from the published OOXML/ECMA-376 numFmt built-in-id semantics + format-code grammar. ≥1 vector per accepted category, incl. two negative-value cases.",
+  "count": 12,
+  "vectors": [
+    { "id": 1,  "category": "date",             "format": "m/d/yyyy",              "value": 44331,      "expected": "5/15/2021" },
+    { "id": 2,  "category": "date",             "format": "d-mmm-yy",              "value": 44331,      "expected": "15-May-21" },
+    { "id": 3,  "category": "time",             "format": "h:mm:ss",               "value": 0.5625,     "expected": "13:30:00" },
+    { "id": 4,  "category": "datetime",         "format": "m/d/yy h:mm",           "value": 44331.5625, "expected": "5/15/21 13:30" },
+    { "id": 5,  "category": "percent",          "format": "0.00%",                 "value": 0.125,      "expected": "12.50%" },
+    { "id": 6,  "category": "percent",          "format": "0%",                    "value": 0.125,      "expected": "13%" },
+    { "id": 7,  "category": "currency",         "format": "$#,##0.00",             "value": 1234.5,     "expected": "$1,234.50" },
+    { "id": 8,  "category": "currency",         "format": "£#,##0",                "value": 1234,       "expected": "£1,234" },
+    { "id": 9,  "category": "accounting",       "format": "$#,##0.00;($#,##0.00)", "value": -1234,      "expected": "($1,234.00)" },
+    { "id": 10, "category": "thousands-grouped","format": "#,##0.00",              "value": 1234,       "expected": "1,234.00" },
+    { "id": 11, "category": "fixed-decimal",    "format": "0.0000",                "value": 12.5,       "expected": "12.5000" },
+    { "id": 12, "category": "fixed-decimal",    "format": "0.00",                  "value": -3.5,       "expected": "-3.50" }
+  ]
+}

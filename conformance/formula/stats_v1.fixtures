@@ -1,0 +1,209 @@
+# v1 stats batch: MIN MAX MEDIAN RANK COUNTA COUNTBLANK.
+# EXPECTED values are derived INDEPENDENTLY of FSA1 (computed by hand / a python3 model of the
+# Excel semantics, cross-checked against Excel's published behavior — see PROVENANCE.md), never by
+# running FSA1. The division-based MEDIAN result 2.5 is exact in f64 (0x1.4p+1), so the grader's
+# bit-exact Value::Eq holds.
+#
+# The Excel-semantics calls pinned here:
+#   * RANGE-vs-DIRECT-ARG ASYMMETRY (MIN/MAX/MEDIAN): a boolean/text/blank riding INSIDE a range is
+#     IGNORED (only in-range numbers aggregate), but a boolean/numeric-text passed DIRECTLY as an
+#     argument COERCES (TRUE->1, "2"->2); a direct non-numeric text is #VALUE!. Errors propagate.
+#   * MIN/MAX over NO numeric datum is 0 (Excel); MEDIAN over no numeric datum is #NUM!.
+#   * MEDIAN AVERAGES THE TWO MIDDLES for an even count ((lo+hi)/2).
+#   * RANK: order=0/omitted is DESCENDING (largest = rank 1), any non-zero order is ASCENDING; TIES
+#     SHARE THE LOWEST (best) RANK; non-numeric cells in ref are ignored; a number absent from ref is
+#     #N/A; a non-numeric `number` argument is #VALUE!.
+#   * COUNTA counts every NON-EMPTY datum (text/number/boolean/error all count; only a blank does
+#     not) — an empty-string "" is non-empty and counts.
+#   * COUNTBLANK counts the EMPTY ones — a blank OR an empty-string "" (Excel counts a formula's ""
+#     as blank); a zero/error/non-empty text is not blank.
+
+# ---- MIN(a, b, ...) ----
+
+[min-range-ignores-nonnumbers]
+funcs: MIN
+cell A1: 5
+cell A2: "x"
+cell A3: TRUE
+cell A4: <blank>
+cell A5: 2
+formula: =MIN(A1:A5)
+expect: 2
+
+[min-direct-args-coerce]
+funcs: MIN
+formula: =MIN(3, TRUE, "2")
+expect: 1
+
+[min-no-numbers-is-zero]
+funcs: MIN
+cell A1: "x"
+cell A2: <blank>
+formula: =MIN(A1:A2)
+expect: 0
+
+[min-range-error-propagates]
+funcs: MIN
+cell A1: 5
+cell A2: #DIV/0!
+cell A3: 2
+formula: =MIN(A1:A3)
+expect: #DIV/0!
+
+# ---- MAX(a, b, ...) ----
+
+[max-range-ignores-in-range-logical]
+funcs: MAX
+cell A1: -5
+cell A2: TRUE
+cell A3: <blank>
+cell A4: -2
+formula: =MAX(A1:A4)
+expect: -2
+
+[max-direct-logical-coerces]
+funcs: MAX
+formula: =MAX(-5, TRUE, -2)
+expect: 1
+
+[max-no-numbers-is-zero]
+funcs: MAX
+cell A1: <blank>
+cell A2: "txt"
+formula: =MAX(A1:A2)
+expect: 0
+
+[max-range-error-propagates]
+funcs: MAX
+cell A1: #N/A
+cell A2: 3
+formula: =MAX(A1:A2)
+expect: #N/A
+
+# ---- MEDIAN(a, b, ...) ----
+
+[median-odd-count]
+funcs: MEDIAN
+cell A1: 5
+cell A2: 3
+cell A3: 1
+cell A4: 4
+cell A5: 2
+formula: =MEDIAN(A1:A5)
+expect: 3
+
+[median-even-averages-two-middles]
+funcs: MEDIAN
+cell A1: 1
+cell A2: 2
+cell A3: "x"
+cell A4: 3
+cell A5: 4
+formula: =MEDIAN(A1:A5)
+expect: 2.5
+
+[median-empty-is-num]
+funcs: MEDIAN
+cell A1: "x"
+cell A2: <blank>
+formula: =MEDIAN(A1:A2)
+expect: #NUM!
+
+[median-error-propagates]
+funcs: MEDIAN
+cell A1: 1
+cell A2: #REF!
+formula: =MEDIAN(A1:A2)
+expect: #REF!
+
+# ---- RANK(number, ref, [order]) ----
+
+[rank-descending-default-ties-share-lowest]
+funcs: RANK
+cell A1: 10
+cell A2: 8
+cell A3: 8
+cell A4: 5
+formula: =RANK(A2, A1:A4)
+expect: 2
+
+[rank-ascending-order]
+funcs: RANK
+cell A1: 10
+cell A2: 8
+cell A3: 8
+cell A4: 5
+formula: =RANK(A1, A1:A4, 1)
+expect: 4
+
+[rank-number-not-in-ref-is-na]
+funcs: RANK
+cell A1: 10
+cell A2: 8
+cell A3: 8
+cell A4: 5
+formula: =RANK(7, A1:A4)
+expect: #N/A
+
+[rank-nonnumeric-number-is-value]
+funcs: RANK
+cell A1: 10
+cell A2: 8
+cell A3: 5
+formula: =RANK("x", A1:A3)
+expect: #VALUE!
+
+# ---- COUNTA(a, b, ...) ----
+
+[counta-counts-nonempty-including-error]
+funcs: COUNTA
+cell A1: 1
+cell A2: "x"
+cell A3: TRUE
+cell A4: <blank>
+cell A5: #N/A
+formula: =COUNTA(A1:A5)
+expect: 4
+
+[counta-empty-string-counts]
+funcs: COUNTA
+cell A1: ""
+cell A2: <blank>
+formula: =COUNTA(A1:A2)
+expect: 1
+
+[counta-all-blank-is-zero]
+funcs: COUNTA
+cell A1: <blank>
+cell A2: <blank>
+cell A3: <blank>
+formula: =COUNTA(A1:A3)
+expect: 0
+
+# ---- COUNTBLANK(range) ----
+
+[countblank-counts-empty]
+funcs: COUNTBLANK
+cell A1: 1
+cell A2: <blank>
+cell A3: "x"
+cell A4: <blank>
+cell A5: TRUE
+formula: =COUNTBLANK(A1:A5)
+expect: 2
+
+[countblank-empty-string-counts-as-blank]
+funcs: COUNTBLANK
+cell A1: ""
+cell A2: 5
+cell A3: <blank>
+formula: =COUNTBLANK(A1:A3)
+expect: 2
+
+[countblank-error-and-zero-not-counted]
+funcs: COUNTBLANK
+cell A1: #N/A
+cell A2: <blank>
+cell A3: 0
+formula: =COUNTBLANK(A1:A3)
+expect: 1

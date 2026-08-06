@@ -1,0 +1,167 @@
+[
+  {
+    "name": "count_numbers_only",
+    "category": "count",
+    "inputs": {
+      "A1": 3,
+      "A2": 1,
+      "A3": 4,
+      "A4": 1,
+      "A5": 5,
+      "A6": "txt"
+    },
+    "formula": "=COUNT(A1:A6)"
+  },
+  {
+    "name": "counta_all_nonblank",
+    "category": "count",
+    "inputs": {
+      "A1": 3,
+      "A2": 1,
+      "A3": 4,
+      "A4": 1,
+      "A5": 5,
+      "A6": "txt"
+    },
+    "formula": "=COUNTA(A1:A6)"
+  },
+  {
+    "name": "countblank_in_range",
+    "category": "count",
+    "inputs": {
+      "A1": 1,
+      "A3": 3,
+      "A5": 5
+    },
+    "formula": "=COUNTBLANK(A1:A5)"
+  },
+  {
+    "name": "count_empty_range",
+    "category": "count",
+    "inputs": {},
+    "formula": "=COUNT(A1:A3)"
+  },
+  {
+    "name": "max_range",
+    "category": "count",
+    "inputs": {
+      "A1": 3,
+      "A2": 1,
+      "A3": 4,
+      "A4": 1,
+      "A5": 5,
+      "A6": "txt"
+    },
+    "formula": "=MAX(A1:A5)"
+  },
+  {
+    "name": "min_range",
+    "category": "count",
+    "inputs": {
+      "A1": 3,
+      "A2": 1,
+      "A3": 4,
+      "A4": 1,
+      "A5": 5,
+      "A6": "txt"
+    },
+    "formula": "=MIN(A1:A5)"
+  },
+  {
+    "name": "max_ignores_text",
+    "category": "count",
+    "inputs": {
+      "A1": 3,
+      "A2": 1,
+      "A3": 4,
+      "A4": 1,
+      "A5": 5,
+      "A6": "txt"
+    },
+    "formula": "=MAX(A1:A6)"
+  },
+  {
+    "name": "max_with_negatives",
+    "category": "count",
+    "inputs": {
+      "A1": -5,
+      "A2": -2,
+      "A3": -9
+    },
+    "formula": "=MAX(A1:A3)"
+  },
+  {
+    "name": "min_with_negatives",
+    "category": "count",
+    "inputs": {
+      "A1": -5,
+      "A2": -2,
+      "A3": -9
+    },
+    "formula": "=MIN(A1:A3)"
+  },
+  {
+    "name": "max_direct_args",
+    "category": "count",
+    "inputs": {},
+    "formula": "=MAX(3,7,2)"
+  },
+  {
+    "name": "min_direct_args",
+    "category": "count",
+    "inputs": {},
+    "formula": "=MIN(3,7,2)"
+  },
+  {
+    "name": "mode_range",
+    "category": "count",
+    "inputs": {
+      "A1": 3,
+      "A2": 1,
+      "A3": 4,
+      "A4": 1,
+      "A5": 5,
+      "A6": "txt"
+    },
+    "formula": "=MODE(A1:A5)"
+  },
+  {
+    "name": "mode_sngl_range",
+    "category": "count",
+    "inputs": {
+      "A1": 3,
+      "A2": 1,
+      "A3": 4,
+      "A4": 1,
+      "A5": 5,
+      "A6": "txt"
+    },
+    "formula": "=MODE.SNGL(A1:A5)"
+  },
+  {
+    "name": "sum_direct_negatives",
+    "category": "count",
+    "inputs": {},
+    "formula": "=SUM(-1,-2,-3)"
+  },
+  {
+    "name": "average_with_text_ignored",
+    "category": "count",
+    "inputs": {
+      "A1": 3,
+      "A2": 1,
+      "A3": 4,
+      "A4": 1,
+      "A5": 5,
+      "A6": "txt"
+    },
+    "formula": "=AVERAGE(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "counta_empty_is_zero",
+    "category": "count",
+    "inputs": {},
+    "formula": "=COUNTA(A1:A3)"
+  }
+]

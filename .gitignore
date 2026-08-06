@@ -1,0 +1,25 @@
+# Rebuildable output only (repo-standards.md: never commit build output).
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# The FS3 reserved derived-data entry: a `.cache/` sub-folder of any workbook. NOTHING writes there
+# any more — the persistent result cache that did was measured net-negative on every verb and deleted
+# — but the name stays reserved (the loader ignores it, so a stale directory an older build left in a
+# workbook is inert rather than parsed as a tab), and derived, non-authoritative data must never be
+# tracked if it ever returns.
+**/.cache/
+
+# The python venv used to AUTHOR the ingest fixtures is disposable — the generated fixtures
+# (fsa1-ingest/tests/fixtures/*.{ods,xlsx}) ARE committed, so the Rust tests need no
+# python/odfpy/openpyxl.
+**/.fixture-venv/
+**/__pycache__/
+
+# git-lfs writes these shims into .githooks/ (this repo's core.hooksPath). They are LOCAL
+# tooling: committed, they exit 2 on every clone without git-lfs on PATH, breaking
+# checkout/commit/merge/push for anyone who has not installed it.
+.githooks/post-checkout
+.githooks/post-commit
+.githooks/post-merge
+.githooks/pre-push

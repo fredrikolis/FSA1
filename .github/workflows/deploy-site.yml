@@ -1,0 +1,26 @@
+name: deploy-site
+
+# STUB — created during the FSA1 monorepo reorganization. It builds and publishes NOTHING.
+#
+# It is deliberately `workflow_dispatch`-only: no push trigger, so it can never fire on a merge and
+# quietly deploy an empty site. Wiring it up is blocked on choosing a static-site generator for
+# website/ (see website/README.md), which the rename deliberately did not decide.
+#
+# When that lands, this job gains: a build step, actions/upload-pages-artifact, and a deploy job
+# with `permissions: pages: write, id-token: write`. Until then it only reports that it is a stub,
+# so a curious `workflow_dispatch` run explains itself rather than looking broken.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report that no site build is wired yet
+        run: |
+          echo "deploy-site is a stub: website/ has no generator chosen yet."
+          echo "See website/README.md."

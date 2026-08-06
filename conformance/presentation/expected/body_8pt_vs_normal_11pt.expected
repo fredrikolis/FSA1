@@ -1,0 +1,10 @@
+# body_8pt_vs_normal_11pt.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+file: Body/A1:B3
+|A1	B1
+|A2	B2
+|A3	B3
+|@scope {
+|  td { font-size: 8pt }
+|}

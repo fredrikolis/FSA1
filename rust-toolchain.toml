@@ -1,0 +1,8 @@
+# Concern: pins the exact rustc, rustfmt and clippy every clone builds and lints with | Non-concern: crate dependencies and their versions (Cargo.toml) | IO: none
+# Pinned toolchain for reproducible per-clone builds (repo-standards.md PART 8). A CONCRETE
+# version (not the floating `stable` channel) so every clone builds against the exact rustc this
+# workspace was validated on — fsa1-ast is `edition = "2024"` (needs >= 1.85), and a floating
+# `stable` could drift lint/edition behavior out from under the gate. Bump deliberately.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

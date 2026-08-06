@@ -1,0 +1,95 @@
+# annotated-tree enforcement config for the FSA1 workspace.
+#
+# The per-file first-line annotation convention (`Concern | Non-concern | IO`, space-pipe-space)
+# is INVARIANT and lives at the annotated-tree project page — it is NOT configured here. This file
+# owns only the repo-wide ARCHITECTURAL rules the gate enforces. Valid tables: display, limits,
+# rules, languages (there is NO ignore key — corpus/fixture exclusion is done at the CALL site with
+# `-I` globs in .githooks/pre-commit and the `annotations` job of .github/workflows/ci.yml; keep them
+# in sync).
+#
+# ACTIVE EXCLUSION GLOBS (identical at both call sites — the hook and ci.yml's `annotations` job.
+# They were out of sync until 2026-07-30, when ci.yml's broader 'conformance/serde/**' was narrowed
+# to the accept/refuse pair so the seven serde GRADERS are gated in CI as well as locally):
+#   -I 'conformance/encoding/**'
+#   -I 'conformance/formula/**'
+#   -I 'conformance/render/**'
+#   -I 'conformance/serde/accept/**' -I 'conformance/serde/refuse/**'
+# Four conformance corpora are SANCTIONED graded inputs, not authored source:
+#   - conformance/encoding/ (W1, see its PROVENANCE.md): `.range`/`.cell` sheet files + `.md` ledgers.
+#   - conformance/formula/  (W3, see its PROVENANCE.md): the `.fixtures` value probes, PROVENANCE.md,
+#     probes and ledgers.
+#   - conformance/render/   (W4, see its PROVENANCE.md): the migrated rendered-VALUE oracles under
+#     oracle/** (`.json`/`.csv` + each `compute_oracle.py` + per-category `.md`), PROVENANCE.md,
+#     oracle files and ledgers.
+#   - conformance/serde/    (plan 06, see accept/refuse PROVENANCE.md): the SER round-trip corpus
+#     (accept/**, refuse/** .xlsx + PROVENANCE.md). Its GRADERS stay annotated:
+#     the Python harness (run.sh, roundtrip_oracle.py, make_refuse.py) and fsa1-cli/tests/
+#     roundtrip.rs are authored code.
+# Their data files carry no recognized code extension (already invisible to the linter), but their
+# `.md`/`.py` ledgers ARE governed by the annotation gate — a graded input must not be, so each
+# corpus is excluded at the call site. The GRADERS are NOT excluded and stay annotated: fsa1-model's
+# tests/{encoding,render}_conformance.rs and the whole `conformance` crate (its src/**/ + tests/**/
+# are authored code that must carry annotations).
+
+[rules]
+# Annotation LENGTH bound, declared explicitly so the gate is reproducible per-clone. Leaving it
+# unset inherits whatever the locally-installed annotated-tree ships (0.5.0 defaults to 200), so an
+# unset key makes the gate mean different things on two clones. This key exists from 0.5.0 on; the
+# hook and CI are pinned there (`.githooks/pre-commit`, `.github/workflows/ci.yml`).
+#
+# The bar is 200 characters per field. An annotation is read INSTEAD of the file; past that length a
+# reader opens the source anyway and the annotation becomes a second, drifting copy of it.
+max_annotation_length = 200
+
+# Every crate with a Cargo.toml must resolve a concern CHARTER (an annotation on src/lib.rs /
+# src/main.rs, or a .annotation breadcrumb) so each crate's one job is legible at the tree level.
+require_package_charter = true
+
+# The internal crate dependency graph stays a DAG with no isolated crates.
+forbid_cycles = true
+# forbid_orphans is ON now that fsa1-model has landed: the `fsa1-model -> fsa1-ast` edge
+# makes an isolated crate a real signal (W0 kept this OFF only because a lone crate is trivially an
+# "orphan" that could not be fixed until a second crate existed — docs/architecture.md §5).
+forbid_orphans = true
+
+# ARCHITECTURAL FIREWALL (populated as crates land — docs/architecture.md §1, §5 W2+).
+# NOTE: a deny pair naming a crate that does not yet exist is a FATAL `unknown_deny_package`
+# violation, so each edge is added only once BOTH its crates exist. With fsa1-ast + fsa1-model +
+# fsa1-cli present (W4), fsa1-xlsx (the WRITE-half serializer, SER1) and fsa1-html (the presentation
+# block's renderer), all the valid edges are wired below — each output crate's edges LANDED with it.
+#   ["fsa1-ast",    "fsa1-model"]  # WIRED: the formula engine must never know the filesystem model
+#   ["fsa1-ast",    "fsa1-cli"]    # WIRED: the engine never depends on the binary
+#   ["fsa1-model",  "fsa1-cli"]    # WIRED: the model never depends on the binary
+#   ["fsa1-ast",    "fsa1-ingest"] # WIRED: the engine never knows the ODS/xlsx deserializer (calamine)
+#   ["fsa1-model",  "fsa1-ingest"] # WIRED: the filesystem model never knows the format reader (calamine)
+#   ["fsa1-ingest", "fsa1-cli"]    # WIRED: the ingest crate never depends on the binary
+#   ["fsa1-ast",    "fsa1-xlsx"]   # WIRED: the engine never knows the xlsx serializer
+#   ["fsa1-model",  "fsa1-xlsx"]   # WIRED: the filesystem model never knows the serializer
+#   ["fsa1-xlsx",   "fsa1-cli"]    # WIRED: the serializer never depends on the binary
+#   ["fsa1-ast",    "fsa1-html"]   # WIRED: the engine never knows the HTML renderer
+#   ["fsa1-model",  "fsa1-html"]   # WIRED: the filesystem model never knows the renderer
+#   ["fsa1-html",   "fsa1-cli"]    # WIRED: the renderer never depends on the binary
+#   ["fsa1-html",   "fsa1-ast"]    # WIRED: the renderer reads a rendered view, never the formula language
+# The direction that IS allowed: cli -> {model, ingest, xlsx, html} -> ast (and ingest/xlsx/html ->
+# model), except fsa1-html, which reaches fsa1-model only. This encodes the owner's hard rule that
+# the AST impl is swappable behind a narrow boundary AND the FORMAT
+# FIREWALL: the format libraries (calamine + zip/xml on the READ side in fsa1-ingest, zip/xml on the
+# WRITE side in fsa1-xlsx) are confined to those two format crates, so fsa1-model/ast stay
+# format-library-free and the engine keeps reading TSV grids (HARD RULE 4). fsa1-xlsx carrying
+# zip/quick-xml is NOT a firewall breach: a format crate is exactly where those libraries belong — the
+# invariant is only that model/ast stay free of them, and they do.
+deny = [
+    ["fsa1-ast", "fsa1-model"],
+    ["fsa1-ast", "fsa1-cli"],
+    ["fsa1-model", "fsa1-cli"],
+    ["fsa1-ast", "fsa1-ingest"],
+    ["fsa1-model", "fsa1-ingest"],
+    ["fsa1-ingest", "fsa1-cli"],
+    ["fsa1-ast", "fsa1-xlsx"],
+    ["fsa1-model", "fsa1-xlsx"],
+    ["fsa1-xlsx", "fsa1-cli"],
+    ["fsa1-ast", "fsa1-html"],
+    ["fsa1-model", "fsa1-html"],
+    ["fsa1-html", "fsa1-cli"],
+    ["fsa1-html", "fsa1-ast"],
+]

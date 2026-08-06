@@ -1,0 +1,40 @@
+# Pure math functions: ABS, ROUND.
+# ROUND rounds half AWAY FROM ZERO (Excel's tie rule); a negative digit count rounds to the left of
+# the decimal point. The tie cases below (2.5 -> 3, -2.5 -> -3) are the ones that distinguish
+# away-from-zero from banker's rounding.
+
+[abs-of-negative]
+funcs: ABS
+formula: =ABS(-5)
+expect: 5
+
+[abs-of-positive]
+funcs: ABS
+formula: =ABS(3)
+expect: 3
+
+[abs-from-a-cell]
+funcs: ABS
+cell A1: -7
+formula: =ABS(A1)
+expect: 7
+
+[round-down-third-decimal]
+funcs: ROUND
+formula: =ROUND(1.2345, 2)
+expect: 1.23
+
+[round-half-away-from-zero-positive]
+funcs: ROUND
+formula: =ROUND(2.5, 0)
+expect: 3
+
+[round-half-away-from-zero-negative]
+funcs: ROUND
+formula: =ROUND(-2.5, 0)
+expect: -3
+
+[round-negative-digits-left-of-point]
+funcs: ROUND
+formula: =ROUND(1234, -2)
+expect: 1200

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Concern: the mechanical gates, each invoking the one shared definition CI also runs | Non-concern: the review attestation (commit-msg declares it) or the test suite | IO: (working tree + index) -> exit status
+# The full suite stays a deliberate, observed step: bash scripts/gate.sh.
+# Enable per clone: git config core.hooksPath .githooks
+set -euo pipefail
+
+# Hooks run with a minimal environment, so cargo is often off PATH (a GUI git client, a cron shell).
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+case ":$PATH:" in *":$cargo_home/bin:"*) ;; *) PATH="$cargo_home/bin:$PATH" ;; esac
+export PATH
+[ -f "$cargo_home/env" ] && . "$cargo_home/env"
+
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+# $PRECOMMIT_*_CMD are test-only seams the selftest stubs to force an exit code, so no row lints or
+# scans this repo. Unset, each resolves to the script CI and scripts/gate.sh call.
+"${PRECOMMIT_COMMENT_GATE_CMD:-$(git rev-parse --show-toplevel)/scripts/comment-gate.sh}"
+"${PRECOMMIT_ANNOTATION_CMD:-$(git rev-parse --show-toplevel)/scripts/annotation-gate.sh}"

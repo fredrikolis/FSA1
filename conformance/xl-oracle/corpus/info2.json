@@ -1,0 +1,98 @@
+[
+  {
+    "name": "isblank_true",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=ISBLANK(A1)"
+  },
+  {
+    "name": "isblank_false_on_value",
+    "category": "info2",
+    "inputs": {
+      "A1": 5
+    },
+    "formula": "=ISBLANK(A1)"
+  },
+  {
+    "name": "istext_true",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=ISTEXT(\"x\")"
+  },
+  {
+    "name": "istext_false_on_number",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=ISTEXT(5)"
+  },
+  {
+    "name": "isnumber_true",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=ISNUMBER(5)"
+  },
+  {
+    "name": "isnumber_false_on_text",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=ISNUMBER(\"5\")",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 coerces a numeric-looking string literal to a number, so ISNUMBER(\"5\") returns TRUE. Excel & FSA1: FALSE (a text literal is text, even if it looks numeric; ISNUMBER(\"abc\") is FALSE in both). Reference-library gap; FSA1 hand-verified vs Excel."
+  },
+  {
+    "name": "iserror_true_div0",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=ISERROR(1/0)"
+  },
+  {
+    "name": "iserror_false_on_value",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=ISERROR(5)"
+  },
+  {
+    "name": "iseven_of_range_cell",
+    "category": "info2",
+    "inputs": {
+      "A1": 4
+    },
+    "formula": "=ISEVEN(A1)"
+  },
+  {
+    "name": "n_of_number",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=N(42)"
+  },
+  {
+    "name": "na_propagates",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=ISNA(NA())"
+  },
+  {
+    "name": "type_of_number",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=TYPE(5)"
+  },
+  {
+    "name": "type_of_text",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=TYPE(\"x\")"
+  },
+  {
+    "name": "type_of_bool",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=TYPE(TRUE)"
+  },
+  {
+    "name": "type_of_error",
+    "category": "info2",
+    "inputs": {},
+    "formula": "=TYPE(1/0)"
+  }
+]

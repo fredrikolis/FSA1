@@ -1,0 +1,164 @@
+// Concern: draws a View as ASCII grids or nested nodes, and diagnostics as a table | Non-concern: computing any value | IO: (&View) -> String; (&[Diagnostic]) -> String
+
+use annotated_tree::{CodebaseMap, DirNode, FileNode, Format as TreeFormat, for_format};
+use comfy_table::presets::ASCII_FULL;
+use comfy_table::{Cell, Table};
+use fsa1_model::{Diagnostic, NameView, Rect, RenderMode, SheetView, View, ViewScope};
+
+pub fn table(view: &View) -> String {
+    let named = view.sheets.len() > 1;
+    let mut out: Vec<String> = Vec::with_capacity(view.sheets.len());
+    for sheet in &view.sheets {
+        let grid = sheet.grid.as_ref().map(grid_table).unwrap_or_default();
+        out.push(match (named, grid.is_empty()) {
+            (true, true) => sheet.name.to_string(),
+            (true, false) => format!("{}\n{grid}", sheet.name),
+            (false, _) => grid,
+        });
+    }
+    out.join("\n\n")
+}
+
+pub fn tree(view: &View, cap: u32) -> String {
+    let root = match view.scope {
+        ViewScope::Region(..) => match view.sheets.first() {
+            Some(s) => {
+                let cells = s.region.map(|r| cells_in(s, r, u32::MAX).0);
+                dir_node(s.name.to_string(), Vec::new(), cells.unwrap_or_default(), 0)
+            }
+            None => dir_node(String::new(), Vec::new(), Vec::new(), 0),
+        },
+        ViewScope::Tab(_) => match view.sheets.first() {
+            Some(s) => tab_dir(view, s, cap),
+            None => dir_node(String::new(), Vec::new(), Vec::new(), 0),
+        },
+        ViewScope::Workbook => dir_node(
+            String::new(),
+            view.sheets.iter().map(|s| tab_dir(view, s, cap)).collect(),
+            view.names.iter().map(name_node).collect(),
+            0,
+        ),
+    };
+    for_format(TreeFormat::Text, false).render(&CodebaseMap {
+        roots: vec![root],
+        warnings: Vec::new(),
+    })
+}
+
+fn tab_dir(view: &View, sheet: &SheetView, cap: u32) -> DirNode {
+    let mut files: Vec<FileNode> = Vec::new();
+    let mut elided: u32 = 0;
+    for fe in &sheet.files {
+        if fe.array_formula && view.mode == RenderMode::Functions {
+            if let Some((_, text)) = sheet.cell(fe.region.min_col, fe.region.min_row) {
+                files.push(file_node(fe.name.to_string(), text));
+            }
+            continue;
+        }
+        let (cells, over) = cells_in(sheet, fe.region, cap);
+        files.extend(cells);
+        elided = elided.saturating_add(over);
+    }
+    files.extend(sheet.names.iter().map(name_node));
+    dir_node(sheet.name.to_string(), Vec::new(), files, elided)
+}
+
+fn cells_in(sheet: &SheetView, r: Rect, cap: u32) -> (Vec<FileNode>, u32) {
+    let mut nodes = Vec::new();
+    'rect: for row in r.min_row..=r.max_row {
+        for col in r.min_col..=r.max_col {
+            if nodes.len() as u64 >= u64::from(cap) {
+                break 'rect;
+            }
+            if let Some((label, text)) = sheet.cell(col, row) {
+                nodes.push(file_node(label, text));
+            }
+        }
+    }
+    let total = (u64::from(r.max_row - r.min_row) + 1) * (u64::from(r.max_col - r.min_col) + 1);
+    let over = (total - nodes.len() as u64).min(u64::from(u32::MAX)) as u32;
+    (nodes, over)
+}
+
+fn name_node(n: &NameView) -> FileNode {
+    file_node(n.ident.clone(), &n.text)
+}
+
+fn file_node(name: String, text: &str) -> FileNode {
+    FileNode {
+        name,
+        annotation: (!text.is_empty()).then(|| text.to_string()),
+        age_secs: None,
+        sidecar: false,
+    }
+}
+
+fn dir_node(name: String, dirs: Vec<DirNode>, files: Vec<FileNode>, elided_files: u32) -> DirNode {
+    DirNode {
+        name,
+        charter: None,
+        deps: None,
+        dirs,
+        files,
+        elided_dirs: 0,
+        elided_files,
+    }
+}
+
+fn grid_table(grid: &fsa1_model::RenderGrid) -> String {
+    let mut t = Table::new();
+    t.load_preset(ASCII_FULL);
+    let mut header: Vec<Cell> = Vec::with_capacity(grid.col_labels.len() + 1);
+    header.push(Cell::new(""));
+    header.extend(grid.col_labels.iter().map(Cell::new));
+    t.set_header(header);
+    for row in &grid.rows {
+        let mut cells: Vec<Cell> = Vec::with_capacity(row.cells.len() + 1);
+        cells.push(Cell::new(&row.row_label));
+        cells.extend(row.cells.iter().map(Cell::new));
+        t.add_row(cells);
+    }
+    t.to_string()
+}
+
+pub fn diagnostics_table(diags: &[Diagnostic]) -> String {
+    let mut table = Table::new();
+    table.load_preset(ASCII_FULL);
+    table.set_header(vec![
+        Cell::new("severity"),
+        Cell::new("code"),
+        Cell::new("location"),
+        Cell::new("message"),
+        Cell::new("help"),
+    ]);
+
+    if diags.is_empty() {
+        table.add_row(vec![
+            Cell::new("ok"),
+            Cell::new("none"),
+            Cell::new("-"),
+            Cell::new("no diagnostics: the workbook is clean"),
+            Cell::new("-"),
+        ]);
+        return table.to_string();
+    }
+
+    for d in diags {
+        table.add_row(vec![
+            Cell::new(severity_str(d)),
+            Cell::new(d.code.code_str()),
+            Cell::new(d.loc.to_string()),
+            Cell::new(&d.message),
+            Cell::new(d.code.help()),
+        ]);
+    }
+    table.to_string()
+}
+
+fn severity_str(d: &Diagnostic) -> &'static str {
+    use fsa1_model::Severity;
+    match d.code.severity() {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+    }
+}

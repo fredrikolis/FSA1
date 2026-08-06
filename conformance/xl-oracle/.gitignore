@@ -1,0 +1,5 @@
+# The reference stack + all generated artifacts are rebuildable; never commit them (repo-standards.md).
+.venv/
+.artifacts/
+__pycache__/
+*.pyc

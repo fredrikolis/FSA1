@@ -1,0 +1,35 @@
+# Error VALUES and their propagation. Errors are first-class values: an operand error short-circuits
+# LEFTMOST-first, arithmetic maps the Excel error conditions (/0 -> #DIV/0!, complex/overflow power
+# -> #NUM!), and a non-numeric text in an arithmetic position is #VALUE!.
+
+[divide-by-zero]
+formula: =1/0
+expect: #DIV/0!
+
+[zero-to-negative-power-is-div0]
+formula: =0^-1
+expect: #DIV/0!
+
+[complex-root-is-num-error]
+formula: =(-8)^0.5
+expect: #NUM!
+
+[power-overflow-is-num-error]
+formula: =9^999
+expect: #NUM!
+
+[nonnumeric-text-in-arithmetic-is-value-error]
+formula: ="x"+1
+expect: #VALUE!
+
+[numeric-text-coerces-in-arithmetic]
+formula: ="5"+1
+expect: 6
+
+[leftmost-error-wins]
+formula: =#REF!+#DIV/0!
+expect: #REF!
+
+[error-literal-passes-through-concat]
+formula: =#N/A&"x"
+expect: #N/A

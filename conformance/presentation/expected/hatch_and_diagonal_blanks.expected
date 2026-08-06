@@ -1,0 +1,32 @@
+# hatch_and_diagonal_blanks.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+#
+# The reading, in three steps:
+#
+# 1. `cellXfs` states four entries. `A1` carries no `s=` at all; `B1` is `s="1"` -> fillId 2 ->
+#    `<patternFill patternType="solid"><fgColor rgb="FF00B0F0"/>`; `D4` is `s="2"` -> fillId 1 ->
+#    `<patternFill patternType="gray125"/>`; `E5` is `s="3"` -> borderId 1 -> `<diagonal style="thin">`
+#    and no left/right/top/bottom edge. The one `<font>` is Calibri 11 under `<color theme="1"/>`, so
+#    the Normal font and the text colour are both the format's own default and neither is declared.
+#
+# 2. OCCUPANCY is `A1`, which holds a value, plus every blank whose look a RULE CAN CARRY. `B1`'s
+#    solid fill spells `background-color`, so `B1` is content. `D4`'s hatch and `E5`'s diagonal are
+#    dropped and named below -- an appearance no declaration carries is by definition not carried, so
+#    it cannot occupy a coordinate the export would then come back without. Occupancy is therefore the
+#    two coordinates A1 and B1: a bounding box of 2 cells with nothing wasted, so ONE block A1:B1.
+#
+# 3. One row is the whole block, so the fill is a COLUMN rule; column 2 of 2 is `td:last-child`.
+#    `A1` states no fill, so no bare `td` may claim one.
+#
+# The two losses are named in the sheet's own reading order, D4 before E5. They are named at all
+# because the sheet still HOLDS those coordinates: a look the source draws over an empty cell keeps
+# its cell inside the sheet's extent even where no rule can carry it, which is what separates "not
+# occupancy" from "dropped in silence".
+warning: gray125 pattern fill at Blanks!D4 dropped
+warning: diagonal border at Blanks!E5 dropped
+file: Blanks/A1:B1
+|kept	
+|@scope {
+|  td:last-child { background-color: #00b0f0 }
+|}

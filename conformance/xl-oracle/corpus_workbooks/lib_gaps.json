@@ -1,0 +1,38 @@
+[
+  {
+    "workbook": "amortization",
+    "sheet": "Loan",
+    "cell": "B15",
+    "reason": "formulas v1.3.4 IPMT returns #NUM! (PPMT works); FSA1 & Excel give 100. See KNOWN-LIB-GAPS.md #2"
+  },
+  {
+    "workbook": "forging",
+    "sheet": "Forge",
+    "cell": "C1",
+    "reason": "formulas v1.3.4 does not implement OFFSET (returns #NAME?); FSA1 & Excel give 60 (=SUM(A1:A3)). See KNOWN-LIB-GAPS.md #15"
+  },
+  {
+    "workbook": "forging",
+    "sheet": "Forge",
+    "cell": "C2",
+    "reason": "formulas v1.3.4 does not implement OFFSET (returns #NAME?); FSA1 & Excel give 100 (=SUM(A1:A4) via COUNT-driven height). See KNOWN-LIB-GAPS.md #15"
+  },
+  {
+    "workbook": "forging",
+    "sheet": "Forge",
+    "cell": "C3",
+    "reason": "formulas v1.3.4 does not implement OFFSET (returns #NAME?); FSA1 & Excel give 20 (OFFSET($A$1,1,0)=A2). See KNOWN-LIB-GAPS.md #15"
+  },
+  {
+    "workbook": "forging",
+    "sheet": "Forge",
+    "cell": "C4",
+    "reason": "formulas v1.3.4 INDIRECT with a concatenated text arg (\"A\"&2) returns #NAME?; FSA1 & Excel give 20 (INDIRECT(\"A2\")=A2). See KNOWN-LIB-GAPS.md #15"
+  },
+  {
+    "workbook": "forging",
+    "sheet": "Forge",
+    "cell": "C5",
+    "reason": "formulas v1.3.4 does not implement OFFSET (returns #NAME?); FSA1 & Excel give 50 (=SUM(A2:A3)). See KNOWN-LIB-GAPS.md #15"
+  }
+]

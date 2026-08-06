@@ -1,0 +1,12 @@
+# style_only_blank.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+#
+# B1 states a solid FF00B0F0 fill and no value. A visually non-null style IS occupancy, so the
+# block spans A1:B1 and the grid line carries two fields, the second empty. One row is the whole
+# block, so the fill is a COLUMN rule; column 2 of 2 is `td:last-child`.
+file: Blank/A1:B1
+|kept	
+|@scope {
+|  td:last-child { background-color: #00b0f0 }
+|}

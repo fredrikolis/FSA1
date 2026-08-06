@@ -1,0 +1,9 @@
+# Concern: declares the package and its one dep, fsa1-model | Non-concern: the deny edge barring it from fsa1-ast (.annotated-tree.toml) | IO: none
+[package]
+name = "fsa1-html"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+fsa1-model = { path = "../fsa1-model" }

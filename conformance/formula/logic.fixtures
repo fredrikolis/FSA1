@@ -1,0 +1,65 @@
+# Logical functions: IF, IFERROR, AND, OR.
+# IF and IFERROR are LAZY — only the selected branch / the fallback is evaluated, so an unreached
+# error subexpression never surfaces. AND/OR reduce logical data; a DIRECT non-logical text is a
+# #VALUE!, an in-range non-logical datum is ignored, and any error propagates.
+
+[if-picks-then-branch]
+funcs: IF
+formula: =IF(TRUE, 10, 20)
+expect: 10
+
+[if-picks-else-branch]
+funcs: IF
+formula: =IF(FALSE, 10, 20)
+expect: 20
+
+[if-two-arg-false-is-false]
+funcs: IF
+formula: =IF(FALSE, 10)
+expect: FALSE
+
+[if-is-lazy-unreached-error-not-raised]
+funcs: IF
+formula: =IF(TRUE, 1, 1/0)
+expect: 1
+
+[if-condition-zero-is-false]
+funcs: IF
+cell A1: 0
+formula: =IF(A1, "yes", "no")
+expect: "no"
+
+[iferror-catches-the-error]
+funcs: IFERROR
+formula: =IFERROR(1/0, 99)
+expect: 99
+
+[iferror-passes-a-nonerror-through]
+funcs: IFERROR
+formula: =IFERROR(7, 99)
+expect: 7
+
+[and-all-truthy]
+funcs: AND
+formula: =AND(TRUE, 1, 2)
+expect: TRUE
+
+[and-one-zero-is-false]
+funcs: AND
+formula: =AND(TRUE, 0)
+expect: FALSE
+
+[or-any-truthy]
+funcs: OR
+formula: =OR(0, FALSE, 1)
+expect: TRUE
+
+[and-error-propagates]
+funcs: AND
+formula: =AND(#REF!, TRUE)
+expect: #REF!
+
+[and-direct-nonlogical-text-is-value-error]
+funcs: AND
+formula: =AND("x")
+expect: #VALUE!

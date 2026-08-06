@@ -1,0 +1,88 @@
+[
+  {
+    "name": "nper_savings",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=NPER(0.05/12,-200,20000)",
+    "tol": 1e-06
+  },
+  {
+    "name": "nper_loan",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=NPER(0.06/12,500,-20000)",
+    "tol": 1e-06
+  },
+  {
+    "name": "rate_of_annuity",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=RATE(60,-200,10000)",
+    "tol": 1e-08
+  },
+  {
+    "name": "xnpv_two_flows",
+    "category": "financial2",
+    "inputs": {
+      "A1": -1000,
+      "A2": 1100,
+      "B1": 43831,
+      "B2": 44197
+    },
+    "formula": "=XNPV(0.1,A1:A2,B1:B2)",
+    "tol": 1e-06
+  },
+  {
+    "name": "ppmt_period1",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=PPMT(0.005,1,6,-20000)",
+    "tol": 1e-06
+  },
+  {
+    "name": "ppmt_period3",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=PPMT(0.005,3,6,-20000)",
+    "tol": 1e-06
+  },
+  {
+    "name": "pmt_basic",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=PMT(0.005,6,-20000)",
+    "tol": 1e-06
+  },
+  {
+    "name": "fv_from_pmt",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=FV(0.005,6,-200,0)",
+    "tol": 1e-06
+  },
+  {
+    "name": "pv_from_pmt",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=PV(0.005,6,-200)",
+    "tol": 1e-06
+  },
+  {
+    "name": "ipmt_period1",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=IPMT(0.005,1,6,-20000)",
+    "tol": 1e-06,
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 returns #NUM! for IPMT (its sibling PPMT of the same args works). Excel & FSA1: 100 (period-1 interest = 20000*0.005). See KNOWN-LIB-GAPS.md §2."
+  },
+  {
+    "name": "ipmt_period3",
+    "category": "financial2",
+    "inputs": {},
+    "formula": "=IPMT(0.005,3,6,-20000)",
+    "tol": 1e-06,
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 returns #NUM! for IPMT. Excel & FSA1 compute the period-3 interest of the same annuity (hand-verified). See KNOWN-LIB-GAPS.md §2."
+  }
+]

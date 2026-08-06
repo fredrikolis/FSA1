@@ -1,0 +1,102 @@
+# Financial batch v1: PMT NPV IRR.
+# EXPECTED values are authored INDEPENDENTLY of FSA1 by a standalone python3 hand-formula oracle
+# (scratch: finance_oracle.py) that computes the annuity balance equation (PMT), period-1 discounting
+# (NPV), and a Newton root-find (IRR) using the SAME sequential f64 op order the engine uses (an
+# explicit integer-power multiply loop, NOT libm pow), so each decimal round-trips to the exact f64
+# FSA1 produces. See PROVENANCE.md ("Financial batch"). The oracle's authoring run printed:
+#
+#   PMT(0,10,-1000)=100   PMT(0.5,2,-100)=90   PMT(0.5,2,-100,-50)=110   PMT(0.5,2,-100,0,1)=60
+#   PMT(0.1,0,100)=#DIV/0!
+#   NPV(1,100,200,300)=137.5   NPV(1,-1000,500,500,500)=-281.25   NPV(1,100,1/0)=#DIV/0!
+#   IRR([-100,30,40,50])=0.08896339469334992   (obj≈7e-15; numpy np.roots=0.088963394693350… )
+#   IRR([100,200,300])=None → #NUM! (all-positive: no sign change, no real IRR)
+#
+# PMT is Excel's sign convention (money out is negative); rate==0 degenerates to the LINEAR
+# -(pv+fv)/nper; a zero denominator (nper==0) is #DIV/0!. NPV discounts value1 from period ONE
+# (value1/(1+rate)^1). IRR is Newton (capped) then a bounded bisection fallback then #NUM! — it can
+# never hang; the all-positive case exercises the no-root #NUM! path. The IRR bit-exact literal is the
+# hand-Newton f64 from guess 0.1, cross-checked against numpy's polynomial roots to ~1e-12.
+
+# --- PMT: annuity payment; rate==0 linear; #DIV/0! on a zero denominator ---
+
+[pmt-rate-zero-linear]
+funcs: PMT
+note: rate==0 degenerates to the LINEAR -(pv+fv)/nper = -(-1000)/10 = 100.
+formula: =PMT(0,10,-1000)
+expect: 100
+
+[pmt-annuity-basic]
+funcs: PMT
+note: rate!=0 closed-form annuity; 1.5^2=2.25 is dyadic-exact so the result is an exact 90.
+formula: =PMT(0.5,2,-100)
+expect: 90
+
+[pmt-with-future-value]
+funcs: PMT
+note: the optional fv shifts the balance -> PMT(0.5,2,-100,-50) = 110 (exact).
+formula: =PMT(0.5,2,-100,-50)
+expect: 110
+
+[pmt-type-annuity-due]
+funcs: PMT
+note: type=1 (payment at period START) scales the denominator by (1+rate) -> 60 (exact).
+formula: =PMT(0.5,2,-100,0,1)
+expect: 60
+
+[pmt-nper-zero-is-div0]
+funcs: PMT
+note: nper==0 makes the payment denominator zero -> #DIV/0! (the edge/error path).
+formula: =PMT(0.1,0,100)
+expect: #DIV/0!
+
+# --- NPV: discounts value1 from period ONE; ranges flatten row-major; errors propagate ---
+
+[npv-discount-from-period-one]
+funcs: NPV
+note: 100/2 + 200/4 + 300/8 = 50 + 50 + 37.5 = 137.5 (rate=1 makes every power dyadic-exact).
+formula: =NPV(1,100,200,300)
+expect: 137.5
+
+[npv-over-a-range]
+funcs: NPV
+note: the same three flows inside a range flatten row-major and discount identically to 137.5.
+cell A1: 100
+cell A2: 200
+cell A3: 300
+formula: =NPV(1,A1:A3)
+expect: 137.5
+
+[npv-with-negative-outflow]
+funcs: NPV
+note: -1000/2 + 500/4 + 500/8 + 500/16 = -500 + 125 + 62.5 + 31.25 = -281.25 (exact).
+formula: =NPV(1,-1000,500,500,500)
+expect: -281.25
+
+[npv-error-propagates]
+funcs: NPV
+note: an error among the values propagates -> the 1/0 makes the whole NPV #DIV/0! (edge/error path).
+formula: =NPV(1,100,1/0)
+expect: #DIV/0!
+
+# --- IRR: Newton (capped) + bracketing bisection fallback; no sign change -> #NUM! ---
+
+[irr-converges-to-root]
+funcs: IRR
+note: IRR of [-100,30,40,50] — the hand-Newton oracle's exact f64 from guess 0.1 (NPV at this rate
+note: is ~7e-15; cross-checked vs numpy np.roots = 0.088963394693350… to ~1e-12).
+cell A1: -100
+cell A2: 30
+cell A3: 40
+cell A4: 50
+formula: =IRR(A1:A4)
+expect: 0.08896339469334992
+
+[irr-all-positive-no-root-is-num]
+funcs: IRR
+note: all-positive flows never change sign -> no real IRR. Newton diverges, bisection finds no
+note: bracket, and the hard iteration caps yield a prompt #NUM! (the edge/error + no-hang path).
+cell A1: 100
+cell A2: 200
+cell A3: 300
+formula: =IRR(A1:A3)
+expect: #NUM!

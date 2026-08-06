@@ -1,0 +1,41 @@
+# sparse_blocks_normal_font_arial_9.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+#
+# The reading, in three steps:
+#
+# 1. `<cellStyle name="Normal" xfId="0"/>` -> cellStyleXfs[0] -> fontId 1 ->
+#    `<font><name val="Arial"/><sz val="9"/></font>`, so the workbook's Normal font is Arial 9, as in
+#    `normal_font_arial_9`. Each of the four `<c>` carries `s="1"` -> that same fontId, and nothing else.
+#
+# 2. OCCUPANCY is the four coordinates holding a value: A1, E5, A56, E60. No style in the sheet states
+#    a fill or an edge, and those are the only two looks that show on a cell holding no value, so no
+#    blank is content. The bounding box A1:E60 is 5x60 = 300 cells over 4 occupied, past the 256 waste
+#    budget, and the widest gap is the 50 empty rows 6..55 rather than the three empty columns B..D --
+#    so the cut is there: TWO blocks, A1:E5 and A56:E60, each 25 cells and under budget. 23 of each 25
+#    are blank, which is the shape neither `normal_font_arial_9` (2x2, fully occupied) nor
+#    `style_only_blank` (its blank carries a fill) holds.
+#
+# 3. A cell stating no style wears the workbook's Normal font, so all 25 cells of each block wear
+#    Arial 9 -- including the blanks. Arial 9 is not the format's own default (Calibri 11), which is
+#    what a writer restores for an undeclared cell, so both halves are DECLARED, uniform over the
+#    block, as ONE `td` rule. dk1 is `windowText`/000000, so the text colour IS the default and earns
+#    no declaration.
+file: Gaps/A1:E5
+|1				
+|				
+|				
+|				
+|				2
+|@scope {
+|  td { font-family: Arial; font-size: 9pt }
+|}
+file: Gaps/A56:E60
+|3				
+|				
+|				
+|				
+|				4
+|@scope {
+|  td { font-family: Arial; font-size: 9pt }
+|}

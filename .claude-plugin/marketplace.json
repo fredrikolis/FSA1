@@ -1,0 +1,15 @@
+{
+  "name": "fsa1",
+  "description": "Can load Excel files. Tabs are folders. Cells are files. A file-system based spreadsheet format designed for AI agents.",
+  "owner": {
+    "name": "Fredrik",
+    "url": "https://github.com/fredrikolis"
+  },
+  "plugins": [
+    {
+      "name": "fsa1",
+      "source": "./",
+      "description": "Can load Excel files. Tabs are folders. Cells are files. A file-system based spreadsheet format designed for AI agents: unpack an Excel (.xlsx) or OpenDocument (.ods) spreadsheet into a file tree, then render, lint, evaluate and trace it \u2014 and pack it back into Excel."
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+=SUMIFS(Sales!E2:E13, Sales!B2:B13, "EMEA", Sales!C2:C13, "Widget")

@@ -1,0 +1,89 @@
+# Aggregation functions: SUM, AVERAGE, COUNT.
+# EXPECTED values are derived from Excel semantics by hand (see PROVENANCE.md), never from FSA1.
+# The direct-vs-in-range coercion asymmetry is Excel-faithful: a bool/numeric-text coerces when passed
+# DIRECTLY, but is ignored when it rides INSIDE a range; COUNT never yields an error from its data.
+
+[sum-range-basic]
+funcs: SUM
+cell A1: 1
+cell A2: 2
+cell A3: 3
+formula: =SUM(A1:A3)
+expect: 6
+
+[sum-mixed-range-ignores-nonnumbers]
+funcs: SUM
+cell A1: 1
+cell A2: "x"
+cell A3: TRUE
+cell A4: <blank>
+cell A5: 4
+formula: =SUM(A1:A5)
+expect: 5
+
+[sum-all-nonnumeric-range-is-canonical-zero]
+funcs: SUM
+note: no numeric datum — the total is 0. Pins the canonical +0.0 (Value's Eq is bit-exact, so a stray -0.0 aggregate would Diverge from this 0).
+cell A1: "x"
+cell A2: TRUE
+cell A3: <blank>
+formula: =SUM(A1:A3)
+expect: 0
+
+[sum-direct-args-coerce]
+funcs: SUM
+formula: =SUM(1, TRUE, "2")
+expect: 4
+
+[sum-direct-nonnumeric-text-is-value-error]
+funcs: SUM
+formula: =SUM("x")
+expect: #VALUE!
+
+[sum-range-error-propagates]
+funcs: SUM
+cell A1: 1
+cell A2: #DIV/0!
+cell A3: 2
+formula: =SUM(A1:A3)
+expect: #DIV/0!
+
+[average-mixed-range]
+funcs: AVERAGE
+cell A1: 1
+cell A2: "x"
+cell A3: TRUE
+cell A4: <blank>
+cell A5: 4
+formula: =AVERAGE(A1:A5)
+expect: 2.5
+
+[average-no-numbers-is-div0]
+funcs: AVERAGE
+cell A1: "x"
+cell A2: <blank>
+formula: =AVERAGE(A1:A2)
+expect: #DIV/0!
+
+[count-in-range-counts-only-numbers]
+funcs: COUNT
+cell A1: 1
+cell A2: "x"
+cell A3: TRUE
+cell A4: <blank>
+cell A5: 4
+formula: =COUNT(A1:A5)
+expect: 2
+
+[count-direct-bool-and-numeric-text]
+funcs: COUNT
+formula: =COUNT(TRUE, "3")
+expect: 2
+
+[count-ignores-range-errors]
+funcs: COUNT
+cell A1: 1
+cell A2: #DIV/0!
+cell A3: 2
+formula: =COUNT(A1:A3)
+expect: 2

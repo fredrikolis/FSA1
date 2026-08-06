@@ -1,0 +1,34 @@
+# Cross-sheet references: a `Sheet!A1` reference resolves its sheet NAME to the addressed sheet at
+# eval (via the Resolver's name->SheetId seam). Context cells may be sheet-qualified (`cell Data!A1`);
+# an unqualified cell is the default sheet, which also answers to the name `Sheet1`. Expected values
+# are hand-derived from Excel cross-sheet semantics (a `Sheet!A1` reads that sheet's cell; an unknown
+# sheet is `#REF!`).
+
+[single-ref-routes-to-named-sheet]
+cell A1: 1
+cell Data!A1: 42
+formula: =Data!A1
+expect: 42
+
+[explicit-sheet1-is-the-default-sheet]
+cell A1: 5
+formula: =Sheet1!A1
+expect: 5
+
+[arithmetic-combines-two-sheets]
+cell A1: 100
+cell Data!A1: 42
+formula: =A1+Data!A1
+expect: 142
+
+[sum-over-a-cross-sheet-range]
+funcs: SUM
+cell Data!A1: 1
+cell Data!A2: 2
+cell Data!A3: 3
+formula: =SUM(Data!A1:A3)
+expect: 6
+
+[unknown-sheet-is-ref-error]
+formula: =Missing!A1
+expect: #REF!

@@ -1,0 +1,193 @@
+# Array-broadcast batch: the CSE-array idioms where a scalar TEXT function maps element-wise over a
+# range/array argument, and IF maps over an ARRAY condition, with a reducer collapsing the result.
+#
+# EXPECTED values are derived INDEPENDENTLY of FSA1 — computed by hand from Excel's array semantics
+# (a scalar function handed an array maps element-wise; IF over an array condition picks per element,
+# scalar branches broadcasting; SUM/SUMPRODUCT/CONCAT/TEXTJOIN collapse the mapped array) and
+# cross-checked against Excel's published behavior — NEVER by running FSA1 (see PROVENANCE.md).
+#
+# Excel reference (authoring run):
+#   SUMPRODUCT(LEN({"ab","cde"}))=5          ·  LEN({"a","bb","ccc"})={1,2,3}
+#   CONCAT(LEFT({"hello","world","!"},2))="hewo!"  ·  CONCAT(MID({"hello","world"},2,3))="ellorl"
+#   CONCAT(UPPER({"a","b"}))="AB"            ·  SUM(VALUE({"1","2","3"}))=6
+#   CONCAT(TEXT({1,2},"0.0"))="1.02.0"       ·  SUM(FIND("a",{"cat","bat"}))=4
+#   CONCAT(SUBSTITUTE({"a-b","c-d"},"-","+"))="a+bc+d"
+#   TEXTJOIN(", ",TRUE,IF({1;0;1},{"a";"b";"c"},""))="a, c"
+#   SUM(IF({1,0,1},{10,20,30},0))=40         ·  SUM(IF(1=1,{1,2,3},0))=6  (scalar cond: whole branch)
+#   SUMPRODUCT(IFERROR(VALUE(TRIM(RIGHT(SUBSTITUTE({"London 20";"Bristol 50";"Brighton 30"}," ",
+#     REPT(" ",100)),100))),0))=100  (last-token-after-space extractor over a column)
+#   DATE({2020,2021},1,1)={43831,44197}  (scalar constructor spills over its year position)
+#   NETWORKDAYS.INTL(45292,45298,{1,11})={5,6}  (2024-01-01..-07; weekend code 1=Sat+Sun -> 5,
+#     11=Sun-only -> 6; the .INTL weekend-code position spills, holidays stays consumed)
+
+[len-over-array-reduces]
+funcs: LEN SUMPRODUCT
+formula: =SUMPRODUCT(LEN({"ab","cde"}))
+expect: 5
+
+[len-over-array-is-an-array]
+funcs: LEN
+formula: =LEN({"a","bb","ccc"})
+expect: {1,2,3}
+
+[left-over-range-then-concat]
+funcs: LEFT CONCAT
+cell A1: "hello"
+cell A2: "world"
+cell A3: "!"
+formula: =CONCAT(LEFT(A1:A3,2))
+expect: "hewo!"
+
+[mid-over-array-then-concat]
+funcs: MID CONCAT
+formula: =CONCAT(MID({"hello","world"},2,3))
+expect: "ellorl"
+
+[upper-over-array-then-concat]
+funcs: UPPER CONCAT
+formula: =CONCAT(UPPER({"a","b"}))
+expect: "AB"
+
+[value-over-array-reduces]
+funcs: VALUE SUM
+formula: =SUM(VALUE({"1","2","3"}))
+expect: 6
+
+[text-over-array-then-concat]
+funcs: TEXT CONCAT
+formula: =CONCAT(TEXT({1,2},"0.0"))
+expect: "1.02.0"
+
+[find-over-array-reduces]
+funcs: FIND SUM
+formula: =SUM(FIND("a",{"cat","bat"}))
+expect: 4
+
+[substitute-over-array-then-concat]
+funcs: SUBSTITUTE CONCAT
+formula: =CONCAT(SUBSTITUTE({"a-b","c-d"},"-","+"))
+expect: "a+bc+d"
+
+[if-array-condition-textjoin-drops-empty]
+funcs: IF TEXTJOIN
+formula: =TEXTJOIN(", ",TRUE,IF({1;0;1},{"a";"b";"c"},""))
+expect: "a, c"
+
+[if-array-condition-scalar-branches-broadcast]
+funcs: IF SUM
+formula: =SUM(IF({1,0,1},{10,20,30},0))
+expect: 40
+
+[if-scalar-condition-passes-whole-branch]
+funcs: IF SUM
+formula: =SUM(IF(1=1,{1,2,3},0))
+expect: 6
+
+[trim-right-substitute-value-extractor]
+funcs: SUBSTITUTE RIGHT TRIM VALUE REPT IFERROR SUMPRODUCT
+formula: =SUMPRODUCT(IFERROR(VALUE(TRIM(RIGHT(SUBSTITUTE({"London 20";"Bristol 50";"Brighton 30"}," ",REPT(" ",100)),100))),0))
+expect: 100
+
+# --- ENG6 scalar-function-over-array batch: a SCALAR worksheet function handed a genuine multi-cell
+#     array MAPS element-wise (an array of the same shape, each cell the function of that cell, a
+#     per-cell error carried in place), while the array-CONSUMING reducers/lookups keep collapsing the
+#     array. Serials: 44927=2023-01-01, 44941=2023-01-15, 44958=2023-02-01, 44986=2023-03-01.
+#   Excel reference (authoring run):
+#     MONTH({44927,44958,44986})={1,2,3}      ·  YEAR({44927,44958,44986})={2023,2023,2023}
+#     ABS({-3,4,-5})={3,4,5}                   ·  SUM(ABS({-3,4,-5}))=12
+#     ROUND({1.23,4.56,7.89},1)={1.2,4.6,7.9}
+#     SUMPRODUCT((MONTH({44927;44958;44941;44986})=1)*{5000;1000;3942;2000})=8942
+#   Regression guards (these CONSUME the array whole — a per-element map would be a MAJOR regression):
+#     SUM(A1:A3)=60 · SUMPRODUCT(A1:A3,A1:A3)=1400 · COUNTIF(A1:A3,">=20")=2 ·
+#     MATCH(20,A1:A3,0)=2 · VLOOKUP(20,A1:B3,2,FALSE)=200
+
+[month-over-array-is-an-array]
+funcs: MONTH
+formula: =MONTH({44927,44958,44986})
+expect: {1,2,3}
+
+[year-over-array-is-an-array]
+funcs: YEAR
+formula: =YEAR({44927,44958,44986})
+expect: {2023,2023,2023}
+
+[date-constructor-over-array-is-an-array]
+funcs: DATE
+formula: =DATE({2020,2021},1,1)
+expect: {43831,44197}
+
+[networkdays-intl-over-array-weekend-code-is-an-array]
+funcs: NETWORKDAYS.INTL
+formula: =NETWORKDAYS.INTL(45292,45298,{1,11})
+expect: {5,6}
+
+[abs-over-array-is-an-array]
+funcs: ABS
+formula: =ABS({-3,4,-5})
+expect: {3,4,5}
+
+[abs-over-array-reduces]
+funcs: ABS SUM
+formula: =SUM(ABS({-3,4,-5}))
+expect: 12
+
+[round-over-array-broadcasts-scalar]
+funcs: ROUND
+formula: =ROUND({1.23,4.56,7.89},1)
+expect: {1.2,4.6,7.9}
+
+[sumproduct-month-eq-k-times-values-8942]
+funcs: MONTH SUMPRODUCT
+cell A1: 44927
+cell A2: 44958
+cell A3: 44941
+cell A4: 44986
+cell B1: 5000
+cell B2: 1000
+cell B3: 3942
+cell B4: 2000
+formula: =SUMPRODUCT((MONTH(A1:A4)=1)*B1:B4)
+expect: 8942
+
+[reducer-guard-sum-over-range-still-reduces]
+funcs: SUM
+cell A1: 10
+cell A2: 20
+cell A3: 30
+formula: =SUM(A1:A3)
+expect: 60
+
+[reducer-guard-sumproduct-over-range-still-reduces]
+funcs: SUMPRODUCT
+cell A1: 10
+cell A2: 20
+cell A3: 30
+formula: =SUMPRODUCT(A1:A3,A1:A3)
+expect: 1400
+
+[reducer-guard-countif-over-range-still-reduces]
+funcs: COUNTIF
+cell A1: 10
+cell A2: 20
+cell A3: 30
+formula: =COUNTIF(A1:A3,">=20")
+expect: 2
+
+[reducer-guard-match-over-range-still-reduces]
+funcs: MATCH
+cell A1: 10
+cell A2: 20
+cell A3: 30
+formula: =MATCH(20,A1:A3,0)
+expect: 2
+
+[reducer-guard-vlookup-over-range-still-reduces]
+funcs: VLOOKUP
+cell A1: 10
+cell B1: 100
+cell A2: 20
+cell B2: 200
+cell A3: 30
+cell B3: 300
+formula: =VLOOKUP(20,A1:B3,2,FALSE)
+expect: 200

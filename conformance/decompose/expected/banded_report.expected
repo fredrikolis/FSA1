@@ -1,0 +1,72 @@
+# banded_report.xlsx -- FROZEN EXPECTATION.
+# A frozen expectation is corrected ONLY when the reading of the third-party-authored fixture was
+# wrong -- never edited to chase an FSA1 regression.
+#
+# The `region:` lines are the SEMANTIC reading, written from the authored structure before `unpack`
+# was run on this file. The `block:` lines are the hand-derivation below, executed on the fixture's
+# own `s=` attributes.
+#
+# THE SIGNATURES, off xl/worksheets/sheet1.xml:
+#   s="1" on A1:C1                  the header row   (bold, solid fill D9D9D9)  -- h
+#   s="2" on rows 2, 4, 6 and 8     the even band    (solid fill FFFFFF)        -- e
+#   s="3" on rows 3, 5, 7 and 9     the odd band     (solid fill F2F2F2)        -- o
+# All 27 coordinates of A1:C9 are occupied and not one is unstyled, so no rectangle below ever loses
+# its modal rule to an unstated coordinate. A, B and C state the same index on every row, so the sheet
+# is nine one-signature strips stacked h,e,o,e,o,e,o,e,o -- and no column of any rectangle below is
+# uniform, column A alone reading h,e,o,e,o,e,o,e,o, so nothing here costs a column rule and no cell
+# is ever left over. Every count in this derivation is therefore one modal plus one rule per row the
+# modal does not already speak for.
+#
+# WHY THIS FIXTURE EXISTS, and why its `misses:` is 0. It is the corpus's FRAGMENTATION guard, not a
+# recall test. A banded table is a sheet `--decompose occupancy` already cuts correctly, and it is
+# exactly the shape `appearance` used to shatter: nine seeded strips that have to come back together.
+# The frozen single `block:` line is what would grow to TWO lines the moment the join stops paying --
+# visible in the same review that changed the policy, which is the whole of what this fixture buys.
+#
+# 1. SEED. Each signature's group is covered on its own, row-major and greedily. h is {A1,B1,C1}:
+#    three wide, one deep -> A1:C1. e is the twelve cells of rows 2, 4, 6 and 8: three wide, but never
+#    two deep, because row 3 holds no e -> A2:C2, A4:C4, A6:C6, A8:C8. o likewise -> A3:C3, A5:C5,
+#    A7:C7, A9:C9. NINE regions, each gapless over one signature and so one rule each: the potential
+#    is 9 rules + 9 lambda = 18.
+#
+# 2. GROWTH runs to its fixed point at A1:C6 and A7:C9, and stalls there. While a neighbour is ONE
+#    strip deep, taking it pays: the merged rectangle spells the taken row with one row rule, which
+#    costs exactly the lambda the vanished region refunds, and there is no remnant -- the +1 merge
+#    PROVENANCE.md records for two stacked same-width single-row regions, and the reason the strips
+#    pair off at all. It stops once both sides are more than one strip deep, because an expansion
+#    takes ONE strip and the neighbour it took it from SURVIVES: the remnant is re-cut and charged its
+#    own lambda over again, so nothing is refunded while the strip still costs the expander its row
+#    rule. Priced at the fixed point:
+#    A1:C6 down takes row 7 alone and cuts A7:C9 to A8:C9. rules(A1:C6) = 4, rules(A1:C7) = 5, and
+#    rules(A8:C9) = 2 -- the same 2 A7:C9 cost, so the squash refunds nothing at all. Before 4+1 + 2+1
+#    = 8, after 5+1 + 2+1 = 9 -> -1.
+#    A7:C9 up takes row 6 alone and cuts A1:C6 to A1:C5. rules(A6:C9) = 3, rules(A1:C5) = 4. Before 8,
+#    after 3+1 + 4+1 = 9 -> -1.
+#    Neither is a candidate. Rows 10-12 and columns D-F hold nothing, so those are the only moves
+#    either region can reach. TWO regions, at 4 and 2 rules: the potential is 6 + 2 lambda = 8.
+#
+# 3. JOIN, round 1. Both regions share the extent (column A, three wide), so both land in the one
+#    vertical `sweep` group, whose anchors fold left to right.
+#    rules(A1:C6) = 4: over its eighteen cells e is modal at nine -- rows 2, 4 and 6 -- against o's
+#    six and h's three, and rows 1, 3 and 5 each need a row rule -> 1 + 3.
+#    rules(A7:C9) = 2: o is modal at six of nine and row 8 needs a row rule -> 1 + 1.
+#    rules(A1:C9) = 6: over the full 27 cells e and o TIE at twelve each. The count is the same either
+#    way, so the derivation does not rest on a tie-break -- modal e leaves rows 1, 3, 5, 7 and 9
+#    needing a rule, modal o leaves rows 1, 2, 4, 6 and 8, five row rules whichever way it falls,
+#    header included in both -> 1 + 5.
+#    The join's test is strict, and it passes: rules(a) + rules(b) + lambda = 4 + 2 + 1 = 7 > 6. The
+#    union is taken and the potential falls from 6 + 2 lambda = 8 to 6 + 1 lambda = 7. ONE region.
+#
+# 4. REGROW, then JOIN round 2. A1:C9 is the whole occupied sheet -- no strip outside it carries
+#    anything -- so growth is silent from its first pass, and a lone region has no sibling to fold
+#    against. The loop ends, having applied nothing. ONE block: the table whole.
+#
+# 5. `--decompose occupancy` reads no signature: 27 occupied cells in a 3x9 bounding box, area 27,
+#    under the policy's 256-cell floor -- below a 16x16 no split pays for itself, whatever the
+#    occupancy -- so it writes ONE block A1:C9. That is the same single block `appearance` writes. The
+#    one labelled start, row 1, is emitted by both, so it misses none.
+sheet:  Report
+region: 1-9 the table, its header row and its eight banded body rows
+block:  A1:C9
+policy: appearance
+misses: 0

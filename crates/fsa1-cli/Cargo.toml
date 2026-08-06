@@ -1,0 +1,21 @@
+# Concern: declares the package, its binary target and the crates the CLI composes | Non-concern: the deny edges barring anything from depending on it (.annotated-tree.toml) | IO: none
+[package]
+name = "fsa1-cli"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[[bin]]
+name = "fsa1-cli"
+path = "src/main.rs"
+
+[dependencies]
+fsa1-model = { path = "../fsa1-model" }
+fsa1-html = { path = "../fsa1-html" }
+fsa1-ingest = { path = "../fsa1-ingest" }
+fsa1-xlsx = { path = "../fsa1-xlsx" }
+comfy-table = "7.2"
+annotated-tree = "0.6"
+
+[dev-dependencies]
+calamine = "0.36"

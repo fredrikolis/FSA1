@@ -1,0 +1,14 @@
+{
+  "name": "fsa1",
+  "displayName": "FSA1",
+  "version": "0.1.0",
+  "description": "Can load Excel files. Tabs are folders. Cells are files. A file-system based spreadsheet format designed for AI agents: unpack an Excel (.xlsx) or OpenDocument (.ods) spreadsheet into a file tree, then render, lint, evaluate and trace it — and pack it back into Excel.",
+  "author": {
+    "name": "Fredrik",
+    "url": "https://github.com/fredrikolis"
+  },
+  "homepage": "https://fsa1.sh",
+  "repository": "https://github.com/fredrikolis/FSA1",
+  "license": "MIT",
+  "keywords": ["excel", "spreadsheet", "xlsx", "ods", "opendocument", "cli", "filesystem", "agents"]
+}

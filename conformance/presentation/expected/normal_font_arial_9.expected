@@ -1,0 +1,16 @@
+# normal_font_arial_9.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+#
+# The reading: `<cellStyle name="Normal" xfId="0"/>` -> cellStyleXfs[0] -> fontId 1 ->
+# `<font><name val="Arial"/><sz val="9"/></font>`, so the workbook's Normal font is Arial 9. Every
+# `<c>` carries `s="1"` -> cellXfs[1] -> that same fontId 1, and states nothing else at all.
+# Arial 9 is not the format's own default (Calibri 11), which is what a writer restores for an
+# undeclared cell, so both halves must be DECLARED -- one `td` rule, the whole block wearing them.
+# dk1 is `windowText`/000000, so the text colour IS the default and earns no declaration.
+file: Arial/A1:B2
+|A1	B1
+|A2	B2
+|@scope {
+|  td { font-family: Arial; font-size: 9pt }
+|}

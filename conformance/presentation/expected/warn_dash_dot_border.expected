@@ -1,0 +1,9 @@
+# warn_dash_dot_border.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+warning: border style dashDot at Sheet1!A1 approximated as dashed
+file: Sheet1/A1
+|Edge
+|@scope {
+|  td { border-bottom: 1px dashed #000000 }
+|}

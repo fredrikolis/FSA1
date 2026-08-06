@@ -1,0 +1,14 @@
+[
+  { "name": "true_call", "category": "logical", "inputs": {}, "formula": "=TRUE()" },
+  { "name": "false_call", "category": "logical", "inputs": {}, "formula": "=FALSE()" },
+  { "name": "xor_odd_bools", "category": "logical", "inputs": {}, "formula": "=XOR(TRUE,FALSE,FALSE)" },
+  { "name": "xor_even_bools", "category": "logical", "inputs": {}, "formula": "=XOR(TRUE,TRUE)" },
+  { "name": "xor_three_true", "category": "logical", "inputs": {}, "formula": "=XOR(TRUE,TRUE,TRUE)" },
+  { "name": "xor_numbers_coerce", "category": "logical", "inputs": {}, "formula": "=XOR(1,0,5)" },
+  { "name": "iferror_scalar_catches", "category": "logical", "inputs": {}, "formula": "=IFERROR(1/0,42)" },
+  { "name": "iferror_scalar_passthrough", "category": "logical", "inputs": {}, "formula": "=IFERROR(7,42)" },
+  { "name": "ifna_scalar_catches_na", "category": "logical", "inputs": {}, "formula": "=IFNA(NA(),7)" },
+  { "name": "ifna_scalar_ignores_div0", "category": "logical", "inputs": {}, "formula": "=IFERROR(IFNA(1/0,7),99)" },
+  { "name": "iferror_array_element_wise", "category": "logical", "inputs": {"A1": 1, "A2": "=1/0", "A3": 3}, "formula": "=SUM(IFERROR(A1:A3,0))" },
+  { "name": "ifna_array_element_wise", "category": "logical", "inputs": {"A1": "=NA()", "A2": 5, "A3": 10}, "formula": "=SUM(IFNA(A1:A3,0))" }
+]

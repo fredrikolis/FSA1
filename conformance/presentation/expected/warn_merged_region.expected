@@ -1,0 +1,6 @@
+# warn_merged_region.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+warning: merged region Sheet1!A1:B1 flattened; its value stays in the top-left cell
+file: Sheet1/A1
+|Title

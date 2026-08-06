@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FSA1 — a file-system based spreadsheet format</title>
+<meta name="description" content="Tabs are folders. Cells are files. A file-system based spreadsheet format designed for AI agents." />
+<meta name="color-scheme" content="light dark" />
+<style>
+/* ==========================================================
+   FSA1.sh — the simple cut.
+   One column, six beats, and one driver behind every motion
+   on the page. Frames stack in a single grid cell, so a box
+   is as tall as its tallest frame and nothing ever reflows
+   the text under it.
+   Three colours carry the argument and are never decorative:
+   green = a formula, amber = a display format, blue = CSS.
+
+   The palette is authored in OKLCH and declared once, with
+   light-dark() carrying both themes on a single line — so the
+   two halves cannot drift out of step, which is the failure
+   mode of keeping three copies of a palette in sync. Every
+   neutral is the same hue (250) at a different lightness and
+   almost no chroma, which is the only way to get two themes
+   that are perceptually mirrored rather than merely inverted.
+   ========================================================== */
+
+:root{
+  /* light-dark() reads this. The [data-theme] rules below pin
+     it, so an explicit theme still overrides the system one. */
+  color-scheme: light dark;
+
+  /* --- the neutral ramp: lightness is the only variable --- */
+  --bg   : light-dark(oklch(0.985 0.005 250), oklch(0.145 0.008 250));
+  --tint : light-dark(oklch(0.960 0.009 250), oklch(0.200 0.011 250));  /* alternate section ground */
+  --fg   : light-dark(oklch(0.225 0.018 250), oklch(0.945 0.006 250));
+  --dim  : light-dark(oklch(0.485 0.018 250), oklch(0.708 0.016 250));
+
+  /* --- the layered neutrals are ALPHA, not opaque ---
+     A window sits on the page ground in one section and on the
+     tinted ground in the next. An opaque panel colour can only
+     be right on one of them; a translucent one composites and
+     is right on both, and on itself when a control is inset in
+     a window. Same argument for every hairline on the page. */
+  --panel      : light-dark(oklch(0.52 0.070 250 / .075), oklch(0.82 0.040 250 / .105));
+  --panel-hi   : light-dark(oklch(0.52 0.070 250 / .120), oklch(0.82 0.040 250 / .155));
+  --rule       : light-dark(oklch(0.45 0.060 250 / .16),  oklch(0.95 0.020 250 / .16));
+  /* a control's edge is one step up from a divider's: the page says what
+     is pressable with its border weight before anything is hovered */
+  --rule-int   : light-dark(oklch(0.45 0.060 250 / .26),  oklch(0.95 0.020 250 / .26));
+  --rule-strong: light-dark(oklch(0.45 0.060 250 / .34),  oklch(0.95 0.020 250 / .40));
+  /* one inset hairline along the top of a raised surface, so a
+     flat panel catches light from above. Dark theme only: on a
+     white ground there is no light to catch. */
+  --edge       : light-dark(oklch(1 0 0 / 0), oklch(1 0 0 / .075));
+  /* a control inset in a window drops back to the page ground, so it reads
+     as cut THROUGH the panel rather than stacked on top of it. Stacking a
+     third tint on the second one goes muddy in light and falls under AA in
+     dark, and the page ground is a colour the reader already knows. */
+  --raise      : var(--bg);
+
+  /* --- the three layers a cell file is made of ---
+     Hue is held across the themes and only lightness moves:
+     ~0.50 on a light ground, ~0.79 on a dark one. That is
+     where the contrast ratio lands above AA on the page
+     ground, on the tinted band and inside a panel alike. */
+  --l-fx : light-dark(oklch(0.485 0.100 163), oklch(0.785 0.150 163));  /* =formula        */
+  --l-fmt: light-dark(oklch(0.505 0.115 62),  oklch(0.795 0.150 70));   /* ~display format */
+  --l-css: light-dark(oklch(0.500 0.145 255), oklch(0.775 0.115 250));  /* @scope { … }    */
+  /* the accent is the formula green and nothing else: a fourth
+     colour for chrome would be the first decorative one */
+  --accent     : var(--l-fx);
+  --accent-soft: light-dark(oklch(0.485 0.100 163 / .13), oklch(0.785 0.150 163 / .17));
+  --accent-line: light-dark(oklch(0.485 0.100 163 / .55), oklch(0.785 0.150 163 / .55));
+  --select     : light-dark(oklch(0.485 0.100 163 / .22), oklch(0.785 0.150 163 / .28));
+
+  /* --- type ---
+     No request leaves this page, so the stack is the design.
+     Inter first because a large part of this audience already
+     has it installed and it costs nothing when they do not;
+     then the platform faces. Segoe UI Variable ships separate
+     optical cuts on Windows — Display for headings, Text for
+     body — which is real optical sizing with nothing to load. */
+  --sans  :"Inter Variable",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",Helvetica,Arial,system-ui,sans-serif;
+  --sans-d:"Inter Variable",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI",Roboto,"Helvetica Neue",Helvetica,Arial,system-ui,sans-serif;
+  /* every candidate is genuinely fixed-pitch, because the
+     bracket grid and the anatomy slots are measured in ch */
+  --mono  :"Berkeley Mono","Geist Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+
+  /* --- motion ---
+     150ms on a standard curve for anything stateful, ~110ms
+     for a hover on a small control, and a long-tail curve for
+     the content cross-fades, which decelerate into rest rather
+     than easing symmetrically in and out of it. */
+  --e     : cubic-bezier(.4,0,.2,1);
+  --e-out : cubic-bezier(.32,.72,0,1);
+  --t-fast: 110ms;
+  --t     : 150ms;
+  --t-slow: 280ms;
+
+  /* --- geometry ---
+     Small. A terminal is a crisp-cornered object and this page
+     is about one; nested corners come in a step tighter. */
+  --r   : 4px;
+  --r-sm: 3px;
+}
+:root[data-theme="light"]{ color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark;  }
+
+*,*::before,*::after{ box-sizing:border-box; }
+
+html{ background:var(--bg); -webkit-text-size-adjust:100%; scroll-behavior:smooth; }
+body{
+  margin:0;
+  color:var(--fg);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.55;
+  letter-spacing:-0.006em;
+  -webkit-font-smoothing:antialiased;
+  font-optical-sizing:auto;
+  /* One ambient light source, painted on the body box so it can
+     never widen the document the way a positioned element can.
+     It falls off well before the first tinted band, which would
+     paint over it edge to edge and cut it off. */
+  background-color:var(--bg);
+  background-image:radial-gradient(ellipse 110% 460px at 50% -40px,
+      light-dark(oklch(0.560 0.110 168 / .085), oklch(0.785 0.150 163 / .085)),
+      transparent 72%);
+  background-repeat:no-repeat;
+}
+::selection{ background:var(--select); }
+
+a{ color:inherit; text-underline-offset:3px; text-decoration-thickness:1px;
+   text-decoration-color:var(--accent-line);
+   transition:color var(--t-fast) var(--e), text-decoration-color var(--t-fast) var(--e); }
+a:hover{ color:var(--accent); text-decoration-color:var(--accent); }
+
+/* One focus treatment for every control on the page: a ring
+   with a gap, in the accent, which flips with the theme so it
+   is visible on either ground. The gap is what stops it being
+   read as a border. */
+:where(a,button):focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+
+main{ max-width:720px; margin:0 auto; padding:0 24px; }
+@media (max-width:560px){ main{ padding:0 20px; } }
+
+/* Every section opens the way the name does, in brackets — the one
+   piece of furniture the page repeats, so a reader who learns it in
+   the hero reads the rest of the page with it. There is no rule beside
+   it and no rule above it: the change of ground already says a section
+   has begun, and a hairline on top of that was a breaker on a breaker. */
+.kicker{
+  margin:0 0 24px;
+  font-family:var(--mono);
+  font-size:12px;
+  line-height:1;
+  letter-spacing:.10em;
+  color:var(--dim);
+  max-width:none;
+}
+
+/* ---------- the spine: one rhythm, six beats ----------
+   A section begins where its ground changes, and its label sits on
+   that edge. The clearance scales with the viewport: at a phone's
+   width a fixed gap reads as the label floating high, and at desktop
+   width the same gap reads as the label jammed into the seam. All the
+   space between sections belongs to the section above. */
+section{ position:relative; padding:clamp(12px,2.2vw,30px) 0 clamp(64px,8vw,96px); }
+/* Alternate sections stand on a slightly different ground — a step of
+   about 1.5% toward the panel colour, well under the panel itself so a
+   content window still reads as a window on either. The shadow spread
+   paints it edge to edge without adding a pixel of layout width; the
+   clip keeps it from bleeding into the sections above and below. */
+section:nth-of-type(even){
+  background:var(--tint);
+  box-shadow:0 0 0 100vmax var(--tint);
+  clip-path:inset(0 -100vmax);
+}
+
+h2{
+  font-family:var(--sans-d);
+  font-size:clamp(27px,4.6vw,38px);
+  line-height:1.16;
+  letter-spacing:-0.035em;
+  font-weight:500;
+  margin:0 0 28px;
+}
+h2 .soft{ color:var(--dim); }
+h2 code{ font-family:var(--mono); font-size:.86em; letter-spacing:0; }
+
+/* ---------- 1 · the hero ---------- */
+/* anchored to the top of the page, not floated in the viewport */
+.hero{ padding:clamp(12px,2.2vw,30px) 0 clamp(64px,8vw,96px); }
+/* The expansion sits above the wordmark, on the same line every other
+   section puts its label — so the hero is not an exception to the
+   page's shape, it is the first instance of it. */
+.lockup{ display:block; }
+.wordmark{
+  font-family:var(--mono);
+  font-size:clamp(56px,14.5vw,128px);
+  line-height:.9;
+  letter-spacing:-0.055em;
+  font-weight:400;
+  margin:0;
+}
+/* The expansion reads itself out loud, in four states:
+     [ File-system A1 ]   the name, spelled out
+     [             A1 ]   file-system fades
+     [  A1            ]   A1 slides to where the phrase will balance
+     [  A1 for AI ⠹   ]   what it is for arrives, and starts thinking
+   then the same four in reverse. Every part is absolutely positioned
+   on a monospaced column grid, so the whole thing is one fixed 18ch
+   box and nothing it does can move the page.
+   The brackets are the frame and never move: everything happens
+   between them, on these columns. A1 travels once, straight to the
+   column the finished phrase balances on — going to the far left
+   first and coming back would read as an overshoot.
+     [ 0 · File-system 2-12 · A1 14-15 ·             ] 17
+     [ 0 · A1 4-5 · for AI 7-12 · spinner 14 ·      ] 17
+   letter-spacing is pinned to zero here and in every other mono
+   block: 1ch is one column only while nothing is added between
+   the columns, and the body sets a slight negative tracking. */
+.expand{
+  position:relative;
+  display:block;
+  width:18ch;
+  height:1.5em;
+  margin:0 0 18px;
+  font-family:var(--mono);
+  font-size:clamp(13px,2.4vw,17px);
+  letter-spacing:0;
+  color:var(--dim);
+  white-space:nowrap;
+}
+.expand i{
+  position:absolute; left:0; top:0;
+  font-style:normal;
+  transition:opacity 360ms var(--e), transform 520ms var(--e-out);
+}
+.expand .lb{ transform:translateX(0); }
+.expand .w1{ transform:translateX(2ch); }
+.expand .w2{ transform:translateX(14ch); }
+.expand .w3{ transform:translateX(7ch); opacity:0; }
+/* fixed box, centred glyph: a wide braille cell overflows its own
+   1ch slot symmetrically instead of displacing the line */
+.expand .sp{
+  transform:translateX(14ch); opacity:0; color:var(--accent);
+  width:1ch; text-align:center;
+}
+.expand .rb{ transform:translateX(17ch); }
+
+.expand.s1 .w1,.expand.s2 .w1,.expand.s3 .w1{ opacity:0; }
+.expand.s2 .w2,.expand.s3 .w2{ transform:translateX(4ch); }
+.expand.s3 .w3,.expand.s3 .sp{ opacity:1; }
+/* the A1 in the expansion is the one term a reader may not know, so it
+   is the one link in the lockup */
+.expand a{
+  color:inherit;
+  text-decoration:underline dotted;
+  text-decoration-color:var(--dim);
+  text-underline-offset:4px;
+}
+.expand a:hover{ color:var(--accent); text-decoration-color:var(--accent); }
+.tagline{
+  font-family:var(--sans-d);
+  margin:32px 0 0;
+  font-size:clamp(20px,3.4vw,29px);
+  line-height:1.3;
+  letter-spacing:-0.026em;
+  max-width:27ch;
+  text-wrap:balance;
+}
+/* One sentence, one size. Naming the vendors in turn was motion for its
+   own sake, and setting the subject bigger broke the line it belongs
+   to — colour alone is enough to say which two words matter. */
+.agents{ color:var(--accent); white-space:nowrap; }
+
+/* the one instruction on the page: what to do with any of this */
+.handoff{
+  margin:32px 0 0;
+  font-size:16px;
+  color:var(--dim);
+  max-width:none;
+  text-wrap:pretty;
+}
+.handoff code{ font-family:var(--mono); font-size:.9em; letter-spacing:0; color:var(--fg); }
+
+/* ---------- the install line ----------
+   The whole thing is the button: on a page whose subject is the shell,
+   a separate "copy" control beside the command would be one widget too
+   many. Click anywhere on the line. */
+.install{
+  display:flex; align-items:baseline; gap:10px;
+  width:100%;
+  margin:14px 0 0; padding:14px 16px;
+  font-family:var(--mono); font-size:14px; line-height:1.4; letter-spacing:0;
+  color:var(--fg); background:var(--panel);
+  border:1px solid var(--rule-int); border-radius:var(--r);
+  box-shadow:inset 0 1px 0 var(--edge);
+  cursor:pointer; text-align:left;
+  max-width:100%;
+  /* the chrome is furniture, not text: a click on the button must never
+     leave the reader with half of it highlighted */
+  -webkit-user-select:none; user-select:none;
+  transition:border-color var(--t) var(--e), background-color var(--t) var(--e);
+}
+.install:hover{ border-color:var(--rule-strong); background:var(--panel-hi); }
+.install:active{ background:var(--panel); }
+/* the whole line acknowledges the copy, not just the label — the label is
+   hidden on a phone, and a control that gives no answer there is broken */
+.install.done{ border-color:var(--accent-line); background:var(--accent-soft); }
+.install code{ font:inherit; flex:1 1 auto; overflow-x:auto;
+               -webkit-user-select:text; user-select:text; }
+.install .p{ color:var(--accent); flex:0 0 auto; }
+.install .copy{
+  flex:0 0 auto; margin-left:6px;
+  font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--dim);
+  transition:color var(--t) var(--e);
+}
+.install.done .copy{ color:var(--accent); }
+@media (max-width:560px){
+  .install{ font-size:12.5px; gap:8px; padding:12px 13px; }
+  .install .copy{ display:none; }
+}
+
+/* ---------- code surfaces ----------
+   The dev-tool convention, and the plainest thing on the page: an
+   alpha tint over whatever ground it lands on, one alpha hairline,
+   a small radius, no shadow. */
+pre,.term{
+  font-family:var(--mono);
+  font-size:13.5px;
+  line-height:1.6;
+  letter-spacing:0;
+  margin:0;
+  white-space:pre;
+  overflow-x:auto;
+}
+.term{
+  background:var(--panel);
+  border:1px solid var(--rule);
+  border-radius:var(--r);
+  box-shadow:inset 0 1px 0 var(--edge);
+  padding:18px 20px;
+}
+.term .p{ color:var(--accent); }         /* the $ prompt              */
+.term .c{ color:var(--dim); }            /* comments and dim chrome   */
+.term .d{ color:var(--dim); }            /* directory headers in ls   */
+.term .fx{ color:var(--l-fx); }          /* an =formula, anywhere     */
+
+/* ---------- 3 · the three claims ---------- */
+ul.claims{ list-style:none; margin:0; padding:0; }
+ul.claims li{
+  display:flex;
+  gap:14px;
+  align-items:baseline;
+  padding:20px 0;
+  border-top:1px solid var(--rule);
+  font-size:clamp(17px,2.3vw,20px);
+  letter-spacing:-0.017em;
+}
+/* the section already draws a rule above; a second one on the first
+   item is the same line twice */
+ul.claims li:first-child{ border-top:0; padding-top:0; }
+ul.claims .box{
+  font-family:var(--mono);
+  color:var(--accent);
+  flex:0 0 auto;
+  font-size:15px;
+  letter-spacing:0;
+}
+ul.claims .note{
+  display:block;
+  font-size:14px;
+  line-height:1.5;
+  color:var(--dim);
+  letter-spacing:-0.004em;
+  max-width:62ch;
+  margin-top:4px;
+  text-wrap:pretty;
+}
+
+/* ---------- the looping demos ----------
+   Every frame stacks in one grid cell. The frames are different sizes
+   — an ASCII grid is wider than an HTML table, a listing is taller than
+   either — and a box that resized to each in turn would make the page
+   twitch. So fit() measures them all once, scales any frame too wide to
+   fit, and pins the box to the tallest result. After that the only
+   thing an animation changes is opacity. */
+.loop{ display:grid; align-items:start; }
+.loop .frame{
+  grid-area:1 / 1;
+  min-width:0;
+  opacity:0;
+  transition:opacity 200ms var(--e);
+  pointer-events:none;
+}
+/* The swap is staged rather than a straight cross-fade: the outgoing frame
+   leaves first and the incoming one follows a beat behind it. Fading both
+   at once puts every frame through a stretch where two half-transparent
+   listings are laid over each other, which reads as a smudge and not as a
+   change — and the change is the whole point of the box. */
+.loop .frame.on{
+  opacity:1; pointer-events:auto;
+  transition:opacity var(--t-slow) var(--e-out) 90ms;
+}
+/* shrink-wrapped so fit() can read a true content width, not the
+   width of the box it is sitting in */
+.loop .term,.loop .rendered{
+  display:inline-block;
+  overflow:visible;
+  transform-origin:top left;
+}
+
+/* ---------- the content window ----------
+   The chrome belongs to the window, not to the frames inside it. The
+   frames differ in size; the window never does, so the border the
+   reader sees holds still while its contents change — and a control
+   can be inset in it the way a copy button is. */
+.window{
+  position:relative;
+  transition:background-color 320ms var(--e), border-color 320ms var(--e);
+  background:var(--panel);
+  border:1px solid var(--rule);
+  border-radius:var(--r);
+  box-shadow:inset 0 1px 0 var(--edge);
+  padding:18px 20px;
+  overflow:hidden;
+}
+.window .term{ background:none; border:0; border-radius:0; padding:0; box-shadow:none; }
+
+.toggle{
+  position:absolute; top:8px; right:8px; z-index:2;
+  overflow:hidden;
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.09em;
+  color:var(--dim); background:var(--raise);
+  border:1px solid var(--rule-int); border-radius:var(--r-sm);
+  padding:5px 10px; cursor:pointer;
+  transition:color var(--t) var(--e), border-color var(--t) var(--e),
+             background-color var(--t) var(--e);
+}
+.toggle:hover{ color:var(--accent); border-color:var(--rule-strong); }
+.toggle.live{ color:var(--accent); border-color:var(--accent-line); }
+/* the render is on loan for five seconds. The bar drains so the return
+   is something the reader watched coming, not something that happened
+   to them — and it is the only clock on the page they control. */
+.toggle .bar{
+  position:absolute; left:0; bottom:0;
+  height:1.5px; width:0;
+  background:var(--accent);
+}
+
+/* ---------- the write list ----------
+   Not a swap: all of them are true at once, so all of them stay on the
+   page. A focus walks top to bottom instead — but it walks by raising
+   the focused block onto a surface, not by fading the other three out.
+   Opacity was the wrong instrument here: at any dim deep enough to
+   read as unfocused, a comment line in --dim falls under AA, and the
+   reader is meant to end up reading all four. */
+.stack{ display:grid; gap:10px; }
+.stack .frame{ min-width:0; }   /* else a long line widens the page itself */
+.stack .frame .term{
+  background:transparent;
+  border-color:transparent;
+  box-shadow:none;
+  transition:background-color 480ms var(--e-out), border-color 480ms var(--e-out),
+             box-shadow 480ms var(--e-out);
+}
+.stack .frame.on .term{
+  background:var(--panel-hi);
+  border-color:var(--rule);
+  box-shadow:inset 0 1px 0 var(--edge);
+}
+
+.cmd{
+  font-family:var(--mono);
+  font-size:13.5px;
+  letter-spacing:0;
+  color:var(--dim);
+  margin-bottom:12px;
+  min-height:1.6em;
+}
+.cmd .p{ color:var(--accent); }
+
+/* The html frame is a whole document, so it takes the window rather
+   than sitting in a second box inside it: the surface turns to paper for
+   as long as that frame is up. It has to stay a LIGHT document in both
+   themes — it depicts a rendered HTML file, and a dark one would depict
+   something else. But a sheet of pure #fff dropped into a near-black page
+   is a flashbulb, so on the dark theme the paper is toned to a soft white
+   and every value inside it steps down with it, keeping the document's own
+   internal relationships (paper > header fill > rule) exactly as they are.
+   The window's hairline is restated here too: an alpha rule tuned for a
+   dark ground disappears against paper. */
+.rendered{ color:#111; letter-spacing:normal; }
+.window.doc{
+  background:light-dark(#fff,#E4E6E9);
+  border-color:light-dark(rgba(0,0,0,.13),rgba(0,0,0,.28));
+  box-shadow:none;
+}
+.rendered table{ border-collapse:collapse; font-family:var(--sans); font-size:13px; }
+.rendered caption{ font-weight:600; padding:0 0 8px; text-align:left; color:#111; }
+.rendered th,.rendered td{ border:1px solid light-dark(#ddd,#C4C7CB); padding:3px 9px; white-space:pre; }
+.rendered th{ background:light-dark(#f0f0f0,#D6D8DC); font-weight:400; color:#444; }
+/* these two classes are emitted by fsa1-cli, one per @scope block in
+   the workbook — the cells' own CSS, carried into the document. The
+   literal hex is quoted verbatim in the anatomy block above, so it is
+   the workbook's colour and not the page's, and it does not move when
+   the page's palette does. On the toned paper it is dimmed by exactly
+   the same factor as the paper, so the workbook's own contrast holds. */
+.rendered .c0{ background-color:light-dark(#d9e1f2,#C2CAD9); font-weight:bold; text-align:center; }
+.rendered .c1{ border-top:2px solid #1b6b58; }
+
+.aside{
+  margin:16px 0 0;
+  font-size:14px;
+  line-height:1.5;
+  color:var(--dim);
+  max-width:56ch;
+  text-wrap:pretty;
+}
+.aside code{ font-family:var(--mono); font-size:12.5px; letter-spacing:0; }
+.c-inline{ color:var(--dim); }
+
+/* ---------- the anatomy of one cell file ----------
+   Two frames over the same five lines: the layers named, then the
+   layers filled in. The colour is what carries across the fade, so
+   the block explains itself and needs no legend under it. */
+.anat{ margin-top:20px; }   /* the window, not the loop inside it */
+.anat .fx{ color:var(--l-fx); }
+.anat .fmt{ color:var(--l-fmt); }
+.anat .css{ color:var(--l-css); }
+/* Each slot is pinned to the wider of its two states, in characters —
+   the type is monospaced, so 1ch is exactly one column. The label and
+   the value therefore start and end on the same columns, and the fade
+   reads as one turning into the other rather than the line reflowing
+   underneath it.
+     =SUM(D2:D4) 11  vs  =FUNCTION      9
+     ~$#,##0      7  vs  ~NUMBER-FORMAT 14
+     td { … }    36  vs  CSS-STYLING    11                            */
+.anat .fx{ display:inline-block; width:11ch; }
+.anat .fmt{ display:inline-block; width:14ch; }
+.anat .decl{ display:inline-block; width:36ch; }
+.anat .frame{ transition:opacity 260ms var(--e); }
+.anat .frame.on{ transition:opacity 380ms var(--e-out) 120ms; }
+
+@media (max-width:560px){
+  pre,.term,.cmd{ font-size:12px; }
+  .term{ padding:15px 16px; }
+  .window{ padding:15px 16px; }
+}
+
+/* ---------- footer ---------- */
+footer{
+  padding:32px 0 72px;
+  font-size:14px;
+  color:var(--dim);
+  display:flex;
+  gap:26px;
+  flex-wrap:wrap;
+}
+
+/* The hero states the number; the footnote is how you go and check it,
+   travelling down to the section that argues it rather than to a line
+   of small print. Bracketed, because that is this page's punctuation. */
+.fn{
+  font-size:.62em;
+  vertical-align:.7em;
+  margin-left:2px;
+  color:var(--accent);
+  text-decoration:none;
+}
+.fn::before{ content:"["; }
+.fn::after{ content:"]"; }
+.fn:hover{ color:var(--fg); }
+/* land the section under the top edge, not flush against it */
+#advantages{ scroll-margin-top:28px; }
+
+@media (prefers-reduced-motion:reduce){
+  .swap b,.loop .frame,.loop .frame.on,.stack .frame .term,
+  .anat .frame,.anat .frame.on,.expand i{ transition:none; }
+  /* nothing is walking the list, so every block in it is on */
+  .stack .frame .term{
+    background:var(--panel-hi);
+    border-color:var(--rule);
+    box-shadow:inset 0 1px 0 var(--edge);
+  }
+  html{ scroll-behavior:auto; }
+}
+</style>
+</head>
+<body>
+<main>
+
+  <!-- 1 ------------------------------------------------------- -->
+  <section class="hero">
+    <div class="lockup">
+      <span class="expand" id="expand"><i class="lb">[</i><i class="w1">File-system</i><i class="w2"><a href="https://learn.microsoft.com/en-us/troubleshoot/microsoft-365-apps/excel/numeric-columns-and-rows" title="A1 reference style: columns are letters, rows are numbers">A1</a></i><i class="w3">for AI</i><i class="sp" id="spin">⠋</i><i class="rb">]</i></span>
+      <h1 class="wordmark">FSA1</h1>
+    </div>
+    <p class="tagline">A file-system based spreadsheet format designed for <span class="agents">AI agents</span>.</p>
+
+    <p class="handoff">Install it and reduce token spend by 98%<a class="fn" href="#advantages" aria-label="see the advantages section">1</a></p>
+
+    <button class="install" id="install" type="button" aria-label="Copy the install command">
+      <span class="p">$</span><code id="installcmd">curl -fsSL https://fsa1.sh/install-cli | sh</code><span class="copy" id="copy">copy</span>
+    </button>
+  </section>
+
+  <!-- 2 ------------------------------------------------------- -->
+  <section>
+    <p class="kicker">[ FSA1 core idea ]</p>
+    <h2>Tabs are folders.<br />Cells are files.</h2>
+    <div class="window">
+    <button class="toggle" id="lstoggle" type="button"><span id="lslabel">[ render ]</span><i class="bar" id="lsbar"></i></button>
+    <div class="loop" id="lsloop">
+
+      <div class="frame on">
+        <div class="term">
+<span class="p">$</span> ls -R Q3
+
+<span class="d">Q3:</span>
+Orders
+Summary
+
+<span class="d">Q3/Orders:</span>
+A1:D1  <span class="c"># Item · Price · Qty · Total</span>
+A2:A4  <span class="c"># Nut · Bolt · Cog</span>
+A5:C5  <span class="c"># Sum</span>
+B2:B4  <span class="c"># 10 · 15 · 4</span>
+C2:C4  <span class="c"># 4 · 2 · 10</span>
+D2:D4  <span class="c"># <span class="fx">=B2*C2</span> · <span class="fx">=B3*C3</span> · <span class="fx">=B4*C4</span></span>
+D5     <span class="c"># <span class="fx">=SUM(D2:D4)</span></span>
+
+<span class="d">Q3/Summary:</span>
+A1:B1  <span class="c"># Metric · Value</span>
+A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
+
+<span class="p">$</span> cat Q3/Orders/D2:D4
+<span class="fx">=B2*C2
+=B3*C3
+=B4*C4</span></div>
+      </div>
+
+      <div class="frame">
+        <div class="term">
+<span class="p">$</span> fsa1-cli render Q3/Orders
++---+------+-------+-----+--------------------+
+|   | A    | B     | C   | D                  |
++=============================================+
+| 1 | Item | Price | Qty | Total              |
+|---+------+-------+-----+--------------------|
+| 2 | Nut  | 10    | 4   | 40 ← =B2*C2        |
+|---+------+-------+-----+--------------------|
+| 3 | Bolt | 15    | 2   | 30 ← =B3*C3        |
+|---+------+-------+-----+--------------------|
+| 4 | Cog  | 4     | 10  | 40 ← =B4*C4        |
+|---+------+-------+-----+--------------------|
+| 5 | Sum  |       |     | $110 ← =SUM(D2:D4) |
++---+------+-------+-----+--------------------+
+
+<span class="p">$</span> fsa1-cli render Q3/Summary
++---+--------+------------------+
+|   | A      | B                |
++===============================+
+| 1 | Metric | Value            |
+|---+--------+------------------|
+| 2 | Sales  | 110 ← =Orders!D5 |
++---+--------+------------------+</div>
+      </div>
+
+    </div>
+    </div>
+  </section>
+
+  <!-- 3 ------------------------------------------------------- -->
+  <section>
+    <p class="kicker">[ FSA1 definition ]</p>
+    <h2>It starts as a <code>.xlsx</code>.<br /><span class="soft">This is what it becomes.</span></h2>
+    <div class="window anat"><div class="loop" id="anatloop">
+
+      <div class="frame on">
+        <div class="term">
+<span class="p">$</span> fsa1-cli unpack Q3.xlsx
+<span class="p">$</span> cat Q3/Orders/D5
+<span class="fx">=FUNCTION</span><span class="fmt">~NUMBER-FORMAT</span>
+<span class="css">@scope {
+  <span class="decl">CSS-STYLING</span>
+}</span></div>
+      </div>
+
+      <div class="frame">
+        <div class="term">
+<span class="p">$</span> fsa1-cli unpack Q3.xlsx
+<span class="p">$</span> cat Q3/Orders/D5
+<span class="fx">=SUM(D2:D4)</span><span class="fmt">~$#,##0</span>
+<span class="css">@scope {
+  <span class="decl">td { border-top: 2px solid #1b6b58 }</span>
+}</span></div>
+      </div>
+
+    </div></div>
+  </section>
+
+  <!-- 3 ------------------------------------------------------- -->
+  <section id="advantages">
+    <p class="kicker">[ FSA1 advantages ]</p>
+    <ul class="claims">
+      <li><span class="box">[x]</span> <span>75× more token-efficient
+        <span class="note">Reading a sheet as files instead of piping it through a tool call: Anthropic measured the same shape of change at <a href="https://www.anthropic.com/engineering/code-execution-with-mcp">150,000 tokens down to 2,000</a>.</span></span></li>
+      <li><span class="box">[x]</span> <span>Git versioning by cell
+        <span class="note">One file per range, so <code>git log</code>, <code>git blame</code> and a three-way merge all work at cell granularity.</span></span></li>
+      <li><span class="box">[x]</span> <span>Fully parallelizable
+        <span class="note">Separate cells are separate files. Ten agents write ten regions at once with no lock and no round-trip.</span></span></li>
+    </ul>
+  </section>
+
+  <!-- 4 ------------------------------------------------------- -->
+  <section>
+    <p class="kicker">[ FSA1 rendering ]</p>
+    <h2><code>fsa1-cli</code> renders the output<br /><span class="soft">but never writes to the cells.</span></h2>
+    <div class="cmd" id="rendercmd"></div>
+    <div class="window"><div class="loop" id="renderloop">
+
+      <div class="frame on">
+        <div class="term">+---+------+-------+-----+--------------------+
+|   | A    | B     | C   | D                  |
++=============================================+
+| 1 | Item | Price | Qty | Total              |
+|---+------+-------+-----+--------------------|
+| 2 | Nut  | 10    | 4   | 40 ← =B2*C2        |
+|---+------+-------+-----+--------------------|
+| 3 | Bolt | 15    | 2   | 30 ← =B3*C3        |
+|---+------+-------+-----+--------------------|
+| 4 | Cog  | 4     | 10  | 40 ← =B4*C4        |
+|---+------+-------+-----+--------------------|
+| 5 | Sum  |       |     | $110 ← =SUM(D2:D4) |
++---+------+-------+-----+--------------------+</div>
+      </div>
+
+      <div class="frame">
+        <div class="term">+---+------+-------+-----+-------+
+|   | A    | B     | C   | D     |
++================================+
+| 1 | Item | Price | Qty | Total |
+|---+------+-------+-----+-------|
+| 2 | Nut  | 10    | 4   | 40    |
+|---+------+-------+-----+-------|
+| 3 | Bolt | 15    | 2   | 30    |
+|---+------+-------+-----+-------|
+| 4 | Cog  | 4     | 10  | 40    |
+|---+------+-------+-----+-------|
+| 5 | Sum  |       |     | $110  |
++---+------+-------+-----+-------+</div>
+      </div>
+
+      <div class="frame">
+        <div class="term">+---+------+-------+-----+-------------+
+|   | A    | B     | C   | D           |
++======================================+
+| 1 | Item | Price | Qty | Total       |
+|---+------+-------+-----+-------------|
+| 2 | Nut  | 10    | 4   | =B2*C2      |
+|---+------+-------+-----+-------------|
+| 3 | Bolt | 15    | 2   | =B3*C3      |
+|---+------+-------+-----+-------------|
+| 4 | Cog  | 4     | 10  | =B4*C4      |
+|---+------+-------+-----+-------------|
+| 5 | Sum  |       |     | =SUM(D2:D4) |
++---+------+-------+-----+-------------+</div>
+      </div>
+
+      <div class="frame">
+        <div class="rendered">
+          <table>
+            <caption>Orders</caption>
+            <thead>
+              <tr><th></th><th>A</th><th>B</th><th>C</th><th>D</th></tr>
+            </thead>
+            <tbody>
+              <tr><th>1</th><td class="c0">Item</td><td class="c0">Price</td><td class="c0">Qty</td><td class="c0">Total</td></tr>
+              <tr><th>2</th><td>Nut</td><td>10</td><td>4</td><td>40 ← =B2*C2</td></tr>
+              <tr><th>3</th><td>Bolt</td><td>15</td><td>2</td><td>30 ← =B3*C3</td></tr>
+              <tr><th>4</th><td>Cog</td><td>4</td><td>10</td><td>40 ← =B4*C4</td></tr>
+              <tr><th>5</th><td>Sum</td><td></td><td></td><td class="c1">$110 ← =SUM(D2:D4)</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div></div>
+  </section>
+
+  <!-- 5 ------------------------------------------------------- -->
+  <section>
+    <p class="kicker">[ FSA1 authoring ]</p>
+    <h2>Agents use whichever tool<br /><span class="soft">is cheapest for the edit.</span></h2>
+    <div class="stack" id="writeloop">
+
+      <div class="frame on">
+        <div class="term"><span class="c"># a redirect</span>
+<span class="p">$</span> printf '99\n15\n4\n' > Orders/B2:B4</div>
+      </div>
+
+      <div class="frame">
+        <div class="term"><span class="c"># one line of bash</span>
+<span class="p">$</span> sed -i s/Cog/Washer/ Orders/A2:A4</div>
+      </div>
+
+      <div class="frame">
+        <div class="term"><span class="c"># a script it wrote itself</span>
+<span class="p">$</span> ./write_cells.py Orders/D5 =SUM(D2:D4)</div>
+      </div>
+
+      <div class="frame">
+        <div class="term"><span class="c"># its own file-editing tool</span>
+Edit("Orders/C2:C4", old="10", new="12")</div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://github.com/fredrikolis/FSA1">github</a>
+    <a href="https://www.anthropic.com/engineering/code-execution-with-mcp">why 98%</a>
+  </footer>
+
+</main>
+
+<script>
+/* Three loops, one driver. Each cross-fades siblings on a fixed
+   interval; the boxes have fixed heights in CSS, so a swap never
+   reflows the page. Reduced motion pins every loop to frame 0. */
+(function(){
+  var still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---- fit: one stable box per loop -------------------------------
+     Measure every frame at its natural size, scale down any that is
+     wider than the box, then pin the box to the tallest scaled frame.
+     Nothing after this point can change a box's size, so a fade is
+     only ever a fade. Re-run on resize, and once more after webfonts
+     land, because a font swap changes every measurement. */
+  function fit(loop){
+    var frames = [].slice.call(loop.querySelectorAll(".frame")),
+        w = loop.clientWidth,
+        h = 0;
+    loop.style.height = "auto";
+    frames.forEach(function(f){
+      var inner = f.firstElementChild;
+      inner.style.transform = "none";
+      var nw = inner.offsetWidth,
+          nh = inner.offsetHeight,
+          k = nw > w ? w / nw : 1;
+      if (k < 1) inner.style.transform = "scale(" + k + ")";
+      h = Math.max(h, nh * k);
+    });
+    loop.style.height = Math.ceil(h) + "px";
+  }
+
+  var loops = [].slice.call(document.querySelectorAll(".loop"));
+  function fitAll(){ loops.forEach(fit); }
+  fitAll();
+  addEventListener("resize", (function(){
+    var t;
+    return function(){ clearTimeout(t); t = setTimeout(fitAll, 120); };
+  })());
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitAll);
+
+  function cycle(frames, ms, onstep){
+    var i = 0;
+    if (onstep) onstep(0);
+    if (still || frames.length < 2) return;
+    setInterval(function(){
+      frames[i].classList.remove("on");
+      i = (i + 1) % frames.length;
+      frames[i].classList.add("on");
+      if (onstep) onstep(i);
+    }, ms);
+  }
+
+  /* the expansion walks 0-1-2-3 and back, dwelling on the two states
+     that are sentences and passing quickly through the two that are
+     only the move between them */
+  var expand = document.getElementById("expand"),
+      spin  = document.getElementById("spin"),
+      seq   = [0, 1, 2, 3, 2, 1],
+      dwell = [2600, 560, 560, 2600, 560, 560],
+      at = 0;
+
+  /* the spinner turns only while the phrase it belongs to is up, so
+     the page is not running a timer for a character nobody can see.
+     Braille cells vary in advance width between fonts, which is why
+     the glyph sits in its own fixed 1ch box and every other part of
+     the line — the closing bracket especially — is positioned by
+     column rather than by flow. Nothing here can push anything. */
+  var glyphs = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"], g = 0, spinner;
+  function spinning(on){
+    clearInterval(spinner);
+    if (!on) return;
+    spinner = setInterval(function(){
+      g = (g + 1) % glyphs.length;
+      spin.textContent = glyphs[g];
+    }, 90);
+  }
+
+  if (!still) (function tick(){
+    setTimeout(function(){
+      expand.classList.remove("s1", "s2", "s3");
+      at = (at + 1) % seq.length;
+      if (seq[at]) expand.classList.add("s" + seq[at]);
+      spinning(seq[at] === 3);
+      tick();
+    }, dwell[at]);
+  })();
+
+  /* the listing does not cycle on its own — the reader asks for it */
+  var lsframes = document.querySelectorAll("#lsloop .frame"),
+      lsbtn = document.getElementById("lstoggle"),
+      shown = 0;
+  var lslabel = document.getElementById("lslabel"),
+      lsbar = document.getElementById("lsbar"),
+      lstimer;
+
+  function lsshow(i){
+    lsframes[shown].classList.remove("on");
+    shown = i;
+    lsframes[shown].classList.add("on");
+    lslabel.textContent = shown ? "[ files ]" : "[ render ]";
+    lsbtn.classList.toggle("live", !!shown);
+  }
+
+  lsbtn.addEventListener("click", function(){
+    clearTimeout(lstimer);
+    lsbar.style.transition = "none";
+    if (shown) { lsbar.style.width = "0%"; lsshow(0); return; }
+    lsshow(1);
+    /* the render is on loan: five seconds, drained visibly, then back */
+    lsbar.style.width = "100%";
+    requestAnimationFrame(function(){
+      lsbar.style.transition = "width 5000ms linear";
+      lsbar.style.width = "0%";
+    });
+    lstimer = setTimeout(function(){ lsshow(0); }, 5000);
+  });
+
+  var cmd = document.getElementById("rendercmd"),
+      renderwin = document.getElementById("renderloop").parentNode;
+  var flags = [
+    "--mode combined",            /* the default: value ← formula */
+    "--mode values",
+    "--mode functions",
+    "--format html > out.html"
+  ];
+  cycle(
+    document.querySelectorAll("#renderloop .frame"),
+    3200,
+    function(i){
+      cmd.innerHTML = '<span class="p">$</span> fsa1-cli render Q3/Orders ' + flags[i];
+      renderwin.classList.toggle("doc", i === 3);
+    }
+  );
+
+  /* slower than the rest: the reader has to map label to value */
+  cycle(document.querySelectorAll("#anatloop .frame"), 3400);
+
+  cycle(document.querySelectorAll("#writeloop .frame"), 1900);
+
+  /* click-to-copy the install line */
+  var btn = document.getElementById("install"),
+      copy = document.getElementById("copy"),
+      back;
+
+  /* The async clipboard needs a secure context, so it is simply absent on
+     an http:// origin — which is how this page is usually read locally.
+     Leaving the text selected instead is not a copy: the reader clicks a
+     button and gets a highlight and no explanation. So fall through to a
+     throwaway textarea and execCommand, which still copies for real
+     everywhere, and only select as a genuine last resort. */
+  function execCopy(text){
+    var ta = document.createElement("textarea"), ok = false;
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;" +
+                       "padding:0;border:0;opacity:0;pointer-events:none";
+    document.body.appendChild(ta);
+    var prev = document.activeElement;
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.parentNode.removeChild(ta);
+    /* execCommand leaves the selection behind it; clear it so the page
+       does not end up highlighted either way */
+    var s = getSelection(); if (s) s.removeAllRanges();
+    if (prev && prev.focus) prev.focus();
+    return ok;
+  }
+
+  function copied(){
+    btn.classList.add("done");
+    copy.textContent = "copied";
+    clearTimeout(back);
+    back = setTimeout(function(){
+      btn.classList.remove("done");
+      copy.textContent = "copy";
+    }, 1600);
+  }
+
+  btn.addEventListener("click", function(){
+    var text = document.getElementById("installcmd").textContent;
+    (navigator.clipboard && navigator.clipboard.writeText
+      ? navigator.clipboard.writeText(text)
+      : Promise.reject()
+    ).then(copied, function(){
+      if (execCopy(text)) { copied(); return; }
+      /* nothing could write to the clipboard: hand the reader the
+         selection so there is still something to press ⌘C on */
+      var r = document.createRange();
+      r.selectNodeContents(document.getElementById("installcmd"));
+      var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Concern: declares the package, its fsa1-ast runtime dep and the crates its corpora grade through | Non-concern: what any corpus asserts | IO: none
+[package]
+name = "conformance"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+fsa1-ast = { path = "../crates/fsa1-ast" }
+
+# tests/ only: the presentation corpus drives unpack -> check -> pack -> unpack in-process, so the
+# Rust half of that oracle runs under `cargo test --workspace` with no venv and no network.
+[dev-dependencies]
+fsa1-ingest = { path = "../crates/fsa1-ingest" }
+fsa1-model = { path = "../crates/fsa1-model" }
+fsa1-xlsx = { path = "../crates/fsa1-xlsx" }

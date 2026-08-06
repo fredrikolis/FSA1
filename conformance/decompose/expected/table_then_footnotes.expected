@@ -1,0 +1,70 @@
+# table_then_footnotes.xlsx -- FROZEN EXPECTATION.
+# A frozen expectation is corrected ONLY when the reading of the third-party-authored fixture was
+# wrong -- never edited to chase an FSA1 regression.
+#
+# The `region:` lines are the SEMANTIC reading, written from the authored structure before `unpack`
+# was run on this file. The `block:` lines are the hand-derivation below, executed on the fixture's
+# own `s=` attributes.
+#
+# THE SIGNATURES, off xl/worksheets/sheet1.xml:
+#   s="1" on A1,B1,C1             the table's header row   (bold 11pt)      -- h
+#   s="2" on A2:C5                the table's body         (10pt)           -- b
+#   s="3" on A7, A11, A15         each footnote's heading  (bold 9pt)       -- fh
+#   s="4" on A8:A9, A12:A13, A16:A17   the footnote lines  (9pt)            -- fb
+# Rows 6, 10 and 14 are empty, and columns B and C hold nothing from row 6 down. A single empty strip
+# is well inside the two an expansion may vault, so the leap REACHES every one of these gaps: what
+# holds them open is the cost of bridging one, not the distance.
+#
+# 1. SEED. h -> A1:C1. b -> A2:C5. fh is {A7,A11,A15}, three cells no two of which touch -> A7, A11,
+#    A15. fb is {A8,A9,A12,A13,A16,A17} -> A8:A9, A12:A13, A16:A17, the runs the empty rows break.
+#    Eight regions, one rule each: the potential is 8 + 8 lambda = 16.
+#
+# 2. PASS 1, parity 0: A1:C1, A7, A11, A15.
+#    A1:C1 down takes A2:C2 and cuts the body to A3:C5: before 1+1+1+1 = 4, after rules(A1:C2) = 2,
+#    +1, plus A3:C5's 1+1 = 5 -> -1.
+#    A7 up vaults the empty row 6 to land on row 5 and takes A5:A6, its own one column, which cuts
+#    the body into A2:C4 and B5:C5: before 4, after rules(A5:A7) = 2, +1, plus 1+1 and 1+1 = 7 -> -3.
+#    A7 down takes A8 and cuts A8:A9 to A9: before 4, after rules(A7:A8) = 2, +1, plus 1+1 = 5 -> -1.
+#    A11 and A15 are the same two shapes against their own neighbours, and price the same.
+#    Nothing applied.
+#
+# 3. PASS 2, parity 1: A2:C5, A8:A9, A12:A13, A16:A17.
+#    A2:C5 up takes the header row whole: merged A1:C5 is gapless, modal b, one row rule for the
+#    header -> 2. Before 4, after 2+1 = 3 -> +1. Down it vaults row 6 onto row 7 and takes rows 6-7
+#    across all three columns, swallowing A7 but also six unoccupied coordinates: the merged A2:C7 has
+#    no modal, four body rows cost a rule each and A7 is a leftover -> 5. Before 4, after 5+1 = 6 ->
+#    -2. So the row-1 merge is its move.
+#    A8:A9 up takes A7 whole: merged A7:A9 is gapless over one column, modal fb, one row rule for the
+#    heading -> 2. Before 4, after 3 -> +1. Down it vaults row 10 onto row 11 and takes A10:A11,
+#    swallowing A11: the merged A8:A11 has an unoccupied row inside it, so there is no modal and each
+#    of its three occupied rows costs a rule -> 3. Before 4, after 3+1 = 4 -> gain 0, and only a gain
+#    above zero is a candidate. A12:A13 and A16:A17 price identically.
+#    All four moves are applied, in ascending anchor order, and none of them contends for a cell
+#    another took. Regions: A1:C5, A7:A9, A11:A13, A15:A17, at 2 rules each: potential 8 + 4 = 12.
+#
+# 4. PASS 3, parity 0 -- every anchor is in column A on an odd row, so all four are of this parity.
+#    A1:C5 down vaults row 6 onto row 7, taking rows 6-7 across three columns and cutting A7:A9 to
+#    A8:A9: the merged A1:C7 has no modal, five occupied rows cost a rule each and A7 is a leftover
+#    -> 6. Before 2+1+2+1 = 6, after 6+1 plus 1+1 = 9 -> -3.
+#    A7:A9 up vaults row 6 onto row 5 and takes A5:A6, cutting the table into A1:C4 and B5:C5: before
+#    6, after rules(A5:A9) = 4, +1, plus 2+1 and 1+1 = 10 -> -4. Down it vaults row 10 onto row 11 and
+#    takes A10:A11, cutting A11:A13 to A12:A13: the merged A7:A11 spans an empty row, so each of its
+#    four occupied rows costs a rule -> 4. Before 6, after 4+1 plus 1+1 = 7 -> -1.
+#    A11:A13 and A15:A17 price their own two directions the same way, -2 and -1.
+#    Nothing applied, and the pass after it fixes the parity no anchor has, so growth stops. FOUR
+#    blocks -- the table, and one per footnote.
+#
+# 5. `--decompose occupancy` reads no signature: 24 occupied cells in a 3x17 bounding box, area 51,
+#    under the policy's 256-cell floor, so it writes ONE block A1:C17. Of the four labelled starts --
+#    rows 1, 7, 11 and 15 -- it emits row 1 and misses three.
+sheet:  Notes
+region: 1-5 the table, its bold header row and its four body rows
+region: 7-9 footnote 1, its heading and its two lines
+region: 11-13 footnote 2, its heading and its two lines
+region: 15-17 footnote 3, its heading and its two lines
+block:  A1:C5
+block:  A7:A9
+block:  A11:A13
+block:  A15:A17
+policy: appearance
+misses: 3

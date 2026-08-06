@@ -1,0 +1,9 @@
+# theme1_color_noop.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+file: Theme/A1:B2
+|A1	B1
+|A2	B2
+|@scope {
+|  td { font-weight: bold }
+|}

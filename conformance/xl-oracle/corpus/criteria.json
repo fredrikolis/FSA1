@@ -1,0 +1,294 @@
+[
+  {
+    "name": "sumif_gt",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=SUMIF(A1:A5,\">25\")"
+  },
+  {
+    "name": "sumif_with_sumrange",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=SUMIF(B1:B5,\"x\",A1:A5)"
+  },
+  {
+    "name": "sumif_text_exact",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=SUMIF(B1:B5,\"y\",A1:A5)"
+  },
+  {
+    "name": "sumifs_two_crit",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=SUMIFS(A1:A5,B1:B5,\"x\",A1:A5,\">15\")"
+  },
+  {
+    "name": "countif_gt",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=COUNTIF(A1:A5,\">25\")"
+  },
+  {
+    "name": "countif_text",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=COUNTIF(B1:B5,\"x\")"
+  },
+  {
+    "name": "countif_wildcard",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=COUNTIF(B1:B5,\"?\")"
+  },
+  {
+    "name": "countifs_two",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=COUNTIFS(B1:B5,\"x\",A1:A5,\">=30\")"
+  },
+  {
+    "name": "averageif_gt",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=AVERAGEIF(A1:A5,\">20\")",
+    "tol": 1e-09
+  },
+  {
+    "name": "averageif_with_avgrange",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=AVERAGEIF(B1:B5,\"x\",A1:A5)",
+    "tol": 1e-09
+  },
+  {
+    "name": "averageifs_two",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=AVERAGEIFS(A1:A5,B1:B5,\"x\",A1:A5,\">15\")",
+    "tol": 1e-09
+  },
+  {
+    "name": "maxifs_basic",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=MAXIFS(A1:A5,B1:B5,\"x\")"
+  },
+  {
+    "name": "minifs_basic",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=MINIFS(A1:A5,B1:B5,\"x\")"
+  },
+  {
+    "name": "countif_le",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=COUNTIF(A1:A5,\"<=20\")"
+  },
+  {
+    "name": "sumif_ne",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=SUMIF(B1:B5,\"<>x\",A1:A5)"
+  },
+  {
+    "name": "maxifs_no_match_zero",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=MAXIFS(A1:A5,B1:B5,\"z\")"
+  },
+  {
+    "name": "sumif_criteria_number",
+    "category": "criteria",
+    "inputs": {
+      "A1": 10,
+      "A2": 20,
+      "A3": 30,
+      "A4": 40,
+      "A5": 50,
+      "B1": "x",
+      "B2": "y",
+      "B3": "x",
+      "B4": "y",
+      "B5": "x"
+    },
+    "formula": "=SUMIF(A1:A5,30)"
+  }
+]

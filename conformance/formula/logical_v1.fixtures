@@ -1,0 +1,128 @@
+# v1 logical batch: IFS NOT IFNA SWITCH. (IF IFERROR AND OR are the earlier `logic.fixtures` batch.)
+# EXPECTED values are derived INDEPENDENTLY of FSA1 (a python3 model of the Excel logical
+# semantics — see scripts note below — cross-checked by hand), never by running FSA1.
+#
+# Provenance: each expected value was produced by a standalone python model of these Excel rules
+# (run at authoring time, output pasted into the notes) and re-derived by hand:
+#   ifs(False,1,True,2,True,3)=2 · ifs(75>=90,"A",75>=70,"B",75>=0,"F")="B" · ifs(False,1,False,2)=#N/A
+#   ifs(1/0,1,True,2)=#DIV/0! · ifs(True,1,True,1/0)=1 (lazy) · NOT(True)=False · NOT(0)=True
+#   NOT(5)=False · NOT("x")=#VALUE! · NOT(#N/A)=#N/A · IFNA(#N/A,99)=99 · IFNA(42,99)=42
+#   IFNA(#DIV/0!,99)=#DIV/0! · SWITCH(2,1,"one",2,"two",3,"three")="two"
+#   SWITCH(9,1,"one",2,"two","none")="none" · SWITCH(9,1,"one",2,"two")=#N/A
+#   SWITCH("hello","HELLO",1,"bye",2)=1 · SWITCH(1/0,1,"one","def")=#DIV/0!
+#
+# The Excel-semantics calls pinned here:
+#   * IFS is LAZY (only the FIRST TRUE test's value is evaluated); NO true test is #N/A; a test that
+#     ERRORS propagates; an ODD argument count (dangling test) is a structural #VALUE!.
+#   * NOT COERCES a non-boolean (non-zero number -> TRUE, "TRUE"/"FALSE" text folds) then negates; a
+#     non-logical text is #VALUE!; an error propagates.
+#   * IFNA catches ONLY #N/A — every OTHER error passes through (the distinction from IFERROR).
+#   * SWITCH matches with Excel `=` equality (numbers numerically, text case-INSENSITIVELY), returns
+#     the FIRST match's result (lazy), an optional trailing DEFAULT (odd tail) when nothing matches,
+#     else #N/A; the expression's error propagates.
+
+# ---- IFS(test1, value1, test2, value2, ...) ----
+
+[ifs-first-true-wins]
+funcs: IFS
+formula: =IFS(FALSE, 1, TRUE, 2, TRUE, 3)
+expect: 2
+
+[ifs-comparison-tests-over-a-cell]
+funcs: IFS
+cell A1: 75
+formula: =IFS(A1>=90, "A", A1>=70, "B", A1>=0, "F")
+expect: "B"
+
+[ifs-none-true-is-na]
+funcs: IFS
+formula: =IFS(FALSE, 1, FALSE, 2)
+expect: #N/A
+
+[ifs-test-error-propagates]
+funcs: IFS
+formula: =IFS(1/0, 1, TRUE, 2)
+expect: #DIV/0!
+
+[ifs-lazy-unreached-value-not-evaluated]
+funcs: IFS
+formula: =IFS(TRUE, 1, TRUE, 1/0)
+expect: 1
+
+# ---- NOT(logical) ----
+
+[not-of-true-is-false]
+funcs: NOT
+formula: =NOT(TRUE)
+expect: FALSE
+
+[not-of-zero-is-true]
+funcs: NOT
+formula: =NOT(0)
+expect: TRUE
+
+[not-of-nonzero-number-coerces-to-false]
+funcs: NOT
+formula: =NOT(5)
+expect: FALSE
+
+[not-of-nonlogical-text-is-value-error]
+funcs: NOT
+formula: =NOT("x")
+expect: #VALUE!
+
+[not-error-propagates]
+funcs: NOT
+cell A1: #N/A
+formula: =NOT(A1)
+expect: #N/A
+
+# ---- IFNA(value, value_if_na) ----
+
+[ifna-catches-the-na]
+funcs: IFNA
+formula: =IFNA(#N/A, 99)
+expect: 99
+
+[ifna-passes-a-value-through]
+funcs: IFNA
+formula: =IFNA(42, 99)
+expect: 42
+
+[ifna-does-not-catch-other-errors]
+funcs: IFNA
+formula: =IFNA(1/0, 99)
+expect: #DIV/0!
+
+[ifna-catches-an-na-valued-cell]
+funcs: IFNA
+cell A1: #N/A
+formula: =IFNA(A1, "missing")
+expect: "missing"
+
+# ---- SWITCH(expression, value1, result1, ..., [default]) ----
+
+[switch-matches-second-value]
+funcs: SWITCH
+formula: =SWITCH(2, 1, "one", 2, "two", 3, "three")
+expect: "two"
+
+[switch-default-when-no-match]
+funcs: SWITCH
+formula: =SWITCH(9, 1, "one", 2, "two", "none")
+expect: "none"
+
+[switch-no-match-no-default-is-na]
+funcs: SWITCH
+formula: =SWITCH(9, 1, "one", 2, "two")
+expect: #N/A
+
+[switch-text-match-is-case-insensitive]
+funcs: SWITCH
+formula: =SWITCH("hello", "HELLO", 1, "bye", 2)
+expect: 1
+
+[switch-expression-error-propagates]
+funcs: SWITCH
+formula: =SWITCH(1/0, 1, "one", "def")
+expect: #DIV/0!

@@ -1,0 +1,24 @@
+# column_and_row_default_style.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+#
+# sheet1 states <col width="13" customWidth="1" style="1" min="2" max="2"/> and no cell `s=`;
+# cellXfs 1 is fontId 1, Calibri 11 BOLD. So column B is bold and 13ch wide, both read off the one
+# element, and the Normal style behind every cell is Calibri 11 -- the format's own default, which
+# is restored unwritten. Bold is uniform down column B and normal down column A, and the two tie on
+# count, so the modal is the one appearing first (normal, the default) and column B earns the rule.
+#
+# sheet2 states <row r="2" customFormat="1" s="2"/> and no cell `s=`; cellXfs 2 is fontId 2,
+# Calibri 11 ITALIC. The same tie makes upright the modal, so row 2 earns the rule.
+file: Column/A1:B2
+|A1	B1
+|A2	B2
+|@scope {
+|  td:last-child { font-weight: bold; width: 13ch }
+|}
+file: Row/A1:B2
+|A1	B1
+|A2	B2
+|@scope {
+|  tr:last-child td { font-style: italic }
+|}

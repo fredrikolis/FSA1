@@ -1,0 +1,262 @@
+[
+  {
+    "name": "small_first",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=SMALL(A1:A6,1)"
+  },
+  {
+    "name": "small_third",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=SMALL(A1:A6,3)"
+  },
+  {
+    "name": "large_first",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=LARGE(A1:A6,1)"
+  },
+  {
+    "name": "rank_desc",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=RANK(8,A1:A6)"
+  },
+  {
+    "name": "rank_asc",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=RANK(8,A1:A6,1)"
+  },
+  {
+    "name": "var_sample",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=VAR(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "var_s",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=VAR.S(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "var_p",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=VAR.P(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "varp_legacy",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=VARP(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "stdev_s",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=STDEV.S(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "stdev_p",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=STDEV.P(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "stdevp_legacy",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=STDEVP(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "quartile_q1",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=QUARTILE(A1:A6,1)",
+    "tol": 1e-09
+  },
+  {
+    "name": "quartile_median",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=QUARTILE(A1:A6,2)",
+    "tol": 1e-09
+  },
+  {
+    "name": "quartile_inc_q3",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=QUARTILE.INC(A1:A6,3)",
+    "tol": 1e-09
+  },
+  {
+    "name": "percentile_inc_median",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=PERCENTILE.INC(A1:A6,0.5)",
+    "tol": 1e-09
+  },
+  {
+    "name": "percentile_inc_p90",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=PERCENTILE.INC(A1:A6,0.9)",
+    "tol": 1e-09
+  },
+  {
+    "name": "average_all_six",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=AVERAGE(A1:A6)",
+    "tol": 1e-09
+  },
+  {
+    "name": "median_even_count",
+    "category": "stat2",
+    "inputs": {
+      "A1": 5,
+      "A2": 3,
+      "A3": 8,
+      "A4": 1,
+      "A5": 9,
+      "A6": 4
+    },
+    "formula": "=MEDIAN(A1:A6)"
+  }
+]

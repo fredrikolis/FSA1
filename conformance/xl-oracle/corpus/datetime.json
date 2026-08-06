@@ -1,0 +1,204 @@
+[
+  {
+    "name": "day_of_date",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=DAY(DATE(2020,6,15))"
+  },
+  {
+    "name": "month_of_date",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=MONTH(DATE(2020,6,15))"
+  },
+  {
+    "name": "year_of_date",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=YEAR(DATE(2020,6,15))"
+  },
+  {
+    "name": "day_end_of_month",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=DAY(DATE(2020,2,29))"
+  },
+  {
+    "name": "days_between",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=DAYS(DATE(2020,2,1),DATE(2020,1,1))"
+  },
+  {
+    "name": "days_negative",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=DAYS(DATE(2020,1,1),DATE(2020,2,1))"
+  },
+  {
+    "name": "edate_forward",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=EDATE(DATE(2020,1,31),1)"
+  },
+  {
+    "name": "edate_backward",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=EDATE(DATE(2020,3,31),-1)"
+  },
+  {
+    "name": "edate_year_wrap",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=EDATE(DATE(2020,12,15),1)"
+  },
+  {
+    "name": "hour_of_fraction",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=HOUR(0.5)"
+  },
+  {
+    "name": "minute_of_fraction",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=MINUTE(0.75)"
+  },
+  {
+    "name": "second_of_time",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=SECOND(TIME(1,2,3))"
+  },
+  {
+    "name": "minute_of_time",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=MINUTE(TIME(1,2,3))"
+  },
+  {
+    "name": "time_serial",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=TIME(12,30,0)",
+    "tol": 1e-09
+  },
+  {
+    "name": "time_midnight",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=TIME(0,0,0)"
+  },
+  {
+    "name": "time_wraps_24h",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=TIME(25,0,0)",
+    "tol": 1e-09
+  },
+  {
+    "name": "weeknum_jan1",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=WEEKNUM(DATE(2020,1,1))"
+  },
+  {
+    "name": "weeknum_midyear",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=WEEKNUM(DATE(2020,6,15))"
+  },
+  {
+    "name": "weeknum_monday_system",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=WEEKNUM(DATE(2020,1,1),2)"
+  },
+  {
+    "name": "workday_forward",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=WORKDAY(DATE(2020,1,1),5)"
+  },
+  {
+    "name": "workday_backward",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=WORKDAY(DATE(2020,1,15),-5)"
+  },
+  {
+    "name": "networkdays_span",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=NETWORKDAYS(DATE(2020,1,1),DATE(2020,1,31))"
+  },
+  {
+    "name": "networkdays_single_weekend",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=NETWORKDAYS(DATE(2020,1,4),DATE(2020,1,5))"
+  },
+  {
+    "name": "datedif_months",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=DATEDIF(DATE(2020,1,1),DATE(2021,3,1),\"m\")"
+  },
+  {
+    "name": "datedif_years",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=DATEDIF(DATE(2020,1,1),DATE(2023,6,1),\"y\")"
+  },
+  {
+    "name": "datedif_days",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=DATEDIF(DATE(2020,1,1),DATE(2020,1,31),\"d\")",
+    "lib_gap": true,
+    "lib_gap_reason": "formulas v1.3.4 is case-sensitive on the unit code and returns #NUM! for lowercase \"d\" (uppercase \"D\" works; \"m\"/\"y\" work lowercase). Excel is case-insensitive on the unit. Excel & FSA1: 30 (days between). Reference-library gap; FSA1 hand-verified vs Excel."
+  },
+  {
+    "name": "weekday_system2",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=WEEKDAY(DATE(2020,1,1),2)"
+  },
+  {
+    "name": "eomonth_zero",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=EOMONTH(DATE(2020,6,15),0)"
+  },
+  {
+    "name": "eomonth_backward",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=EOMONTH(DATE(2020,3,15),-2)"
+  },
+  {
+    "name": "today_after_epoch",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=TODAY()>DATE(2020,1,1)"
+  },
+  {
+    "name": "now_ge_today",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=NOW()>=TODAY()"
+  },
+  {
+    "name": "now_int_is_today",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=INT(NOW())=TODAY()"
+  },
+  {
+    "name": "year_today_gt_2000",
+    "category": "datetime",
+    "inputs": {},
+    "formula": "=YEAR(TODAY())>2000"
+  }
+]

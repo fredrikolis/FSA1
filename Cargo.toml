@@ -1,0 +1,15 @@
+# Concern: the workspace's resolver and member list | Non-concern: any crate's own dependencies, the firewall's deny edges (.annotated-tree.toml) | IO: none
+# Workspace root. Build-out: three product crates have landed — `fsa1-ast` (the formula-language
+# contract surface, W0), `fsa1-model` (the filesystem spreadsheet model, W2), and `fsa1-cli`
+# (the thin render/lint binary, W4) — realizing the `cli -> model -> ast` firewall, so
+# `.annotated-tree.toml` now wires all three DAG-valid deny edges (`["fsa1-ast","fsa1-model"]`,
+# `["fsa1-ast","fsa1-cli"]`, `["fsa1-model","fsa1-cli"]`). fsa1-xlsx has now landed (the
+# WRITE half of the format firewall — SER1), and fsa1-html beside it (the presentation block's
+# renderer); each carries its own three deny edges in `.annotated-tree.toml`
+# — docs/architecture.md §1, §5.
+[workspace]
+resolver = "2"
+members = ["crates/fsa1-ast", "crates/fsa1-cli", "crates/fsa1-html", "crates/fsa1-ingest", "crates/fsa1-model", "crates/fsa1-xlsx", "conformance"]
+
+[workspace.package]
+license = "MIT"

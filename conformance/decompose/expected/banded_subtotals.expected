@@ -1,0 +1,90 @@
+# banded_subtotals.xlsx -- FROZEN EXPECTATION.
+# A frozen expectation is corrected ONLY when the reading of the third-party-authored fixture was
+# wrong -- never edited to chase an FSA1 regression.
+#
+# The `region:` lines are the SEMANTIC reading, written from the authored structure before `unpack`
+# was run on this file. The `block:` lines are the hand-derivation below, executed on the fixture's
+# own `s=` attributes.
+#
+# THE SIGNATURES, off xl/worksheets/sheet1.xml:
+#   s="1" on rows 1, 4, 7 and 10    the header AND the subtotals  (bold, fill D9D9D9)  -- h
+#   s="2" on rows 2, 6 and 8        the even band                 (solid fill FFFFFF)  -- e
+#   s="3" on rows 3, 5 and 9        the odd band                  (solid fill F2F2F2)  -- o
+# The three subtotal rows reuse the header's `s=` index VERBATIM -- the same bold font, the same
+# D9D9D9 fill -- so rows 1, 4, 7 and 10 are indistinguishable by signature and nothing below ever
+# separates them. All 30 coordinates of A1:C10 are occupied and not one is unstyled, so no rectangle
+# loses its modal rule to an unstated coordinate. A, B and C state the same index on every row, and no
+# column of any rectangle below is uniform, so nothing here costs a column rule and no cell is ever
+# left over: every count is one modal plus one rule per row the modal does not already speak for.
+#
+# The banding runs on GLOBAL row parity straight through the subtotal rows, never restarting per
+# group, so the middle group is INVERTED against the other two: rows 2-3 read e,o and rows 8-9 read
+# e,o, while rows 5-6 read o,e. The sheet is ten one-signature strips stacked h,e,o,h,o,e,h,e,o,h.
+#
+# WHY THIS FIXTURE EXISTS, and why its `misses:` is 0. Like `banded_report` it is a FRAGMENTATION
+# guard, not a recall test: a table `--decompose occupancy` already cuts correctly and `appearance`
+# used to shatter, here into TEN seeded strips. Its own concern is the three subtotal rows -- one-row
+# holes in a look that resumes unchanged on the far side of each -- which must not hold the table
+# open. The frozen single `block:` line is what would grow to FOUR the moment the join stops paying.
+#
+# 1. SEED. Each signature's group is covered on its own, row-major and greedily. h is the twelve cells
+#    of rows 1, 4, 7 and 10: three wide, but never two deep, because row 2 holds no h -> A1:C1, A4:C4,
+#    A7:C7, A10:C10. e is rows 2, 6 and 8 -> A2:C2, A6:C6, A8:C8. o is rows 3, 5 and 9 -> A3:C3,
+#    A5:C5, A9:C9. TEN regions, each gapless over one signature and so one rule each: the potential is
+#    10 rules + 10 lambda = 20.
+#
+# 2. GROWTH runs to its fixed point at A1:C2, A3:C5, A6:C8 and A9:C10, and stalls there. While a
+#    neighbour is ONE strip deep, taking it pays: the merged rectangle spells the taken row with one
+#    row rule, which costs exactly the lambda the vanished region refunds, and there is no remnant --
+#    the +1 merge PROVENANCE.md records for two stacked same-width single-row regions. That is what
+#    swallows each subtotal row while it is still a lone strip, and A3:C5 and A6:C8 are the three-deep
+#    rectangles it leaves: a band, a subtotal, a band. It stops once both sides are more than one
+#    strip deep, because an expansion takes ONE strip and the neighbour it took it from SURVIVES: the
+#    remnant is re-cut and charged its own lambda over again, so nothing is refunded while the strip
+#    still costs the expander its row rule. Priced at the fixed point:
+#    A3:C5 down takes row 6 alone and cuts A6:C8 to A7:C8. rules(A3:C6) = 3, rules(A7:C8) = 2 -- the
+#    same 2 A6:C8 cost, so nothing is refunded. Before 2+1 + 2+1 = 6, after 3+1 + 2+1 = 7 -> -1.
+#    A3:C5 up takes row 2 alone and cuts A1:C2 to A1:C1. Here the remnant IS one strip deep, so the
+#    lambda comes back: rules(A2:C5) = 3, rules(A1:C1) = 1, before 6, after 3+1 + 1+1 = 6 -> gain 0,
+#    and only a gain above zero is a candidate. The row rule the strip costs and the lambda it refunds
+#    cancel exactly, which is the same accounting that made the one-deep merges pay by +1 -- one row
+#    rule dearer, because the expander already spends a rule on the subtotal row it holds.
+#    A1:C2 down onto row 3, A6:C8 up onto row 5 and down onto row 9, and A9:C10 up onto row 8 are
+#    these same two shapes against their own neighbours: -1 where the remnant is two deep, 0 where it
+#    is one. Rows 11-13 and columns D-F hold nothing, so nothing reaches further. Nothing applied.
+#    FOUR regions at 2 rules each: the potential is 8 + 4 lambda = 12.
+#
+# 3. JOIN, round 1. All four share the extent (column A, three wide), so all four land in the one
+#    vertical `sweep` group, whose anchors fold left to right, a formed union standing as the left
+#    element of the next comparison. Each part first:
+#    rules(A1:C2) = 2: h and e TIE at three cells each, and either choice leaves the other row needing
+#    a rule -> 1 + 1 whichever way the tie falls. rules(A9:C10) = 2, o against h, for the same reason.
+#    rules(A3:C5) = 2: o is modal at six of nine, and the subtotal row 4 needs a row rule -> 1 + 1.
+#    rules(A6:C8) = 2: e is modal at six of nine, and row 7 needs a row rule -> 1 + 1.
+#    FOLD 1, A1:C2 + A3:C5 -> A1:C5. rules(A1:C5) = 4: h and o TIE at six cells of fifteen, and the
+#    count is the same either way -- modal h leaves rows 2, 3 and 5, modal o leaves rows 1, 2 and 4,
+#    three row rules whichever way it falls -> 1 + 3. Strictly: 2 + 2 + lambda = 5 > 4, so it pays,
+#    and the potential falls 12 -> 11.
+#    FOLD 2, A1:C5 + A6:C8 -> A1:C8. rules(A1:C8) = 6: h and e TIE at nine cells of 24, again the same
+#    either way -- modal h leaves rows 2, 3, 5, 6 and 8, modal e leaves rows 1, 3, 4, 5 and 7, five
+#    row rules -> 1 + 5. 4 + 2 + lambda = 7 > 6, so it pays, and the potential falls 11 -> 10.
+#    FOLD 3, A1:C8 + A9:C10 -> A1:C10. rules(A1:C10) = 7: over the full 30 cells h is modal OUTRIGHT
+#    at twelve against nine each -- the tie of the previous fold breaks the moment the fourth h row is
+#    inside -- and rows 2, 3, 5, 6, 8 and 9 each need a row rule -> 1 + 6. 6 + 2 + lambda = 9 > 7.
+#    This fold pays TWO where the first two paid one: it absorbs two rows and adds only one row rule,
+#    because row 10 is h and the now-outright modal already speaks for it. Potential 10 -> 8.
+#    ONE region.
+#
+# 4. REGROW, then JOIN round 2. A1:C10 is the whole occupied sheet -- no strip outside it carries
+#    anything -- so growth is silent from its first pass, and a lone region has no sibling to fold
+#    against. The loop ends, having applied nothing. ONE block: the table whole, subtotals included.
+#
+# 5. `--decompose occupancy` reads no signature: 30 occupied cells in a 3x10 bounding box, area 30,
+#    under the policy's 256-cell floor -- below a 16x16 no split pays for itself, whatever the
+#    occupancy -- so it writes ONE block A1:C10. That is the same single block `appearance` writes.
+#    The one labelled start, row 1, is emitted by both, so it misses none.
+sheet:  Sales
+region: 1-10 the table, its header row, its banded body rows and its three subtotal rows
+block:  A1:C10
+policy: appearance
+misses: 0

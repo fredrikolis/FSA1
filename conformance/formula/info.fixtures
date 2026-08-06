@@ -1,0 +1,146 @@
+# Information batch v1: ISBLANK ISNUMBER ISTEXT ISERROR NA TYPE — the ONE error-TRANSPARENT family.
+# EXPECTED values are authored INDEPENDENTLY of FSA1 by a standalone python3 oracle that models
+# the family's semantics from scratch (it INSPECTS an operand's kind and reports on it; it never
+# propagates an error/blank/array through it). See PROVENANCE.md ("Information batch"). The oracle's
+# authoring run printed:
+#
+#   ISBLANK(empty)=TRUE  ISBLANK(5)=FALSE  ISBLANK("")=FALSE
+#   ISNUMBER(42)=TRUE    ISNUMBER("42")=FALSE   ISNUMBER(1/0)=FALSE
+#   ISTEXT("hi")=TRUE    ISTEXT(3)=FALSE
+#   ISERROR(1/0)=TRUE    ISERROR(NA())=TRUE     ISERROR(10)=FALSE
+#   NA()=#N/A            NA()+1=#N/A (error propagates through arithmetic, OUTSIDE the info fn)
+#   TYPE(7)=1  TYPE("x")=2  TYPE(TRUE)=4  TYPE(NA())=16  TYPE(empty)=1  TYPE({1,2})=64
+#
+# The defining contract this batch proves: an info predicate is error-TRANSPARENT — ISERROR(1/0) is
+# TRUE (the #DIV/0! is CAUGHT, not returned) and TYPE(NA()) is 16 (not #N/A). Contrast NA()+1, where
+# the same #N/A DOES propagate because arithmetic (not an info fn) is doing the reading. An ARRAY
+# operand is inspected AS an array: TYPE(A1:B1)=64, and the IS-predicates see "not a scalar of my
+# kind" -> FALSE, never a scalarize-into-#VALUE!. The parser has no {..} array-constant node in v1,
+# so the array operand is expressed as a range reference A1:B1 (which evaluates to a 1x2 array).
+
+# --- ISBLANK: TRUE only for a genuinely empty cell; an empty STRING is not blank (the edge). ---
+
+[isblank-empty-cell]
+funcs: ISBLANK
+note: A1 is undefined in the context -> the resolver reads it as Blank -> ISBLANK is TRUE.
+formula: =ISBLANK(A1)
+expect: TRUE
+
+[isblank-has-number]
+funcs: ISBLANK
+cell A1: 5
+formula: =ISBLANK(A1)
+expect: FALSE
+
+[isblank-empty-string-is-not-blank]
+funcs: ISBLANK
+note: an empty string "" is a text VALUE, not an empty cell -> FALSE (the classic ISBLANK edge).
+cell A1: ""
+formula: =ISBLANK(A1)
+expect: FALSE
+
+# --- ISNUMBER: TRUE only for a real number; numeric-looking TEXT is not a number; an error operand
+# is inspected (not propagated) -> FALSE. ---
+
+[isnumber-number]
+funcs: ISNUMBER
+cell A1: 42
+formula: =ISNUMBER(A1)
+expect: TRUE
+
+[isnumber-numeric-text-is-false]
+funcs: ISNUMBER
+note: "42" is text, not a number -> FALSE (ISNUMBER does not coerce).
+cell A1: "42"
+formula: =ISNUMBER(A1)
+expect: FALSE
+
+[isnumber-error-operand-is-false]
+funcs: ISNUMBER
+note: error-transparent edge — 1/0 evaluates to #DIV/0!, which is NOT a number -> FALSE (the error
+note: is inspected, never propagated).
+formula: =ISNUMBER(1/0)
+expect: FALSE
+
+# --- ISTEXT: TRUE only for text. ---
+
+[istext-text]
+funcs: ISTEXT
+cell A1: "hi"
+formula: =ISTEXT(A1)
+expect: TRUE
+
+[istext-number-is-false]
+funcs: ISTEXT
+cell A1: 3
+formula: =ISTEXT(A1)
+expect: FALSE
+
+# --- ISERROR: the defining error-TRANSPARENT case — an operand that evaluates to ANY error (incl.
+# #N/A) is CAUGHT and reported TRUE, never returned as the error itself. ---
+
+[iserror-catches-divzero]
+funcs: ISERROR
+note: 1/0 -> #DIV/0!; ISERROR CATCHES it -> TRUE (not #DIV/0!). This is the family's whole point.
+formula: =ISERROR(1/0)
+expect: TRUE
+
+[iserror-catches-na]
+funcs: ISERROR, NA
+note: ISERROR catches #N/A too (unlike ISERR, which is deferred).
+formula: =ISERROR(NA())
+expect: TRUE
+
+[iserror-clean-value-is-false]
+funcs: ISERROR
+cell A1: 10
+formula: =ISERROR(A1)
+expect: FALSE
+
+# --- NA: mints #N/A on demand (arity 0). Outside an info fn, that #N/A propagates normally. ---
+
+[na-produces-na]
+funcs: NA
+formula: =NA()
+expect: #N/A
+
+[na-propagates-through-arithmetic]
+funcs: NA
+note: edge — NA() is the sole error-PRODUCING member; here the #N/A rides through arithmetic (NOT an
+note: info fn), so it PROPAGATES, in contrast to ISERROR(NA())=TRUE where an info fn catches it.
+formula: =NA()+1
+expect: #N/A
+
+# --- TYPE: the Excel type code 1/2/4/16/64; error and array operands are transparent (16 / 64). ---
+
+[type-of-number]
+funcs: TYPE
+cell A1: 7
+formula: =TYPE(A1)
+expect: 1
+
+[type-of-text]
+funcs: TYPE
+cell A1: "x"
+formula: =TYPE(A1)
+expect: 2
+
+[type-of-logical]
+funcs: TYPE
+formula: =TYPE(TRUE)
+expect: 4
+
+[type-of-error-is-16]
+funcs: TYPE, NA
+note: error-transparent edge — a #N/A operand reports code 16, it is NOT returned as #N/A.
+formula: =TYPE(NA())
+expect: 16
+
+[type-of-array-is-64]
+funcs: TYPE
+note: a multi-cell range evaluates to an array operand -> code 64 (inspected AS an array, never
+note: scalarized to #VALUE!). Expressed as A1:B1 since v1 has no {..} array-constant node.
+cell A1: 1
+cell B1: 2
+formula: =TYPE(A1:B1)
+expect: 64

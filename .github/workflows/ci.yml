@@ -1,0 +1,152 @@
+name: ci
+
+# The mechanical commit gate (.githooks/pre-commit + commit-msg), enforced in CI across three OSes.
+# Modeled on the annotated-tree CI, minus the release / installer / npm-publish channels (FSA1 has
+# none yet). Pins below are DELIBERATE — keep them in sync with .githooks/pre-commit,
+# rust-toolchain.toml, and .annotated-tree.toml; bump each together, on purpose.
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # fmt + clippy + the full test gate on the POSIX OSes FSA1's on-disk representation supports.
+  # windows-latest is DELIBERATELY excluded: a cell/range filename is its A1 range (FS2), e.g.
+  # `A1:E1` / `F2:F11`, and `:` is a reserved character in Windows filenames — so `git checkout`
+  # of the conformance corpus fails there before any test runs (macOS/APFS allows `:` at the POSIX
+  # layer, so it stays). Native Windows support would need a Windows-safe range delimiter — a spec
+  # representation decision, tracked, not a CI setting. fail-fast: false so one OS still reports the
+  # other.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # lfs: true is REQUIRED — the ingest test fixtures + oracle workbooks are Git LFS objects
+      # (.xlsx/.ods); without smudging, cargo test would read pointer files and fail.
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      # Pinned to rust-toolchain.toml's channel (NOT @stable): a floating stable is the very drift the
+      # pin exists to prevent. Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt --check
+        run: cargo fmt --all -- --check
+      - name: clippy -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # Unfiltered workspace run: --include-ignored so an #[ignore] never silently skips a load-bearing
+      # test; --locked so lockfile drift FAILS
+      # CI instead of silently updating it.
+      - name: test (--include-ignored)
+        run: cargo test --locked --workspace -- --include-ignored
+
+  # FSA1-specific mechanical gates — OS-independent, so once on ubuntu. No cargo toolchain needed
+  # (bash only).
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      # lfs: true is REQUIRED — the serde round-trip corpus (accept/ + refuse/ .xlsx) are Git LFS
+      # objects, and the selftest runs from a full checkout.
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: pre-commit selftest
+        # The hook's own regression table — pure bash, no cargo. This is its ONLY mechanical
+        # entrypoint, so an edit that breaks a locked row fails here.
+        run: bash .githooks/pre-commit.selftest.sh
+
+  # Dogfood: the suite-wide first-line annotation convention + the architecture rules in
+  # .annotated-tree.toml. Same call site as .githooks/pre-commit and scripts/gate.sh, so the pin and
+  # the corpus exclusions have ONE definition and cannot drift apart.
+  annotations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Enforce annotations + architecture rules
+        run: ./scripts/annotation-gate.sh
+
+  # The comment BUDGET — a mechanical bound on comment volume (per-file and per-function ratios, a
+  # max-consecutive-run, plus file- and line-length caps). Thresholds live in .cargo-lint-extra.toml;
+  # the bar a comment must clear lives in docs/comment-standards.md, which the runner prints on
+  # failure. Same call site as .githooks/pre-commit — scripts/comment-gate.sh — so the budget means
+  # one thing locally and here.
+  #
+  # The linter is a pinned git rev, so it must be BUILT; the cache makes that a once-ever cost. The
+  # key hashes scripts/comment-gate.sh rather than naming the rev, because the script already OWNS
+  # the rev — writing it here too would be a second copy free to drift, and a stale cache key is the
+  # one drift that fails silently (it restores the wrong binary and the gate still reports green).
+  # Bumping the rev in the script therefore misses the cache exactly once, on purpose.
+  comments:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - name: cache the pinned comment linter
+        uses: actions/cache@v4
+        with:
+          path: target/lint-tools
+          key: lint-tools-${{ runner.os }}-${{ hashFiles('scripts/comment-gate.sh') }}
+      - name: comment budget
+        run: ./scripts/comment-gate.sh
+
+  # SER2 round-trip oracle: the "opens-identically" fitness (plan 06 §7.3). Ubuntu-only — the `formulas`
+  # reference stack is platform-independent, and (like conformance/xl-oracle) it needs only a pinned
+  # Python venv, NO LibreOffice / apt install. run.sh builds fsa1-cli, provisions the .venv from the
+  # pinned requirements.txt (network for the one-time pip install), and drives roundtrip_oracle.py,
+  # forwarding its exit code. This job is SER2's THIRD-PARTY half, the half FSA1 cannot grade for itself:
+  # openpyxl and `formulas` must both reopen the export, `formulas` must recompute it to the source's own
+  # values, and the independent numfmt_render.py must render each formatted cell to the same display
+  # string under the export's code as under the source's. fsa1-cli/tests/roundtrip.rs runs in the matrix
+  # `test` job on every OS and owns the other half: SER3's refusals, and SER2 through FSA1's own reader,
+  # comparing the value, formula source, display-format code and resolved CellStyle a re-unpack of the
+  # export presents at every coordinate. That test compares no file tree — docs/cli-spec.md withdrew SER4
+  # (re-import idempotence) into SER2, and since `pack` writes one <cellXfs> entry per look, the blocks a
+  # re-unpack cuts are the decomposition's business rather than the contract's.
+  serde-roundtrip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: SER2 round-trip oracle (formulas + openpyxl)
+        run: conformance/serde/run.sh
+
+  # Presentation round-trip oracle: the "does not come out visually blank" fitness (plan 01 §12).
+  # Ubuntu-only and venv-only for the same reasons as serde-roundtrip above. run.sh builds fsa1-cli,
+  # provisions the .venv from the pinned requirements.txt (network for the one-time pip install), and
+  # drives presentation_oracle.py, forwarding its exit code. This job is the leg where a THIRD-PARTY
+  # reader (openpyxl) reopens the packed export and says whether the source's own look is on it; the
+  # frozen-@scope and `check`-accepts assertions (conformance/tests/presentation_scope.rs) run in the
+  # matrix `test` job on every OS, with no venv and no network.
+  presentation-roundtrip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: presentation round-trip oracle (openpyxl)
+        run: conformance/presentation/run.sh
