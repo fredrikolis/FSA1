@@ -45,6 +45,9 @@ jobs:
           # and moves to *.github.io. Both are checked because neither failure announces itself.
           test -f _site/index.html
           test -f _site/CNAME
+          # The landing page's one call to action; a rename here ships a green deploy whose install
+          # command 404s.
+          test -f _site/install-cli
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

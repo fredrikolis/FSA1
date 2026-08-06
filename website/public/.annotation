@@ -1,0 +1,1 @@
+Concern: the files Pages serves verbatim at the site root | Non-concern: the page itself (../src) | IO: none

@@ -1,4 +1,4 @@
-# Concern: cross-builds fsa1-cli for every host it runs on and attaches them to a Release | Non-concern: picking the asset a machine needs (bin/fsa1-cli) | IO: (a v* tag) -> release assets
+# Concern: cross-builds fsa1-cli for every host it runs on and attaches them to a Release | Non-concern: picking which asset a machine needs | IO: (a v* tag) -> release assets
 # The launcher downloads by asset name, so a Release is what makes the plugin work on a machine with
 # no Rust toolchain. Built with the toolchain pinned in rust-toolchain.toml.
 name: plugin-release

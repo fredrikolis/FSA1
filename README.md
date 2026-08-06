@@ -9,6 +9,12 @@ editor. Named for Charles Simonyi.
 
 ## Install
 
+A prebuilt binary, into `~/.local/bin`:
+
+```
+curl -fsSL https://fsa1.sh/install-cli | sh
+```
+
 As a Claude Code plugin:
 
 ```

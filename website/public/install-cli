@@ -1,0 +1,102 @@
+#!/bin/sh
+# Concern: installs fsa1-cli, the FSA1 spreadsheet command, for THIS machine | Non-concern: what fsa1-cli does, and the Claude plugin, which installs itself | IO: (env, a release) -> a binary on disk
+#
+# fsa1-cli reads a spreadsheet stored as a file tree — tabs are folders, each file's name is the A1
+# range it fills — and unpacks .xlsx/.ods into that form. https://fsa1.sh
+#
+# Served at https://fsa1.sh/install-cli and read by `curl -fsSL … | sh`, so it is POSIX sh: no
+# bashisms, no arrays, and no assumption that stdin is the terminal.
+#
+#   FSA1_INSTALL_DIR   where to put it        (default: ~/.local/bin)
+#   FSA1_VERSION       a release tag          (default: latest)
+#   FSA1_REPO          owner/name to pull from
+set -eu
+
+REPO="${FSA1_REPO:-fredrikolis/FSA1}"
+VERSION="${FSA1_VERSION:-latest}"
+
+# Everything the user sees goes to stderr, so `curl … | sh` stays readable while a caller
+# redirecting stdout still gets a clean stream.
+say() { echo "install-cli: $*" >&2; }
+die() { say "$*"; exit 1; }
+
+if [ -n "${FSA1_INSTALL_DIR:-}" ]; then
+  DEST="${FSA1_INSTALL_DIR}"
+elif [ -n "${HOME:-}" ]; then
+  DEST="${HOME}/.local/bin"
+else
+  die "no HOME is set — choose a directory with FSA1_INSTALL_DIR=/somewhere/bin"
+fi
+
+# One case per platform a release is published for. A machine outside this list has no binary to
+# fetch and is told to build from source rather than left with a download that cannot run.
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  Linux)                            OS=linux   ; EXT= ;;
+  Darwin)                           OS=macos   ; EXT= ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)  OS=windows ; EXT=.exe ;;
+  *) die "unsupported OS '$(uname -s)' — build from source: https://github.com/${REPO}" ;;
+esac
+case "$(uname -m 2>/dev/null || echo unknown)" in
+  x86_64|amd64)  ARCH=x86_64 ;;
+  arm64|aarch64) ARCH=aarch64 ;;
+  *) die "unsupported architecture '$(uname -m)' — build from source: https://github.com/${REPO}" ;;
+esac
+
+ASSET="fsa1-cli-${OS}-${ARCH}${EXT}"
+if [ "${VERSION}" = "latest" ]; then
+  URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+else
+  URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+fi
+
+TMP="$(mktemp)" || die "cannot create a temporary file"
+trap 'rm -f "${TMP}"' EXIT INT TERM
+
+say "fetching ${ASSET} (${VERSION})"
+# A missing asset and a broken network are different problems with different remedies, so the exit
+# code is read rather than collapsed into one message.
+missing="no asset ${ASSET} in the ${VERSION} release — it may not exist yet, or may not cover this platform: https://github.com/${REPO}/releases"
+rc=0
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL --proto '=https' --tlsv1.2 "${URL}" -o "${TMP}" || rc=$?
+  case "${rc}" in
+    0)  ;;
+    22) die "${missing}" ;;
+    *)  die "download failed (curl exit ${rc}) — a network, proxy or TLS problem reaching ${URL}" ;;
+  esac
+elif command -v wget >/dev/null 2>&1; then
+  wget -q --https-only -O "${TMP}" "${URL}" || rc=$?
+  case "${rc}" in
+    0) ;;
+    8) die "${missing}" ;;
+    *) die "download failed (wget exit ${rc}) — a network, proxy or TLS problem reaching ${URL}" ;;
+  esac
+else
+  die "needs curl or wget"
+fi
+
+# A redirect to an error page downloads as HTML with a 200, so the transfer succeeding is not
+# evidence the file is a program. Refuse anything that does not start like an executable.
+case "$(dd if="${TMP}" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')" in
+  7f454c46*|feedface*|cefaedfe*|cffaedfe*|cafebabe*|4d5a*) : ;;
+  *) die "what downloaded is not an executable — open ${URL} in a browser to see what it served" ;;
+esac
+
+mkdir -p "${DEST}" || die "cannot create ${DEST}"
+# Staged beside its destination and PROVEN before it takes the name: checking after the move would
+# let a truncated or wrong-architecture download replace a working install with a broken one. On any
+# failure the stage is removed and whatever was already installed is untouched.
+STAGE="${DEST}/.fsa1-cli.install.$$"
+chmod +x "${TMP}"
+mv -f "${TMP}" "${STAGE}" || die "cannot write into ${DEST}"
+trap 'rm -f "${STAGE}"' EXIT INT TERM
+"${STAGE}" --version >/dev/null 2>&1 \
+  || die "the downloaded binary does not run here — wrong architecture, or a partial download"
+mv -f "${STAGE}" "${DEST}/fsa1-cli${EXT}" || die "cannot install into ${DEST}"
+trap - EXIT INT TERM
+
+say "installed ${DEST}/fsa1-cli${EXT}"
+case ":${PATH}:" in
+  *":${DEST}:"*) say "run 'fsa1-cli --guide' to start" ;;
+  *) say "${DEST} is not on your PATH — add it, or run ${DEST}/fsa1-cli directly" ;;
+esac
