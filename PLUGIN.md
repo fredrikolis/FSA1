@@ -50,13 +50,16 @@ every update, so nothing is cached there). Resolution order, all overridable:
 
 `.github/workflows/plugin-release.yml` builds `fsa1-cli` on push of a `v*` tag for:
 
-| Asset                          | Host runner    | Covers                          |
-| ------------------------------ | -------------- | ------------------------------- |
-| `fsa1-cli-linux-x86_64`        | ubuntu-latest    | **Cowork sandbox**, Linux CLI |
-| `fsa1-cli-linux-aarch64`       | ubuntu-24.04-arm | ARM Linux, arm64 containers   |
-| `fsa1-cli-macos-x86_64`        | macos-13         | Intel Macs                    |
-| `fsa1-cli-macos-aarch64`       | macos-14         | Apple-silicon Macs            |
-| `fsa1-cli-windows-x86_64.exe`  | windows-latest   | Windows desktop (Claude Code) |
+| Asset                          | Covers                          |
+| ------------------------------ | ------------------------------- |
+| `fsa1-cli-linux-x86_64`        | **Cowork sandbox**, Linux CLI   |
+| `fsa1-cli-linux-aarch64`       | ARM Linux, arm64 containers     |
+| `fsa1-cli-macos-x86_64`        | Intel Macs                      |
+| `fsa1-cli-macos-aarch64`       | Apple-silicon Macs              |
+| `fsa1-cli-windows-x86_64.exe`  | Windows desktop (Claude Code)   |
+
+Which runner builds which asset is the workflow's to say, and only its own: a table here restating
+that goes stale the first time a runner is retired.
 
 The launcher downloads the matching asset by name, so a release is what lets the plugin run on a
 machine **without** a Rust toolchain. Every slug the launcher resolves has a row here; a host with no
