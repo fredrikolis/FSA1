@@ -23,3 +23,8 @@ Cargo.lock.orig
 .githooks/post-commit
 .githooks/post-merge
 .githooks/pre-push
+
+# Injected at publish time from a release, never committed: the repo carries the packaging,
+# the release carries the bytes.
+distribution/npm/platforms/*/fsa1-mcp
+distribution/npm/platforms/*/fsa1-mcp.exe
