@@ -38,9 +38,8 @@ pub fn sheet_files(
         .map(|block| (block_name(*block), block_grid(sheet, *block, res, warnings)))
         .collect();
     // Cut like the content is, so a block's own rows and columns are the ones its rules index and a uniform region is ONE rule. Sheet axis geometry is no block's to state and goes to the tab layer.
-    let no_geometry = scope_block::BlockGeometry::default();
     for block in &blocks {
-        if let Some(presentation) = scope_block::encode(sheet, *block, &no_geometry) {
+        if let Some(presentation) = scope_block::encode(sheet, *block) {
             files.push((
                 format!("{}{PRESENTATION_SUFFIX}", block_name(*block)),
                 spell_rules(root_rect(*block), &presentation),

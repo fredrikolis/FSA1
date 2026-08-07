@@ -119,38 +119,14 @@ fn index_in(axis: u32, first: u32, last: u32) -> Option<u32> {
     (zero >= first && zero <= last).then(|| zero - first + 1)
 }
 
-/// The rules the root's cells and its axes earn. `None` where they earn none: a sheet with nothing to
-/// state writes no block, and a tab with no block writes no sidecar.
-pub fn encode(sheet: &SheetSource, block: Block, geometry: &BlockGeometry) -> Option<Presentation> {
+/// The rules the block's cells earn — its AXES are the tab layer's, never a block's. `None` where
+/// they earn none: a block stating nothing writes no sidecar.
+pub fn encode(sheet: &SheetSource, block: Block) -> Option<Presentation> {
     let ctx = Ctx::of(&sheet.styles);
     let restored = fsa1_model::default_style().declarations();
     let mut rules: BTreeMap<Target, Vec<Declaration>> = BTreeMap::new();
     for property in PROPERTIES {
         encode_property(sheet, block, &ctx, &restored, property, &mut rules);
-    }
-    match modal_size(block.cols, &geometry.widths) {
-        Some(size) => place(&mut rules, Target::All, Declaration::Width(size)),
-        None => {
-            debug_assert!(
-                block.cols > 1 || geometry.widths.is_empty(),
-                "one column is the whole block, so its width is always modal",
-            );
-            for &(col, size) in &geometry.widths {
-                place(&mut rules, Target::Col(col), Declaration::Width(size));
-            }
-        }
-    }
-    match modal_size(block.rows, &geometry.heights) {
-        Some(size) => place(&mut rules, Target::All, Declaration::Height(size)),
-        None => {
-            debug_assert!(
-                block.rows > 1 || geometry.heights.is_empty(),
-                "one row is the whole block, so its height is always modal",
-            );
-            for &(row, size) in &geometry.heights {
-                place(&mut rules, Target::Row(row), Declaration::Height(size));
-            }
-        }
     }
     spell(rules)
 }
@@ -897,8 +873,8 @@ mod tests {
 
     fn block_of(rows: u32, cols: u32, points: &[f64]) -> String {
         let (sheet, block) = sizes(rows, cols, points);
-        let presentation = encode(&sheet, block, &BlockGeometry::default())
-            .unwrap_or_else(|| panic!("{points:?} should earn a rule"));
+        let presentation =
+            encode(&sheet, block).unwrap_or_else(|| panic!("{points:?} should earn a rule"));
         spell(block, &presentation)
     }
 
@@ -954,8 +930,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        let presentation = encode(&sheet, CELL, &BlockGeometry::default())
-            .expect("a Normal font unlike the format's default earns a rule");
+        let presentation =
+            encode(&sheet, CELL).expect("a Normal font unlike the format's default earns a rule");
         assert_eq!(
             spell(CELL, &presentation),
             "  td { font-family: Arial; font-size: 9pt }\n",
@@ -966,11 +942,7 @@ mod tests {
         assert_eq!(default.font_family.as_deref(), Some("Calibri"));
         assert_eq!(default.font_size.map(|pt| pt.0), Some(11.0));
         assert_eq!(
-            encode(
-                &one_cell(XlsxStyle::default()),
-                CELL,
-                &BlockGeometry::default()
-            ),
+            encode(&one_cell(XlsxStyle::default()), CELL),
             None,
             "a Normal font that IS the format's default is restored unwritten, so it earns nothing",
         );
@@ -1006,7 +978,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            encode(&sheet, CELL, &BlockGeometry::default()),
+            encode(&sheet, CELL),
             None,
             "and neither half reached a rule, which is what the two lines say",
         );
@@ -1115,21 +1087,25 @@ mod tests {
     }
 
     /// A size on a periodic selector is REFUSED by the reader, so collapsing per-line heights would
-    /// make `unpack` write a block its own `check` rejects. Alternating heights are the exact shape
-    /// that tempts it: three lines, evenly spaced, one declaration.
+    /// make `unpack` write a tab layer its own `check` rejects. Alternating heights are the exact
+    /// shape that tempts it: evenly spaced lines, one declaration.
     #[test]
     fn alternating_axis_sizes_are_never_collapsed_into_a_periodic_rule() {
-        let (sheet, block) = sizes(6, 1, &[11.0; 6]);
+        let root = fsa1_model::Rect {
+            min_col: 0,
+            min_row: 0,
+            max_col: 0,
+            max_row: 5,
+        };
         let geometry = BlockGeometry {
             widths: Vec::new(),
             heights: (1..=6)
                 .map(|row| (row, Points(if row % 2 == 0 { 20.0 } else { 15.0 })))
                 .collect(),
         };
-        let spelled = spell(
-            block,
-            &encode(&sheet, block, &geometry).expect("the heights earn rules"),
-        );
+        let layer =
+            tab_layer(root, &geometry, "S", &mut Vec::new()).expect("the heights earn rules");
+        let spelled = fsa1_model::spell_rules(root, &layer);
         assert!(
             !spelled.contains("n)"),
             "a height never rides a periodic selector: {spelled}",
@@ -1157,16 +1133,22 @@ mod tests {
         );
     }
 
-    /// A geometry rule collapses like every other property: one `td` where the whole block agrees.
-    /// The guard is what keeps it honest — a block holding ONE unsized axis has no modal size, because
+    /// A geometry rule collapses like every other property: one `td` where the whole ROOT agrees.
+    /// The guard is what keeps it honest — a root holding ONE unsized axis has no modal size, because
     /// a bare `td { width }` would size that axis too and no finer rule could take it back.
     #[test]
-    fn a_block_sized_alike_on_every_axis_collapses_to_one_td_rule() {
-        let (sheet, block) = sizes(2, 3, &[11.0; 6]);
+    fn a_root_sized_alike_on_every_axis_collapses_to_one_td_rule() {
+        let root = fsa1_model::Rect {
+            min_col: 0,
+            min_row: 0,
+            max_col: 2,
+            max_row: 1,
+        };
         let spelled = |geometry: &BlockGeometry| {
-            spell(
-                block,
-                &encode(&sheet, block, geometry).expect("a sized block earns a rule"),
+            fsa1_model::spell_rules(
+                root,
+                &tab_layer(root, geometry, "S", &mut Vec::new())
+                    .expect("a sized root earns a rule"),
             )
         };
         assert_eq!(
@@ -1269,8 +1251,8 @@ mod tests {
     /// assertion that fails the moment a second copy of a spelling appears.
     #[test]
     fn every_sidecar_the_encoder_can_emit_reparses_to_the_one_it_emitted() {
-        let reparses = |sheet: &SheetSource, geometry: &BlockGeometry, what: &str| {
-            let Some(presentation) = encode(sheet, CELL, geometry) else {
+        let reparses = |sheet: &SheetSource, what: &str| {
+            let Some(presentation) = encode(sheet, CELL) else {
                 return;
             };
             let text = spell(CELL, &presentation);
@@ -1282,19 +1264,38 @@ mod tests {
                 "{what}: `{text}` re-reads as different rules",
             );
         };
+        // The TAB LAYER too, over roots up to the last addressable axis — the boundary where a spelling the writer emits and one `check` accepts came apart.
         for &n in ADVERSARIAL {
             let (mut sheet, _) = sizes(1, 1, &[n]);
             sheet.col_widths.insert(0, n);
             sheet.row_heights.insert(0, n);
-            let geometry = geometry(&sheet, &mut Vec::new());
-            reparses(&sheet, &geometry, &format!("{n} on every measure"));
+            reparses(&sheet, &format!("{n} on every measure"));
+            for (cols, rows) in [(1, 1), (2, 3), (16_384, 1_048_576)] {
+                let mut wide = sheet.clone();
+                wide.col_widths.insert(cols - 1, n);
+                wide.row_heights.insert(rows - 1, n);
+                let root = fsa1_model::Rect {
+                    min_col: 0,
+                    min_row: 0,
+                    max_col: cols - 1,
+                    max_row: rows - 1,
+                };
+                let geometry = geometry(&wide, &mut Vec::new());
+                let Some(layer) = tab_layer(root, &geometry, "S", &mut Vec::new()) else {
+                    continue;
+                };
+                let text = fsa1_model::spell_rules(root, &layer);
+                let parsed = fsa1_model::parse_rules("S/.css", root, &text).unwrap_or_else(|d| {
+                    panic!("tab layer {cols}x{rows} at {n}: check refuses `{text}`: {d:?}")
+                });
+                assert_eq!(
+                    parsed, layer,
+                    "tab layer {cols}x{rows} at {n}: `{text}` re-reads as different rules"
+                );
+            }
         }
         for name in adversarial_families() {
-            reparses(
-                &faced(&name),
-                &BlockGeometry::default(),
-                &format!("family {name:?}"),
-            );
+            reparses(&faced(&name), &format!("family {name:?}"));
         }
     }
 
