@@ -191,6 +191,15 @@ h2{
   margin:0 0 28px;
 }
 h2 .soft{ color:var(--dim); }
+/* The two lines that are NOT the core claim: same heading, subordinate weight. Its own
+   line-height, because one block mixing two sizes under the heading's 1.16 sets the small
+   lines too tight against the large ones. */
+h2 .also{
+  display:block;
+  font-size:.55em;
+  line-height:1.32;
+  margin-top:.62em;
+}
 h2 code{ font-family:var(--mono); font-size:.86em; letter-spacing:0; }
 
 /* ---------- 1 · the hero ---------- */
@@ -633,7 +642,7 @@ footer{
   <!-- 2 ------------------------------------------------------- -->
   <section>
     <p class="kicker">[ FSA1 core idea ]</p>
-    <h2>Tabs are folders.<br />Cells are files.<br />Styling is CSS.<br />Figures are Vega-Lite.</h2>
+    <h2>Tabs are folders.<br />Cells are files.<span class="also">Styling is CSS.<br />Figures are Vega-Lite.</span></h2>
     <div class="window">
     <button class="toggle" id="lstoggle" type="button"><span id="lslabel">[ render ]</span><i class="bar" id="lsbar"></i></button>
     <div class="loop" id="lsloop">
