@@ -1,4 +1,4 @@
-# Concern: declares the package and its deps, the READ-side format libraries included | Non-concern: what the crate does, the write half (fsa1-xlsx) | IO: none
+# Concern: declares the package and its deps: the READ-side format libraries, and the serde_json a figure is spelled through | Non-concern: what the crate does, the write half (fsa1-xlsx) | IO: none
 [package]
 name = "fsa1-ingest"
 version = "0.1.0"
@@ -11,3 +11,4 @@ fsa1-model = { path = "../fsa1-model" }
 calamine = "0.36"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 quick-xml = "0.41"
+serde_json = { version = "1", features = ["preserve_order"] }

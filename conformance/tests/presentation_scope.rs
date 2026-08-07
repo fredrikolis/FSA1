@@ -208,12 +208,24 @@ fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
         .map_err(|e| format!("re-unpack of the packed export failed: {e}"))?;
     match diff(
         "the appearance did not survive the pack -- unpack(pack(unpack(x))) differs from unpack(x)",
-        &render(&[], &got_files),
-        &render(&[], &read_tree(&reopened)),
+        &render(&[], &without_figures(&got_files)),
+        &render(&[], &without_figures(&read_tree(&reopened))),
     ) {
         Some(diff) => Err(diff),
         None => Ok(()),
     }
+}
+
+/// A figure is not appearance, and `pack` writes no chart back: the READ leg is plan 14 and the WRITE
+/// leg is plan 15, so a `.vl.json` on the way in has nothing on the way out to survive as. The first
+/// leg above already grades every figure byte against the frozen expectation; this one grades what a
+/// pack is answerable for, and comparing a figure here would assert an export FSA1 does not claim.
+fn without_figures(files: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    files
+        .iter()
+        .filter(|(name, _)| !fsa1_model::is_figure_entry(name))
+        .map(|(name, content)| (name.clone(), content.clone()))
+        .collect()
 }
 
 /// Every fixture graded in ONE run, so a change that breaks four of them names four rather than the

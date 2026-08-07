@@ -5,6 +5,7 @@ mod block_probe;
 mod dates;
 mod decompose;
 pub mod error;
+mod figure_body;
 mod names;
 mod partition;
 mod reader;
@@ -14,9 +15,11 @@ mod serialize;
 mod source;
 mod translate;
 mod warnings;
+mod xlsx_chart;
 mod xlsx_meta;
 mod xlsx_style;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 pub use error::{ErrorKind, IngestError};
@@ -24,9 +27,11 @@ pub use partition::Decomposition;
 pub use warnings::{AxisRef, UnpackCategory, UnpackWarning};
 
 use decompose::StyledCell;
+use figure_body::SheetFigures;
 use names::emit_names;
 use serialize::sheet_files;
 use source::{SheetSource, SourceBook};
+use xlsx_chart::SourceChart;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportReport {
@@ -76,9 +81,22 @@ fn import(
     } else {
         None
     };
+    let inspected = inspected_categories(src);
+    let decomposition = resolve_decomposition(src, requested, &inspected)?;
+    // The chart leg needs the book to spell a figure's field names, and the census may not call a chart "not carried" until it knows which crossed, so both legs run after the read and fold back in report order below.
+    let mut read_warnings: Vec<UnpackWarning> = Vec::new();
+    let book = reader::read_file(src, format_map.as_ref(), &mut read_warnings)?;
+    let mut chart_losses: Vec<UnpackWarning> = Vec::new();
+    let charts = match is_xlsx(src) {
+        true => xlsx_chart::read_charts(src)?,
+        false => Vec::new(),
+    };
+    let figures = spell_figures(&book, &charts, &mut chart_losses);
+    let carried: Vec<String> = figures.values().flat_map(|f| f.carried.clone()).collect();
+
     let mut warnings: Vec<UnpackWarning> = Vec::new();
     if is_xlsx(src) {
-        for part in xlsx_meta::uncarried_parts(src)? {
+        for part in xlsx_meta::uncarried_parts(src, &carried)? {
             warnings.push(UnpackWarning::WorkbookPartNotCarried { part: part.spell() });
         }
     }
@@ -93,10 +111,16 @@ fn import(
             });
         }
     }
-    let inspected = inspected_categories(src);
-    let decomposition = resolve_decomposition(src, requested, &inspected)?;
-    let book = reader::read_file(src, format_map.as_ref(), &mut warnings)?;
-    let (tabs, files) = write_book(&book, dest, decomposition, strict_xlsx, &mut warnings)?;
+    warnings.append(&mut read_warnings);
+    warnings.append(&mut chart_losses);
+    let (tabs, files) = write_book(
+        &book,
+        dest,
+        decomposition,
+        strict_xlsx,
+        &mut warnings,
+        &figures,
+    )?;
     Ok(ImportReport {
         tabs,
         files,
@@ -153,6 +177,7 @@ fn inspected_categories(src: &Path) -> Vec<UnpackCategory> {
             | UnpackCategory::Name
             | UnpackCategory::Styling
             | UnpackCategory::Geometry
+            | UnpackCategory::Chart
             | UnpackCategory::WorkbookPart => xlsx,
         })
         .collect()
@@ -166,6 +191,7 @@ fn write_book(
     decomposition: Decomposition,
     strict: bool,
     warnings: &mut Vec<UnpackWarning>,
+    figures: &BTreeMap<String, SheetFigures>,
 ) -> Result<(Vec<String>, usize), IngestError> {
     // The conflict refusal must NOT clean up the user's own pre-existing content, so it runs first.
     let dest_existed = dest.exists();
@@ -190,7 +216,7 @@ fn write_book(
         }
     }
 
-    match materialize(book, dest, decomposition, strict, warnings) {
+    match materialize(book, dest, decomposition, strict, warnings, figures) {
         Ok(out) => Ok(out),
         Err(e) => {
             let _ = std::fs::remove_dir_all(dest);
@@ -208,6 +234,7 @@ fn materialize(
     decomposition: Decomposition,
     strict: bool,
     warnings: &mut Vec<UnpackWarning>,
+    figures: &BTreeMap<String, SheetFigures>,
 ) -> Result<(Vec<String>, usize), IngestError> {
     let mut tabs = Vec::with_capacity(book.sheets.len());
     let mut files = 0usize;
@@ -221,7 +248,14 @@ fn materialize(
             )
         })?;
         let blocks = decomposition.blocks(&occupancy(sheet));
-        for (filename, content) in sheet_files(sheet, &blocks, &book.resolution, warnings) {
+        let drawn = figures
+            .get(&sheet.name)
+            .map(|f| f.files.clone())
+            .unwrap_or_default();
+        for (filename, content) in sheet_files(sheet, &blocks, &book.resolution, warnings)
+            .into_iter()
+            .chain(drawn)
+        {
             let full = dir.join(&filename);
             std::fs::write(&full, content).map_err(|e| {
                 IngestError::io(
@@ -229,8 +263,10 @@ fn materialize(
                     format!("cannot write {:?}: {e}", full.display()),
                 )
             })?;
-            // A sidecar is presentation, not a block the cut produced, so it is not one of the RANGE files this count reports.
-            if !fsa1_model::is_presentation_entry(&filename) {
+            // Neither a sidecar nor a figure is a block the cut produced, so neither is one of the RANGE files this count reports.
+            if !fsa1_model::is_presentation_entry(&filename)
+                && !fsa1_model::is_figure_entry(&filename)
+            {
                 files += 1;
             }
         }
@@ -250,6 +286,7 @@ fn materialize(
     })?;
     if strict {
         refuse_dropped_geometry(warnings)?;
+        refuse_dropped_chart(warnings)?;
     }
     Ok((tabs, files))
 }
@@ -271,6 +308,42 @@ fn refuse_dropped_geometry(warnings: &[UnpackWarning]) -> Result<(), IngestError
             "cannot strictly round-trip this workbook: {dropped}; a size the tree never states is one `pack` writes back differently -- import without --strict to import it lossily, and the fidelity report names every dropped size"
         ),
     ))
+}
+
+/// A chart that yields no figure is content `pack` has nothing to write back, so under `--strict` it
+/// is a refusal and not a report line, exactly as a dropped size is. `classify_part` refuses a charted
+/// package before this is ever reached today; this is the guard that stays true when it stops.
+fn refuse_dropped_chart(warnings: &[UnpackWarning]) -> Result<(), IngestError> {
+    let Some(dropped) = warnings
+        .iter()
+        .find(|w| w.category() == UnpackCategory::Chart)
+    else {
+        return Ok(());
+    };
+    Err(IngestError::io(
+        ErrorKind::Invalid,
+        format!(
+            "cannot strictly round-trip this workbook: {dropped}; a chart the tree never states is one `pack` cannot write back -- import without --strict to import it lossily, and the fidelity report names every chart that did not cross"
+        ),
+    ))
+}
+
+/// One [`SheetFigures`] per tab that HAS one, keyed by tab name: a chart is drawn on a sheet, and the
+/// figure it becomes lands in that sheet's folder.
+fn spell_figures(
+    book: &SourceBook,
+    charts: &[SourceChart],
+    warnings: &mut Vec<UnpackWarning>,
+) -> BTreeMap<String, SheetFigures> {
+    let mut out = BTreeMap::new();
+    for sheet in &book.sheets {
+        let drawn: Vec<&SourceChart> = charts.iter().filter(|c| c.sheet == sheet.name).collect();
+        let figures = figure_body::figures(sheet, &drawn, &book.resolution, warnings);
+        if !figures.files.is_empty() || !figures.carried.is_empty() {
+            out.insert(sheet.name.clone(), figures);
+        }
+    }
+    out
 }
 
 /// The sheet's whole content as the 1-based cells a [`Decomposition`] partitions, each carrying the
@@ -362,6 +435,7 @@ mod tests {
             Decomposition::Occupancy,
             false,
             &mut Vec::new(),
+            &BTreeMap::new(),
         )
         .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Invalid, "{}", err.message);
@@ -381,6 +455,7 @@ mod tests {
             Decomposition::Occupancy,
             false,
             &mut Vec::new(),
+            &BTreeMap::new(),
         )
         .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Invalid, "{}", err.message);
@@ -390,6 +465,29 @@ mod tests {
             "restored dest must be empty so a retry is not blocked"
         );
         std::fs::remove_dir_all(&dest).ok();
+    }
+
+    /// `classify_part` refuses a charted package in the pre-flight today, so nothing else exercises
+    /// this guard — and it is the one that still holds when that stops. Only a CHART loss trips it: a
+    /// warning of any other category is a report line under `--strict`, not a refusal.
+    #[test]
+    fn a_chart_that_yielded_no_figure_is_a_strict_refusal() {
+        let loss = UnpackWarning::ChartNotCarried {
+            sheet: "Sheet1".to_string(),
+            chart: "xl/charts/chart1.xml".to_string(),
+            why: "a <c:radarChart> has no Vega-Lite mark".to_string(),
+        };
+        let err = refuse_dropped_chart(std::slice::from_ref(&loss)).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert!(err.message.contains("radarChart"), "{}", err.message);
+        assert!(refuse_dropped_chart(&[]).is_ok());
+        assert!(
+            refuse_dropped_chart(&[UnpackWarning::MergedRegionFlattened {
+                sheet: "Sheet1".to_string(),
+                region: "A1:B2".to_string(),
+            }])
+            .is_ok()
+        );
     }
 
     #[test]
@@ -415,6 +513,7 @@ mod tests {
             Decomposition::Occupancy,
             false,
             &mut Vec::new(),
+            &BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(files, 1, "the occupancy is one block, which B1 is outside");

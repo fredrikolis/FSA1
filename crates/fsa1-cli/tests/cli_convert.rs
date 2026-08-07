@@ -408,6 +408,7 @@ fn unpack_of_a_styled_ods_never_claims_nothing_lost_and_names_what_it_did_not_in
         "defined names",
         "appearance",
         "column widths, row heights",
+        "charts",
         "workbook parts",
     ] {
         assert!(

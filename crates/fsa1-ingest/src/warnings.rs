@@ -93,6 +93,14 @@ pub enum UnpackWarning {
         row: u32,
         height: String,
     },
+    /// A chart that yielded no figure. `chart` is its package part and `why` the one sentence naming
+    /// what stopped it: Excel-to-Vega-Lite is TOTAL over the charts it admits, so a chart outside
+    /// them is a named loss and an unpack still completes.
+    ChartNotCarried {
+        sheet: String,
+        chart: String,
+        why: String,
+    },
     WorkbookPartNotCarried {
         part: String,
     },
@@ -180,19 +188,21 @@ pub enum UnpackCategory {
     Formula,
     Styling,
     Geometry,
+    Chart,
     WorkbookPart,
 }
 
 impl UnpackCategory {
     /// Every category there is, in report order. What a run INSPECTED is a subset of this, and a
     /// report may vouch for a category only by naming it here first.
-    pub const ALL: [UnpackCategory; 7] = [
+    pub const ALL: [UnpackCategory; 8] = [
         UnpackCategory::NumberFormat,
         UnpackCategory::Table,
         UnpackCategory::Name,
         UnpackCategory::Formula,
         UnpackCategory::Styling,
         UnpackCategory::Geometry,
+        UnpackCategory::Chart,
         UnpackCategory::WorkbookPart,
     ];
 }
@@ -215,6 +225,7 @@ impl UnpackWarning {
             | UnpackWarning::RowHeightUnowned { .. }
             | UnpackWarning::ColumnWidthUnspellable { .. }
             | UnpackWarning::RowHeightUnspellable { .. } => UnpackCategory::Geometry,
+            UnpackWarning::ChartNotCarried { .. } => UnpackCategory::Chart,
             UnpackWarning::WorkbookPartNotCarried { .. } => UnpackCategory::WorkbookPart,
         }
     }
@@ -311,6 +322,9 @@ impl fmt::Display for UnpackWarning {
                 f,
                 "row height for {row} on sheet {sheet} dropped: {height} is outside the heights a row can state"
             ),
+            UnpackWarning::ChartNotCarried { sheet, chart, why } => {
+                write!(f, "{chart} on sheet {sheet} carries no figure: {why}")
+            }
             UnpackWarning::WorkbookPartNotCarried { part } => write!(f, "{part} not carried"),
         }
     }
@@ -409,6 +423,15 @@ mod tests {
             assert_eq!(w.category(), UnpackCategory::Geometry);
         }
         assert_eq!(
+            UnpackWarning::ChartNotCarried {
+                sheet: "S".into(),
+                chart: "xl/charts/chart1.xml".into(),
+                why: "r".into(),
+            }
+            .category(),
+            UnpackCategory::Chart
+        );
+        assert_eq!(
             UnpackWarning::WorkbookPartNotCarried {
                 part: "autofilter".into(),
             }
@@ -417,7 +440,7 @@ mod tests {
         );
     }
 
-    /// `ALL` is hand-written over a closed enum, so this is what holds it exhaustive: an eighth
+    /// `ALL` is hand-written over a closed enum, so this is what holds it exhaustive: a ninth
     /// category breaks the match below, and one left out of `ALL` fails the count.
     #[test]
     fn all_lists_every_category_once() {
@@ -430,12 +453,13 @@ mod tests {
                 | UnpackCategory::Formula
                 | UnpackCategory::Styling
                 | UnpackCategory::Geometry
+                | UnpackCategory::Chart
                 | UnpackCategory::WorkbookPart => {}
             }
             assert!(!seen.contains(&category), "{category:?} listed twice");
             seen.push(category);
         }
-        assert_eq!(seen.len(), 7);
+        assert_eq!(seen.len(), 8);
     }
 
     /// The fold is what both producers hand their axes to, and neither sorts, dedupes or merges
@@ -654,6 +678,16 @@ mod tests {
             }
             .to_string(),
             "conditional formatting not carried"
+        );
+        assert_eq!(
+            UnpackWarning::ChartNotCarried {
+                sheet: "Sheet1".into(),
+                chart: "xl/charts/chart1.xml".into(),
+                why: "a radarChart has no Vega-Lite mark".into(),
+            }
+            .to_string(),
+            "xl/charts/chart1.xml on sheet Sheet1 carries no figure: a radarChart has no Vega-Lite \
+             mark"
         );
     }
 }

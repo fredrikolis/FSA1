@@ -368,6 +368,7 @@ dependencies = [
  "fsa1-ast",
  "fsa1-model",
  "quick-xml",
+ "serde_json",
  "zip",
 ]
 

@@ -10,11 +10,13 @@ The generated .xlsx ARE committed (small, LFS-tracked); the venv is gitignored. 
 by construction: openpyxl (a third-party writer) authors every byte, never FSA1 — see PROVENANCE.md.
 
 Each fixture isolates ONE concern and is named for it, so a grader failure names the concern rather
-than "the corpus". Two families:
+than "the corpus". Three families:
 
   * a STYLE fixture asserts what `unpack` must emit as the range file's trailing ``@scope`` block, and
     that packing it back preserves that block;
-  * a ``warn_*`` fixture asserts a single SER3 warning and the ABSENCE of the ``nothing lost`` line.
+  * a ``warn_*`` fixture asserts a single SER3 warning and the ABSENCE of the ``nothing lost`` line;
+  * a ``chart_*`` fixture asserts the ``.vl.json`` figure a chart crosses as, or the named loss it
+    costs where none can. ``openpyxl.chart`` authors every one, as openpyxl authors every other byte.
 
 Anchors shared with the expectations, so a reviewer can cross-read the two: the Normal font of an
 openpyxl workbook is Calibri 11pt unless the fixture says otherwise, and ``theme=1, tint=0`` is the
@@ -28,6 +30,7 @@ reopen leg reads it as a divergence.
 import os
 
 import openpyxl
+from openpyxl.chart import BarChart, LineChart, RadarChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.styles.colors import Color
 
@@ -347,6 +350,63 @@ def make_warn_center_continuous():
     _save(wb, "warn_center_continuous.xlsx")
 
 
+def _chart_book(title, headers, rows):
+    """A sheet whose row 1 is the field names and whose body is the records, which is the shape a
+    binding resolves to: a range keys on its FIRST ROW."""
+    wb, s = _wb("Sheet1")
+    s.append(headers)
+    for row in rows:
+        s.append(row)
+    return wb, s
+
+
+def make_bar_chart():
+    """One series over `A1:B4`, the shape the whole read leg turns on: `<c:cat>` names column A and
+    `<c:val>` column B, so neither reference is the binding and their bounding rectangle — extended up
+    to the header row `<c:tx>` names — is. It must cross as a `bar` figure whose one `data.name` is
+    `Sheet1!A1:B4` and whose `x` and `y` are the two header names.
+
+    The chart is TITLED, because the title is what the figure is named for; an untitled one would fall
+    back to the chart part and grade the fallback instead."""
+    wb, s = _chart_book("Units", ("Region", "Units"), [("North", 12), ("South", 9), ("East", 15)])
+    c = BarChart()
+    c.title = "Units by region"
+    c.add_data(Reference(s, min_col=2, min_row=1, max_row=4), titles_from_data=True)
+    c.set_categories(Reference(s, min_col=1, min_row=2, max_row=4))
+    s.add_chart(c, "D2")
+    _save(wb, "chart_bar_one_series.xlsx")
+
+
+def make_two_series_line_chart():
+    """Two series sharing one category column, which `chart_bar_one_series` cannot hold: ONE `<c:ser>`
+    is one layer, so this must cross as a two-layer spec with two `data` objects — and the second
+    series' value column is not the category column's neighbour, so it also grades that a binding is a
+    bounding RECTANGLE rather than two adjacent columns."""
+    wb, s = _chart_book(
+        "Two", ("Month", "Alpha", "Beta"), [("Jan", 1, 2), ("Feb", 3, 4), ("Mar", 5, 6)]
+    )
+    c = LineChart()
+    c.title = "Alpha against Beta"
+    c.add_data(Reference(s, min_col=2, max_col=3, min_row=1, max_row=4), titles_from_data=True)
+    c.set_categories(Reference(s, min_col=1, min_row=2, max_row=4))
+    s.add_chart(c, "E2")
+    _save(wb, "chart_line_two_series.xlsx")
+
+
+def make_radar_chart_unsupported():
+    """A radar, which has no Vega-Lite mark. Excel-to-Vega-Lite is TOTAL over the charts it admits, so
+    this must yield NO figure and ONE named loss — never a silently different chart, and never a
+    refusal: an unpack completes. Its series are otherwise ordinary, so what is graded is the MARK and
+    nothing beside it."""
+    wb, s = _chart_book("Radar", ("Axis", "Score"), [("A", 1), ("B", 2), ("C", 3)])
+    c = RadarChart()
+    c.title = "Scores"
+    c.add_data(Reference(s, min_col=2, min_row=1, max_row=4), titles_from_data=True)
+    c.set_categories(Reference(s, min_col=1, min_row=2, max_row=4))
+    s.add_chart(c, "D2")
+    _save(wb, "chart_radar_unsupported.xlsx")
+
+
 def make_unstyled_nothing_lost():
     """A workbook stating no style anywhere: the one fixture that must still print `nothing lost`."""
     wb, s = _wb("Plain")
@@ -380,6 +440,9 @@ def main():
     make_warn_underline_double()
     make_warn_center_continuous()
     make_unstyled_nothing_lost()
+    make_bar_chart()
+    make_two_series_line_chart()
+    make_radar_chart_unsupported()
 
 
 if __name__ == "__main__":

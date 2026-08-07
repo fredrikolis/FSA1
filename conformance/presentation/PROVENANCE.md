@@ -43,15 +43,16 @@ One directive per line; `#` comments and blank lines are ignored.
     file: <tab>/<entry-name>
     |<a line of that entry's contents, verbatim>
 
-A `file:` entry is a range file or a `<range>.css` sidecar; the two are listed alike, in the
-`<tab>/<name>` order the grader sorts by, which puts a range file directly ahead of its own sidecar.
+A `file:` entry is a range file, a `<range>.css` sidecar or a `<name>.vl.json` figure; all three are
+listed alike, in the `<tab>/<name>` order the grader sorts by, which puts a range file directly ahead
+of its own sidecar.
 Every content line is `|`-prefixed, which is what makes an empty grid line distinguishable from
 nothing at all. A sidecar ends in a newline, so its last content line is a bare `|`. A fixture with
 no `warning:` line must print `unpack fidelity: nothing lost`; a fixture with one must not. A fixture
 with no `file:` line must write no entry at all.
 
 That unconditional `nothing lost` is expected here because every fixture is an `.xlsx` — the one source
-format whose readers open all seven categories the report tracks. A run that inspected fewer prints a
+format whose readers open all eight categories the report tracks. A run that inspected fewer prints a
 line naming what it did not look at instead, which is why an `.ods` cannot be graded by this format
 (see the blind spots).
 
@@ -161,6 +162,16 @@ than mechanism:
 | `warn_underline_double` | as above, for `u="double"` |
 | `warn_center_continuous` | as above, for `horizontal="centerContinuous"` |
 | `unstyled_nothing_lost` | a workbook stating no style anywhere still prints `nothing lost` |
+| `chart_bar_one_series` | a one-series bar chart crosses as a `bar` figure binding the bounding rectangle of its two references, extended up to the header row |
+| `chart_line_two_series` | two series sharing one category column cross as a TWO-layer spec with two `data` objects |
+| `chart_radar_unsupported` | a radar has no Vega-Lite mark, so it yields NO figure and one named loss — and the unpack still completes |
+
+### What the pack leg does NOT grade
+
+The second unpack — `unpack(pack(unpack(x)))` — is compared over every entry EXCEPT a `.vl.json`. A
+figure is not appearance, and `pack` writes no chart back: reading a chart in is plan 14 and writing
+one out is plan 15, so a figure has nothing on the way out to survive as. The first leg still grades
+every figure byte against the frozen expectation; only the pack leg abstains, and only from figures.
 
 ## Corpus history
 

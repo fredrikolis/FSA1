@@ -1,0 +1,26 @@
+warning: xl/drawings/drawing1.xml not carried
+file: Sheet1/A1:B4
+|Region	Units
+|North	12
+|South	9
+|East	15
+file: Sheet1/Units by region.vl.json
+|{
+|  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+|  "title": "Units by region",
+|  "mark": "bar",
+|  "data": {
+|    "name": "Sheet1!A1:B4"
+|  },
+|  "encoding": {
+|    "x": {
+|      "field": "Region",
+|      "type": "nominal"
+|    },
+|    "y": {
+|      "field": "Units",
+|      "type": "quantitative"
+|    }
+|  }
+|}
+|

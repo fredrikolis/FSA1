@@ -282,7 +282,7 @@ impl UncarriedPart {
 /// same classifier `--strict` refuses on, so the two cannot disagree about which parts cross. A part it
 /// ALLOWS still states content FSA1 drops: `xl/worksheets/sheetN.xml` is allowed for its cells, and the
 /// same part states the autofilter leaving with it. `Drop` is regenerated on reopen, so it is no loss.
-pub fn uncarried_parts(path: &Path) -> Result<Vec<UncarriedPart>, IngestError> {
+pub fn uncarried_parts(path: &Path, carried: &[String]) -> Result<Vec<UncarriedPart>, IngestError> {
     let file = File::open(path).map_err(|e| {
         IngestError::io(
             ErrorKind::SourceIo,
@@ -302,6 +302,8 @@ pub fn uncarried_parts(path: &Path) -> Result<Vec<UncarriedPart>, IngestError> {
     let mut found: Vec<UncarriedPart> = zip
         .file_names()
         .filter(|name| classify_part(name) == Disposition::Refuse)
+        // `carried` stays REFUSE in the classifier -- `--strict` asks whether `pack` writes a part back, and nothing writes a chart yet -- so only what a COMPLETED unpack may call "not carried" moves.
+        .filter(|name| !carried.iter().any(|c| c == name))
         .map(|name| UncarriedPart::PackagePart(name.to_string()))
         .collect();
     if let Some(xml) = read_entry(&mut zip, "xl/sharedStrings.xml")?
@@ -716,9 +718,8 @@ pub(crate) fn sheet_name_by_part(
     let Some(workbook) = read_entry(zip, "xl/workbook.xml")? else {
         return Ok(HashMap::new());
     };
-    let rels = read_entry(zip, "xl/_rels/workbook.xml.rels")?.unwrap_or_default();
     let sheets = parse_workbook_sheets(&workbook)?;
-    let targets = parse_rels(&rels)?;
+    let targets = read_rels(zip, "xl/workbook.xml")?;
     let mut out = HashMap::new();
     for (name, rid) in sheets {
         if let Some(part) = targets.get(&rid) {
@@ -749,8 +750,17 @@ fn parse_workbook_sheets(xml: &str) -> Result<Vec<(String, String)>, IngestError
     Ok(out)
 }
 
-fn parse_rels(xml: &str) -> Result<HashMap<String, String>, IngestError> {
-    let mut reader = Reader::from_str(xml);
+/// The relationships a part declares, `Id -> the package path the `Target` resolves to`. A part's
+/// rels live at `<dir>/_rels/<file>.rels` and its relative targets join onto `<dir>`, so the OWNING
+/// part is what this takes: the one rels reader in the crate cannot then be pointed at a base its
+/// targets do not belong to. A part declaring none has no rels file and yields an empty map.
+pub(crate) fn read_rels(
+    zip: &mut ZipArchive<BufReader<File>>,
+    part: &str,
+) -> Result<HashMap<String, String>, IngestError> {
+    let (dir, file) = part.rsplit_once('/').unwrap_or(("", part));
+    let xml = read_entry(zip, &format!("{dir}/_rels/{file}.rels"))?.unwrap_or_default();
+    let mut reader = Reader::from_str(&xml);
     let mut out = HashMap::new();
     loop {
         match reader.read_event().map_err(xml_err)? {
@@ -758,7 +768,7 @@ fn parse_rels(xml: &str) -> Result<HashMap<String, String>, IngestError> {
                 let id = attr(&e, b"Id").unwrap_or_default();
                 let target = attr(&e, b"Target").unwrap_or_default();
                 if !id.is_empty() && !target.is_empty() {
-                    out.insert(id, normalize_target(&target));
+                    out.insert(id, resolve_target(dir, &target));
                 }
             }
             Event::Eof => break,
@@ -768,12 +778,24 @@ fn parse_rels(xml: &str) -> Result<HashMap<String, String>, IngestError> {
     Ok(out)
 }
 
-/// `workbook.xml.rels` sits at the `xl/` base, so a relative `Target` joins onto it.
-fn normalize_target(target: &str) -> String {
-    match target.strip_prefix('/') {
-        Some(abs) => abs.to_string(),
-        None => format!("xl/{target}"),
+/// A `Target` is package-absolute when it leads with `/` and relative to the owning part's directory
+/// otherwise. Both spellings are in the wild for one relationship — openpyxl writes
+/// `/xl/drawings/drawing1.xml` where Excel writes `../drawings/drawing1.xml` — so both resolve here.
+pub(crate) fn resolve_target(dir: &str, target: &str) -> String {
+    if let Some(abs) = target.strip_prefix('/') {
+        return abs.to_string();
     }
+    let mut parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+    for segment in target.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
 }
 
 pub(crate) fn read_entry(
@@ -913,7 +935,7 @@ pub(crate) fn attr(e: &BytesStart, key: &[u8]) -> Option<String> {
     None
 }
 
-fn decode_text(t: &quick_xml::events::BytesText<'_>) -> Result<String, IngestError> {
+pub(crate) fn decode_text(t: &quick_xml::events::BytesText<'_>) -> Result<String, IngestError> {
     let raw = t.decode().map_err(|e| {
         IngestError::io(ErrorKind::SourceIo, format!("cannot decode xml text: {e}"))
     })?;
@@ -1092,7 +1114,7 @@ mod tests {
             "xl/calcChain.xml",
             "xl/theme/theme1.xml",
         ]);
-        let censused: Vec<String> = uncarried_parts(&path)
+        let censused: Vec<String> = uncarried_parts(&path, &[])
             .unwrap()
             .iter()
             .filter_map(|p| match p {
@@ -1119,6 +1141,23 @@ mod tests {
             "a DROP part is regenerated by the reopening spreadsheet, so it is no loss"
         );
         assert!(!censused.iter().any(|n| n == "xl/theme/theme1.xml"));
+
+        // A chart that became a figure is carried, so the census stops calling it not carried -- while the classifier still refuses it, which is what `--strict` reads.
+        let carried = uncarried_parts(&path, &["xl/charts/chart1.xml".to_string()]).unwrap();
+        let carried: Vec<String> = carried
+            .iter()
+            .filter_map(|p| match p {
+                UncarriedPart::PackagePart(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(!carried.iter().any(|n| n == "xl/charts/chart1.xml"));
+        assert!(carried.iter().any(|n| n == "xl/drawings/drawing1.xml"));
+        assert_eq!(
+            classify_part("xl/charts/chart1.xml"),
+            Disposition::Refuse,
+            "a carried chart is still a part `pack` cannot write back, so `--strict` still refuses it"
+        );
         std::fs::remove_file(&path).ok();
     }
 
@@ -1426,25 +1465,23 @@ mod tests {
                 ("Report".to_string(), "rId2".to_string())
             ]
         );
-        let targets = parse_rels(
-            r#"<Relationships>
-                <Relationship Id="rId1" Target="worksheets/sheet1.xml"/>
-                <Relationship Id="rId2" Target="/xl/worksheets/sheet2.xml"/>
-                <Relationship Id="rId9" Target="styles.xml"/>
-            </Relationships>"#,
-        )
-        .unwrap();
+        // The rels half is `resolve_target`'s, over the base the OWNING part sits at.
         assert_eq!(
-            targets.get("rId1").unwrap(),
+            resolve_target("xl", "worksheets/sheet1.xml"),
             "xl/worksheets/sheet1.xml",
-            "a relative target joins onto `xl/`"
+            "a relative target joins onto the owning part's directory"
         );
         assert_eq!(
-            targets.get("rId2").unwrap(),
+            resolve_target("xl", "/xl/worksheets/sheet2.xml"),
             "xl/worksheets/sheet2.xml",
             "an absolute `/xl/...` keeps its path"
         );
-        assert_eq!(targets.get("rId9").unwrap(), "xl/styles.xml");
+        assert_eq!(resolve_target("xl", "styles.xml"), "xl/styles.xml");
+        // A worksheet's own rels reach UP, which no base of `xl/` alone could resolve.
+        assert_eq!(
+            resolve_target("xl/worksheets", "../drawings/drawing1.xml"),
+            "xl/drawings/drawing1.xml"
+        );
     }
 
     #[test]

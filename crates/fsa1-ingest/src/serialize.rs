@@ -188,7 +188,7 @@ fn block_grid(
 
 /// The LOGICAL field, before the caller applies [`encode_field`]'s escaping, plus the
 /// untranslatability reason when a formula was kept verbatim. Infallible: every cell is representable.
-fn cell_field(
+pub(crate) fn cell_field(
     cell: &SourceValue,
     res: &Resolution,
     sheet: &str,

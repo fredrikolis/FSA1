@@ -1,0 +1,46 @@
+warning: xl/drawings/drawing1.xml not carried
+file: Sheet1/A1:C4
+|Month	Alpha	Beta
+|Jan	1	2
+|Feb	3	4
+|Mar	5	6
+file: Sheet1/Alpha against Beta.vl.json
+|{
+|  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+|  "title": "Alpha against Beta",
+|  "layer": [
+|    {
+|      "mark": "line",
+|      "data": {
+|        "name": "Sheet1!A1:B4"
+|      },
+|      "encoding": {
+|        "x": {
+|          "field": "Month",
+|          "type": "nominal"
+|        },
+|        "y": {
+|          "field": "Alpha",
+|          "type": "quantitative"
+|        }
+|      }
+|    },
+|    {
+|      "mark": "line",
+|      "data": {
+|        "name": "Sheet1!A1:C4"
+|      },
+|      "encoding": {
+|        "x": {
+|          "field": "Month",
+|          "type": "nominal"
+|        },
+|        "y": {
+|          "field": "Beta",
+|          "type": "quantitative"
+|        }
+|      }
+|    }
+|  ]
+|}
+|

@@ -563,7 +563,7 @@ fn cmd_unpack(rest: &[String]) -> u8 {
 /// Every account of what the report covers reads this one table: the section a category prints under,
 /// and the noun the clean-run line credits it with. Prose kept by hand beside it drifts, and a
 /// category the report emits but no account names is one an agent must go and look for itself.
-const SECTIONS: [(UnpackCategory, &str, &str); 7] = [
+const SECTIONS: [(UnpackCategory, &str, &str); 8] = [
     (
         UnpackCategory::NumberFormat,
         "number formats coerced to plain",
@@ -590,6 +590,7 @@ const SECTIONS: [(UnpackCategory, &str, &str); 7] = [
         "column widths and row heights dropped",
         "column widths, row heights",
     ),
+    (UnpackCategory::Chart, "charts not carried", "charts"),
     (
         UnpackCategory::WorkbookPart,
         "workbook parts not carried",
@@ -1223,7 +1224,7 @@ OUTPUT:
 
   A DEFAULT-ON fidelity report on STDERR (exit code unchanged): after the success line, unpack prints a
   full, grouped, uncapped account of everything the conversion changed, each item located (sheet!cell /
-  name / table / column / row / part) and visible in `check`. Its sections, in the order they print:
+  name / table / column / row / chart / part) and visible in `check`. Its sections, in the order they print:
 {SECTIONS}
   A faithful conversion prints a single "nothing lost" line instead. The report fires on any completed
   import whose losses are non-empty, WITH or WITHOUT --strict (--strict only turns some of those losses
@@ -1232,7 +1233,7 @@ OUTPUT:
   Either rendering vouches only for the categories the SOURCE's readers examined. A .ods is read for
   its values and formulas alone, so its run names the categories it did not inspect ("not inspected on
   this source, so not vouched for: ...") and never prints "nothing lost" — a loss in one of those is
-  neither reported nor ruled out. A .xlsx is read for all seven.
+  neither reported nor ruled out. A .xlsx is read for all eight.
 
 EXIT CODES:
   0   Success (workbook written)
@@ -1373,6 +1374,11 @@ mod tests {
                 sheet: "S".into(),
                 column: "C".into(),
                 width: "300".into(),
+            },
+            UnpackWarning::ChartNotCarried {
+                sheet: "S".into(),
+                chart: "xl/charts/chart1.xml".into(),
+                why: "r".into(),
             },
             UnpackWarning::WorkbookPartNotCarried {
                 part: "conditional formatting".into(),

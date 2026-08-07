@@ -1,0 +1,8 @@
+warning: xl/charts/chart1.xml not carried
+warning: xl/drawings/drawing1.xml not carried
+warning: xl/charts/chart1.xml on sheet Sheet1 carries no figure: a <c:radarChart> has no Vega-Lite mark
+file: Sheet1/A1:B4
+|Axis	Score
+|A	1
+|B	2
+|C	3
