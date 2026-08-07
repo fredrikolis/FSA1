@@ -6,15 +6,18 @@ description: >
   each file's name is the A1 range it fills). Reach for it to unpack an Excel file into an editable
   file tree, render/inspect a workbook directory as a grid, lint it, trace or evaluate formulas, or
   pack a tree back into Excel. Only .xlsx and .ods are read; other spreadsheet formats are refused.
-  The `fsa1-cli` command is on PATH while this plugin is enabled; invoke it via Bash.
+  The unpack/pack/render/check/eval/trace tools come from this plugin's MCP server; cells are
+  files, so read and edit them with ordinary file tools rather than asking for a write tool.
 ---
 
-<!-- Concern: teaches an agent when to reach for fsa1-cli and how to drive it | Non-concern: installing the binary (bin/fsa1-cli), the format's invariants (docs/format-spec.md) | IO: none -->
-# fsa1-cli
+<!-- Concern: teaches an agent when to reach for the FSA1 tools and how to drive them | Non-concern: installing the server (launcher/fsa1-mcp), the format's invariants (docs/format-spec.md) | IO: none -->
+# FSA1
 
-`fsa1-cli` is a spreadsheet engine over a **filesystem** representation of a workbook. It is on PATH
-while this plugin is enabled — run it with the Bash tool. First run on a new machine may pause briefly
-while the launcher fetches or builds the native binary (subsequent runs are instant).
+FSA1 is a spreadsheet engine over a **filesystem** representation of a workbook. This plugin's MCP
+server exposes the six verbs that need the engine — `unpack`, `pack`, `render`, `check`, `eval`,
+`trace`. Everything else is ordinary file work: a cell IS a file, so read one with your file-reading
+tool and change one with your file-editing tool. There is no write tool here and none is needed.
+First call on a new machine may pause briefly while the launcher fetches the native server.
 
 ## The model in one paragraph
 
@@ -29,7 +32,7 @@ regardless of platform — only the on-disk file NAME differs. Named cells/range
 (a `Name` ref-file, or `Name.begin` / `Name.end` for a range).
 
 **There is no `write` command by design** — the filesystem *is* the write surface. To edit a workbook,
-write the cell files directly with ordinary file tools, then use `fsa1-cli` to read them back.
+write the cell files directly with ordinary file tools, then use `render` or `check` to read them back.
 
 ## When to use it
 
@@ -40,55 +43,47 @@ write the cell files directly with ordinary file tools, then use `fsa1-cli` to r
   overlaps / dimension mismatches / cycles.
 - You (the agent) need to author or edit spreadsheet data as plain files and then confirm it loads.
 
-## Commands
+## Tools
 
-Path grammar: `<wb>[/<tab>[/<A1>]]` — the tab and cell/range are PART OF THE PATH.
+Path grammar: `<wb>[/<tab>[/<A1>]]` — the tab and cell/range are PART OF THE PATH, and every tool
+that takes a `target` takes it in this form.
 
-- `fsa1-cli render <path> [--mode combined|values|functions] [--format ascii|html]` — draw the scope
-  as ASCII (or standalone HTML). Bare `<wb>` draws every tab; `<wb>/<Tab>` one tab; `<wb>/<Tab>/A1:D9`
-  a region. Default `combined` shows `value ← =formula`.
-- `fsa1-cli check <path>` — lint (overlap, dimension mismatch, cycles). Non-zero exit on error-severity
-  diagnostics. Scope to a tab/range to lint only that.
-- `fsa1-cli eval <path> --formula '=<formula>'` — evaluate an ad-hoc formula against the workbook.
-- `fsa1-cli trace <path> [--dependents] [--depth N]` — a cell's upstream deps (or downstream consumers).
-- `fsa1-cli tree <path> [--mode ...]` — the whole structure (every tab, cell, name) as a nested view.
-- `fsa1-cli sample <dir>` — write a live tutorial workbook (refuses a non-empty dir).
-- `fsa1-cli unpack [--strict] [--decompose <policy>] <src.xlsx|src.ods> [<dst>]` — real spreadsheet →
-  FSA1 tree. `<dst>` defaults to `./<src-stem>/`. Refuses a non-empty destination.
-- `fsa1-cli pack <workbook-dir> [--target xlsx]` — FSA1 tree → a fresh `./<basename>.xlsx` (never
+- `render` — `target`, optional `mode` (`combined|values|functions`), `format` (`ascii|html`). Draws
+  the scope. Bare `<wb>` draws every tab; `<wb>/<Tab>` one tab; `<wb>/<Tab>/A1:D9` a region. Default
+  `combined` shows `value ← =formula`.
+- `check` — `target`. Lints overlap, dimension mismatch, cycles and broken references. Scope it to a
+  tab or range to lint only that.
+- `eval` — `target`, `formula`. Evaluates an ad-hoc formula against the workbook, writing nothing. An
+  error value like `#REF!` is the ANSWER, not a failure.
+- `trace` — `target` (exactly one cell), optional `direction` (`upstream|downstream`) and `depth`.
+- `unpack` — `source` (.xlsx or .ods), optional `dest` and `decomposition`. Real spreadsheet → FSA1
+  tree. `dest` defaults to `./<source-stem>/`. Refuses a non-empty destination.
+- `pack` — `source` (a workbook directory), optional `dest`. FSA1 tree → a fresh `.xlsx` (never
   clobbers; leaves the source untouched).
-- `fsa1-cli convert <workbook-dir> [--to posix|windows|auto]` — re-spell range file names between
-  `A1:C1` (posix) and `A1-C1` (windows/portable) so a raw tree checks out on another OS. Only range
-  file names change. `--to posix` only works on a POSIX host (`:` is not a legal Windows filename).
-- `fsa1-cli --help` / `fsa1-cli <command> --help` / `fsa1-cli --guide` — full surface and the on-disk grammar.
 
-## Common invocations
+There is no write tool, and none is needed: **a cell is a file**. Create, change and move cells with
+your own file tools, then use `check` or `render` to confirm the workbook still loads.
 
-```bash
-fsa1-cli sample ./demo && fsa1-cli render ./demo         # see it work end to end
-fsa1-cli unpack book.xlsx && fsa1-cli render ./book      # xlsx -> tree, then draw it
-fsa1-cli check ./budget                                  # lint a workbook
-fsa1-cli eval ./budget/Orders --formula '=SUM(D2:D4)'    # ad-hoc formula
-fsa1-cli pack ./budget                                   # tree -> ./budget.xlsx
-```
+## Common sequences
 
-Authoring a cell directly (no write command — the file IS the cell):
+Read a spreadsheet you were handed: `unpack` it, then `render` a tab, or just read the range files
+directly — they are text.
 
-```bash
-mkdir -p ./budget/Sheet1
-printf '=SUM(A1:A2)' > ./budget/Sheet1/H3    # filename IS the A1 address; ':' ranges are fine here
-fsa1-cli check ./budget/Sheet1/H3            # validate just that cell
-```
+Change a value: edit the cell's file with your file-editing tool. The filename IS the A1 address, so
+`./budget/Sheet1/H3` holds cell H3; writing `=SUM(A1:A2)` into it makes H3 a formula. Then `check`
+that path to validate just that cell.
+
+Hand it back: `pack` the directory to get a fresh `.xlsx`.
 
 ## Notes & gotchas
 
-- **Exit codes:** `0` ok · `1` I/O · `2` bad args · `3` validation error (or a workbook that won't
-  load) · `4` conflict (never-clobber refusal) · `24` not found. Check them when scripting.
+- **A refused tool call** answers with `isError` and one line opening `fsa1: <kind>:` — the kinds are
+  `invalid-arguments`, `validation`, `conflict`, `not-found` and `io`. A FINDING is not a refusal:
+  `check` reporting errors and `eval` yielding `#REF!` both succeed.
 - **`:` vs `-` in file NAMES:** a range file may be named `A1:C1` or `A1-C1`; the reader accepts both
   on every platform, so when you *create* one yourself either works (prefer `A1-C1` if the tree may be
   used on Windows, since `:` cannot be written there). In formulas and path selectors always use `:` —
-  that is platform-independent. Use `fsa1-cli convert` to normalize an existing tree's spelling.
+  that is platform-independent. The `fsa1-cli` command (https://fsa1.sh) has a `convert` verb that re-spells an existing tree.
 - `unpack` prints a **fidelity report** of anything the conversion changed; it is not an error, but
   read it. `pack` and the never-clobber commands refuse to overwrite existing files.
-- Output goes to **stdout**; diagnostics and the launcher's own messages go to **stderr**. When you
-  need just the data, read stdout.
+- Every tool answers with one block of text: the grid, the table, the value or the trace.

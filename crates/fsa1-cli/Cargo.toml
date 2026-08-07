@@ -10,12 +10,9 @@ name = "fsa1-cli"
 path = "src/main.rs"
 
 [dependencies]
+fsa1-verbs = { path = "../fsa1-verbs" }
 fsa1-model = { path = "../fsa1-model" }
-fsa1-html = { path = "../fsa1-html" }
 fsa1-ingest = { path = "../fsa1-ingest" }
-fsa1-xlsx = { path = "../fsa1-xlsx" }
-comfy-table = "7.2"
-annotated-tree = "0.6"
 
 [dev-dependencies]
 calamine = "0.36"

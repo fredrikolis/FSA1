@@ -20,26 +20,31 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset: fsa1-cli-linux-x86_64
+            mcp_asset: fsa1-mcp-linux-x86_64
             ext: ""
           # The launcher resolves linux-aarch64 too (Apple-silicon containers, ARM cloud sandboxes);
           # without this asset those hosts fall all the way through to building from source.
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             asset: fsa1-cli-linux-aarch64
+            mcp_asset: fsa1-mcp-linux-aarch64
             ext: ""
           - os: macos-14
             target: aarch64-apple-darwin
             asset: fsa1-cli-macos-aarch64
+            mcp_asset: fsa1-mcp-macos-aarch64
             ext: ""
           # Intel macOS is CROSS-BUILT from the Apple-silicon runner: GitHub is retiring the Intel
           # ones, and a release that waits for a scarce runner is a release that does not go out.
           - os: macos-14
             target: x86_64-apple-darwin
             asset: fsa1-cli-macos-x86_64
+            mcp_asset: fsa1-mcp-macos-x86_64
             ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset: fsa1-cli-windows-x86_64.exe
+            mcp_asset: fsa1-mcp-windows-x86_64.exe
             ext: ".exe"
     runs-on: ${{ matrix.os }}
     steps:
@@ -54,8 +59,10 @@ jobs:
       - name: Add the target
         run: rustup target add ${{ matrix.target }}
 
-      - name: Build fsa1-cli (release)
-        run: cargo build --release -p fsa1-cli --target ${{ matrix.target }}
+      # Both front ends ship: the launcher fetches `mcp_asset`, and website/public/install-cli
+      # fetches `asset` for anyone who wants the command in their own shell.
+      - name: Build both front ends (release)
+        run: cargo build --release -p fsa1-cli -p fsa1-mcp --target ${{ matrix.target }}
 
       # Normalize the artifact name to the asset the launcher expects.
       - name: Stage artifact (unix)
@@ -63,19 +70,21 @@ jobs:
         run: |
           mkdir -p out
           cp "target/${{ matrix.target }}/release/fsa1-cli" "out/${{ matrix.asset }}"
-          chmod +x "out/${{ matrix.asset }}"
+          cp "target/${{ matrix.target }}/release/fsa1-mcp" "out/${{ matrix.mcp_asset }}"
+          chmod +x "out/${{ matrix.asset }}" "out/${{ matrix.mcp_asset }}"
       - name: Stage artifact (windows)
         if: matrix.ext == '.exe'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/fsa1-cli.exe" "out/${{ matrix.asset }}"
+          Copy-Item "target/${{ matrix.target }}/release/fsa1-mcp.exe" "out/${{ matrix.mcp_asset }}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: out/${{ matrix.asset }}
+          path: out/*
 
   release:
     needs: build

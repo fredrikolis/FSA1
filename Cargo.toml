@@ -9,7 +9,7 @@
 # — docs/architecture.md §1, §5.
 [workspace]
 resolver = "2"
-members = ["crates/fsa1-ast", "crates/fsa1-cli", "crates/fsa1-html", "crates/fsa1-ingest", "crates/fsa1-model", "crates/fsa1-xlsx", "conformance"]
+members = ["crates/fsa1-ast", "crates/fsa1-cli", "crates/fsa1-verbs", "crates/fsa1-mcp", "crates/fsa1-html", "crates/fsa1-ingest", "crates/fsa1-model", "crates/fsa1-xlsx", "conformance"]
 
 [workspace.package]
 license = "MIT"

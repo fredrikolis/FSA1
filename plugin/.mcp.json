@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "fsa1": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/launcher/fsa1-mcp"
+    }
+  }
+}

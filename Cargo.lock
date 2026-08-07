@@ -347,13 +347,10 @@ version = "0.1.0"
 name = "fsa1-cli"
 version = "0.1.0"
 dependencies = [
- "annotated-tree",
  "calamine",
- "comfy-table",
- "fsa1-html",
  "fsa1-ingest",
  "fsa1-model",
- "fsa1-xlsx",
+ "fsa1-verbs",
 ]
 
 [[package]]
@@ -375,10 +372,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsa1-mcp"
+version = "0.1.0"
+dependencies = [
+ "fsa1-ingest",
+ "fsa1-model",
+ "fsa1-verbs",
+ "serde_json",
+]
+
+[[package]]
 name = "fsa1-model"
 version = "0.1.0"
 dependencies = [
  "fsa1-ast",
+]
+
+[[package]]
+name = "fsa1-verbs"
+version = "0.1.0"
+dependencies = [
+ "annotated-tree",
+ "comfy-table",
+ "fsa1-html",
+ "fsa1-ingest",
+ "fsa1-model",
+ "fsa1-xlsx",
 ]
 
 [[package]]

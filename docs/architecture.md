@@ -9,15 +9,20 @@ every pointer. Governed by `~/.knowledge-base/coding-standards/ast-standards.md`
 ## 1. Crate firewall
 
 ```
-fsa1-cli    // CLI surface (render/check), picks a carrier — knows no formula meaning, no fs internals
-   → fsa1-model   // tabs/ranges/overlap/demand-driven eval/diagnostics — knows no formula grammar, no xlsx
-        → fsa1-ast   // the formula language (lex/parse/eval) — knows nothing of the filesystem or xlsx
-fsa1-xlsx (LATER)   → { fsa1-ast, fsa1-model }   // never depended-on by the core
+fsa1-cli    // the argv front end — flags, exit codes, help text
+fsa1-mcp    // the MCP front end — tool schemas, JSON-RPC on stdio
+   → fsa1-verbs  // a verb named by a path, answering a value or a Refusal; neither front end's own
+        → fsa1-model   // tabs/ranges/overlap/demand-driven eval/diagnostics — knows no formula grammar, no xlsx
+             → fsa1-ast   // the formula language (lex/parse/eval) — knows nothing of the filesystem or xlsx
+fsa1-xlsx           → { fsa1-ast, fsa1-model }   // never depended-on by the core
 fsa1-html           → fsa1-model   // a rendered view as one standalone HTML document
 ```
 
-The only allowed dependency direction is `cli → model → ast`, plus `xlsx → { ast, model }` and
-`html → model`.
+The only allowed dependency direction is `{cli, mcp} → verbs → model → ast`, plus
+`verbs → { ingest, xlsx, html }`, `xlsx → { ast, model }` and `html → model`.
+A front end is a shell over the verb layer: neither binary is depended on by anything, neither knows
+the other exists, and neither reaches the formula language directly. That is what makes a second one
+cheap — the MCP server is a different envelope around the same verbs, not a second implementation.
 An output format is its own crate: `fsa1-model` owns the filesystem spreadsheet model and `fsa1-cli`
 is a thin argv shell, so neither is where a serializer belongs.
 This is enforced mechanically by the `deny` edges in `.annotated-tree.toml`, wired the moment both

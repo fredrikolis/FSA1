@@ -1,16 +1,14 @@
 // Concern: the CLI argv surface — every verb, its flags, and its help text | Non-concern: cell values, path resolution, drawing | IO: (argv) -> stdout + stderr + an exit code
 
-mod address;
 mod guide;
 mod output;
-mod present;
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use fsa1_ingest::{Decomposition, UnpackCategory};
-use fsa1_model::{Direction, FormulaOutcome, RenderMode, ViewScope, Workbook, view};
+use fsa1_model::{Direction, FormulaOutcome, RenderMode, Workbook};
 
 use crate::output::{
     ErrorCode, emit_error, emit_eval_error_value, emit_eval_value, emit_trace,
@@ -110,9 +108,6 @@ enum Presenter {
     Tree,
 }
 
-/// A display bound on the finished view, never a narrowing of what was demanded.
-const TREE_CELL_CAP: u32 = 50;
-
 /// One plan+evaluate pass feeds both presenters, so `render` and `tree` cannot disagree about a cell.
 fn cmd_view(rest: &[String], presenter: Presenter) -> u8 {
     let verb = match presenter {
@@ -157,58 +152,30 @@ fn cmd_view(rest: &[String], presenter: Presenter) -> u8 {
         ));
     };
 
-    let resolved = match address::resolve(&path) {
+    let r = match fsa1_verbs::ops::view_at(
+        &path,
+        mode,
+        match presenter {
+            Presenter::Table => fsa1_verbs::ops::Presenter::Table,
+            Presenter::Tree => fsa1_verbs::ops::Presenter::Tree,
+        },
+        match format {
+            OutputFormat::Ascii => fsa1_verbs::ops::Format::Ascii,
+            OutputFormat::Html => fsa1_verbs::ops::Format::Html,
+        },
+        full,
+    ) {
         Ok(r) => r,
-        Err(code) => return code,
+        Err(e) => return refused(e),
     };
-    if resolved.workbook.sheet_names().is_empty() {
-        let msg = format!(
-            "{path:?} has no tabs (a tab is a sub-folder of cell/range files; name one as <workbook>/<tab>)"
-        );
-        return fail(ErrorCode::Validation, &msg);
+    for note in &r.notes {
+        eprintln!("fsa1-cli: {note}");
     }
-    let wb = &resolved.workbook;
-    let scope = match (resolved.tab, resolved.region()) {
-        (tab, Some(rect)) => ViewScope::Region(tab.unwrap_or(0), rect),
-        (Some(sheet), None) => ViewScope::Tab(sheet),
-        (None, None) => ViewScope::Workbook,
-    };
-
-    if let ViewScope::Region(sheet, rect) = scope
-        && let Some(used) = wb.used_region(sheet)
-        && rect.intersect(&used).is_none()
-    {
-        eprintln!(
-            "fsa1-cli: region {} lies entirely outside the tab's used region {}",
-            rect.label(),
-            used.label()
-        );
+    // An HTML carrier still emits its document: a caller redirecting stdout gets a file either way.
+    if r.empty && presenter == Presenter::Table && format == OutputFormat::Ascii {
+        return 0;
     }
-
-    let v = match view(wb, scope, mode) {
-        Ok(v) => v,
-        Err(msg) => return bad_arg(&msg),
-    };
-
-    if v.sheets.len() == 1 && v.sheets[0].grid.is_none() {
-        eprintln!(
-            "fsa1-cli: tab {:?} is empty (no cells to render)",
-            v.sheets[0].name
-        );
-        // An HTML carrier still emits its document: a caller redirecting stdout gets a file either way.
-        if presenter == Presenter::Table && format == OutputFormat::Ascii {
-            return 0;
-        }
-    }
-
-    println!(
-        "{}",
-        match (presenter, format) {
-            (Presenter::Table, OutputFormat::Ascii) => present::table(&v),
-            (Presenter::Table, OutputFormat::Html) => fsa1_html::document(wb, &v),
-            (Presenter::Tree, _) => present::tree(&v, if full { u32::MAX } else { TREE_CELL_CAP }),
-        }
-    );
+    println!("{}", r.text);
     0
 }
 
@@ -232,46 +199,10 @@ fn cmd_check(rest: &[String]) -> u8 {
         return bad_arg("check needs a <path> like ./budget or ./budget/Sheet1/H3");
     };
 
-    let decomposed = match address::decompose(&path) {
-        Ok(d) => d,
-        Err(code) => return code,
-    };
-    let root_display = decomposed.root.display().to_string();
-    let scope = fsa1_model::Scope::new(decomposed.tab, decomposed.region);
-
-    // Load-time refusals rode out in the carried `Ok(Err)`; eval-time ones come from `lint`.
-    let diags = match decomposed.loaded {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let msg = format!("no such workbook directory {root_display:?}");
-            return fail(ErrorCode::NotFound, &msg);
-        }
-        Err(e) => {
-            let msg = format!("cannot read {root_display:?}: {e}");
-            return fail(ErrorCode::Io, &msg);
-        }
-        // Best-effort: a bare-filename loc carries no tab, so a scope cannot exclude it on that axis.
-        Ok(Err(load_diags)) => load_diags
-            .into_iter()
-            .filter(|d| {
-                let (loc_tab, region) = fsa1_model::scope::loc_target(&d.loc);
-                scope.includes(loc_tab, region)
-            })
-            .collect(),
-        Ok(Ok(wb)) => {
-            if let Some(name) = scope.tab()
-                && wb.tab_index(name).is_none()
-            {
-                let msg = format!(
-                    "no tab named {name:?} in {root_display:?} (tabs: {:?})",
-                    wb.sheet_names()
-                );
-                return fail(ErrorCode::NotFound, &msg);
-            }
-            wb.lint_scoped(&scope)
-        }
-    };
-
-    output::emit_diagnostics(&diags)
+    match fsa1_verbs::ops::check(&path) {
+        Ok(diags) => output::emit_diagnostics(&diags),
+        Err(e) => refused(e),
+    }
 }
 
 fn cmd_eval(rest: &[String]) -> u8 {
@@ -306,27 +237,13 @@ fn cmd_eval(rest: &[String]) -> u8 {
         );
     };
 
-    let resolved = match address::resolve(&path) {
-        Ok(r) => r,
-        Err(code) => return code,
-    };
-    if resolved.workbook.sheet_names().is_empty() {
-        let msg = format!("{path:?} has no tabs (a tab is a sub-folder of cell/range files)");
-        return fail(ErrorCode::Validation, &msg);
-    }
-    let (wb, tab) = match resolved.as_context() {
-        Ok(ctx) => ctx,
-        Err(code) => return code,
-    };
-    let sheet = tab.unwrap_or(0);
-
-    match wb.eval_formula(sheet, &formula) {
-        Ok(FormulaOutcome::Value(s)) => {
-            emit_eval_value(&s);
+    match fsa1_verbs::ops::eval(&path, &formula) {
+        Ok(FormulaOutcome::Value(v)) => {
+            emit_eval_value(&v);
             0
         }
-        Ok(FormulaOutcome::Error(s)) => emit_eval_error_value(&s),
-        Err(diag) => emit_validation_diagnostics(std::slice::from_ref(&diag)),
+        Ok(FormulaOutcome::Error(v)) => emit_eval_error_value(&v),
+        Err(e) => refused(e),
     }
 }
 
@@ -360,32 +277,18 @@ fn cmd_trace(rest: &[String]) -> u8 {
         return bad_arg("trace needs a <path> like ./budget/Sheet1/C3");
     };
 
-    let resolved = match address::resolve(&path) {
-        Ok(r) => r,
-        Err(code) => return code,
-    };
-    if resolved.workbook.sheet_names().is_empty() {
-        let msg = format!("{path:?} has no tabs (a tab is a sub-folder of cell/range files)");
-        return fail(ErrorCode::Validation, &msg);
-    }
-    let sheet = resolved.tab.unwrap_or(0);
-    let (col, row) = match resolved.as_single_cell() {
-        Ok(cell) => cell,
-        Err(code) => return code,
-    };
-
     let dir = if dependents {
         Direction::Downstream
     } else {
         Direction::Upstream
     };
 
-    match resolved.workbook.trace(sheet, col, row, dir, depth) {
+    match fsa1_verbs::ops::trace(&path, dir, depth) {
         Ok(node) => {
             emit_trace(&node);
             0
         }
-        Err(diag) => emit_validation_diagnostics(std::slice::from_ref(&diag)),
+        Err(e) => refused(e),
     }
 }
 
@@ -622,12 +525,9 @@ fn cmd_unpack(rest: &[String]) -> u8 {
             _ => positionals.push(arg.clone()),
         }
     }
-    let (src, dest): (String, PathBuf) = match positionals.as_slice() {
-        [src, dst] => (src.clone(), PathBuf::from(dst)),
-        [src] => match derive_unpack_dest(Path::new(src)) {
-            Ok(d) => (src.clone(), d),
-            Err(code) => return code,
-        },
+    let (src, dest): (String, Option<PathBuf>) = match positionals.as_slice() {
+        [src, dst] => (src.clone(), Some(PathBuf::from(dst))),
+        [src] => (src.clone(), None),
         [] => {
             return bad_arg("unpack needs a <src> (.ods or .xlsx), e.g. fsa1-cli unpack book.xlsx");
         }
@@ -635,14 +535,11 @@ fn cmd_unpack(rest: &[String]) -> u8 {
     };
 
     let src_path = Path::new(&src);
-    let imported = match decompose {
-        Some(d) => fsa1_ingest::import_file_as(src_path, &dest, strict, d),
-        None => fsa1_ingest::import_file(src_path, &dest, strict),
-    };
-    match imported {
-        Ok(report) => {
-            let dest = dest.display();
-            let text_lines = format!(
+    match fsa1_verbs::ops::unpack(src_path, dest.as_deref(), decompose, strict) {
+        Ok(u) => {
+            let report = u.report;
+            let dest = u.dest.display();
+            print!(
                 "unpacked {src} -> {dest} ({} tab(s), {} range file(s) written, decomposed by {})\n\
                  \n\
                  next:\n  \
@@ -653,14 +550,13 @@ fn cmd_unpack(rest: &[String]) -> u8 {
                 report.files,
                 report.decomposition.name(),
             );
-            print!("{text_lines}");
             eprint!(
                 "{}",
                 render_unpack_report(&report.warnings, &report.inspected)
             );
             0
         }
-        Err(e) => fail(unpack_error_code(e.kind), &e.to_string()),
+        Err(e) => refused(e),
     }
 }
 
@@ -762,26 +658,6 @@ fn render_unpack_report(
 
 /// Only `.`, `..` and `/` have no stem. A dot-prefixed name (`.xlsx`) has one, so it derives a
 /// directory here and is refused downstream by `import_file`.
-fn derive_unpack_dest(src: &Path) -> Result<PathBuf, u8> {
-    match src.file_stem() {
-        Some(stem) if !stem.is_empty() => Ok(PathBuf::from(stem)),
-        _ => Err(bad_arg(&format!(
-            "cannot derive a workbook directory name from {:?}; give an explicit <dest-workbook-dir>",
-            src.display()
-        ))),
-    }
-}
-
-fn unpack_error_code(kind: fsa1_ingest::ErrorKind) -> ErrorCode {
-    use fsa1_ingest::ErrorKind;
-    match kind {
-        ErrorKind::SourceNotFound => ErrorCode::NotFound,
-        ErrorKind::DestConflict => ErrorCode::Conflict,
-        ErrorKind::SourceIo | ErrorKind::DestIo => ErrorCode::Io,
-        ErrorKind::Invalid => ErrorCode::Validation,
-    }
-}
-
 /// `--target` accepts only the one format fsa1-xlsx writes; it exists as the seam for a future one.
 fn cmd_pack(rest: &[String]) -> u8 {
     let mut positionals: Vec<String> = Vec::new();
@@ -808,73 +684,20 @@ fn cmd_pack(rest: &[String]) -> u8 {
         [] => return bad_arg("pack needs a <workbook-dir>, e.g. fsa1-cli pack ./book"),
         _ => return bad_arg("pack takes exactly one <workbook-dir> (the output name is derived)"),
     };
-    let dest = match derive_pack_dest(Path::new(&folder), &target) {
-        Ok(d) => d,
-        Err(code) => return code,
-    };
-
-    let wb = match load(Path::new(&folder)) {
-        Ok(wb) => wb,
-        Err(code) => return code,
-    };
-    if wb.sheet_names().is_empty() {
-        let msg =
-            format!("{folder:?} has no tabs to pack (a tab is a sub-folder of cell/range files)");
-        return fail(ErrorCode::Validation, &msg);
-    }
-
-    match fsa1_xlsx::write_xlsx(&wb, &dest) {
-        Ok(()) => {
-            let dest = dest.display();
+    match fsa1_verbs::ops::pack(Path::new(&folder), None, &target) {
+        Ok(p) => {
+            let dest = p.dest.display();
             print!(
                 "packed {folder} -> {dest} ({} sheet(s) written)\n\
                  \n\
                  next:\n  \
                  open {dest} in a spreadsheet app, or re-unpack it:\n  \
                  fsa1-cli unpack {dest}   # read the packed .xlsx back into a workbook\n",
-                wb.sheet_names().len(),
+                p.sheets,
             );
             0
         }
-        Err(e) => fail(pack_error_code(&e), &e.to_string()),
-    }
-}
-
-/// Basename only, so the output lands in the process CWD rather than beside the source folder.
-fn derive_pack_dest(folder: &Path, ext: &str) -> Result<PathBuf, u8> {
-    match folder.file_name() {
-        Some(base) => {
-            let mut name = base.to_os_string();
-            name.push(".");
-            name.push(ext);
-            Ok(PathBuf::from(name))
-        }
-        None => Err(bad_arg(&format!(
-            "cannot derive an output name from {:?} (name a workbook directory like ./acme-dcf)",
-            folder.display()
-        ))),
-    }
-}
-
-fn pack_error_code(e: &fsa1_xlsx::ExportError) -> ErrorCode {
-    match e {
-        fsa1_xlsx::ExportError::DestExists(_) => ErrorCode::Conflict,
-        fsa1_xlsx::ExportError::Io(_) => ErrorCode::Io,
-    }
-}
-
-fn load(path: &Path) -> Result<Workbook, u8> {
-    match Workbook::load_dir(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let msg = format!("no such workbook directory {:?}", path.display());
-            Err(fail(ErrorCode::NotFound, &msg))
-        }
-        Err(e) => {
-            let msg = format!("cannot read {:?}: {e}", path.display());
-            Err(fail(ErrorCode::Io, &msg))
-        }
-        Ok(Err(diags)) => Err(emit_validation_diagnostics(&diags)),
-        Ok(Ok(wb)) => Ok(wb),
+        Err(e) => refused(e),
     }
 }
 
@@ -893,6 +716,22 @@ pub(crate) fn take_value(
         Some(v) => Some(v.to_string()),
         None => it.next().cloned(),
     }
+}
+
+/// The one place a Refusal becomes an exit code: its kind picks the code, its diagnostics print the
+/// way a load's always have, and its message goes out under the program name.
+pub(crate) fn refused(r: fsa1_verbs::Refusal) -> u8 {
+    let code = match r.kind {
+        fsa1_verbs::Kind::InvalidArguments => ErrorCode::InvalidArguments,
+        fsa1_verbs::Kind::Validation => ErrorCode::Validation,
+        fsa1_verbs::Kind::Conflict => ErrorCode::Conflict,
+        fsa1_verbs::Kind::NotFound => ErrorCode::NotFound,
+        fsa1_verbs::Kind::Io => ErrorCode::Io,
+    };
+    if !r.diagnostics.is_empty() {
+        return emit_validation_diagnostics(&r.diagnostics);
+    }
+    fail(code, &r.message)
 }
 
 pub(crate) fn fail(code: ErrorCode, message: &str) -> u8 {

@@ -72,7 +72,7 @@ jobs:
         run: |
           set -uo pipefail
           rc=0
-          pub=$(grep -oE 'asset: +fsa1-cli-[a-z0-9_.-]+' .github/workflows/plugin-release.yml \
+          pub=$(grep -oE '(mcp_)?asset: +fsa1-(cli|mcp)-[a-z0-9_.-]+' .github/workflows/plugin-release.yml \
             | awk '{print $2}' | sort -u)
           [ -n "$pub" ] || { echo "no 'asset:' names found in plugin-release.yml"; exit 1; }
           W=$(mktemp -d); mkdir -p "$W/b" "$W/plug" "$W/dest"
@@ -82,18 +82,21 @@ jobs:
           got() { :>"$W/u"; env -i PATH="$W/b:/usr/bin:/bin" HOME="$W/plug" S=$2 M=$3 U="$W/u" \
             CLAUDE_PLUGIN_ROOT="$W/plug" CLAUDE_PLUGIN_DATA="$W/plug" FSA1_INSTALL_DIR="$W/dest" \
             "./$1" >/dev/null 2>&1; echo $? >"$W/e"; sed -n 's|.*/||p' "$W/u" | head -1; }
-          printf '%s\n' "fsa1-cli-linux-x86_64 Linux x86_64" "fsa1-cli-linux-aarch64 Linux aarch64" \
-            "fsa1-cli-macos-x86_64 Darwin x86_64" "fsa1-cli-macos-aarch64 Darwin arm64" \
-            "fsa1-cli-windows-x86_64.exe MINGW64_NT-10.0 x86_64" > "$W/t"
-          chk=$(awk '{print $1}' "$W/t" | sort -u)
+          # Each installer is proved against the family it actually fetches: install-cli hands a
+          # user the command, the launcher hands a Claude host the MCP server.
+          printf '%s\n' "linux-x86_64 Linux x86_64" "linux-aarch64 Linux aarch64" \
+            "macos-x86_64 Darwin x86_64" "macos-aarch64 Darwin arm64" \
+            "windows-x86_64.exe MINGW64_NT-10.0 x86_64" > "$W/t"
+          chk=$(awk '{print "fsa1-cli-" $1 "\nfsa1-mcp-" $1}' "$W/t" | sort -u)
           [ "$pub" = "$chk" ] || { printf 'published:\n%s\nchecked here:\n%s\n' "$pub" "$chk"; rc=1; }
-          while read -r a s m; do
-            for f in plugin/bin/fsa1-cli website/public/install-cli; do
+          while read -r slug s m; do
+            for pair in "plugin/launcher/fsa1-mcp:fsa1-mcp" "website/public/install-cli:fsa1-cli"; do
+              f=${pair%%:*}; want="${pair#*:}-$slug"
               r=$(got "$f" "$s" "$m")
-              [ "$r" = "$a" ] || { echo "$f ($s $m) -> ${r:-nothing}, published $a"; rc=1; }
+              [ "$r" = "$want" ] || { echo "$f ($s $m) -> ${r:-nothing}, published $want"; rc=1; }
             done
           done < "$W/t"
-          for f in plugin/bin/fsa1-cli website/public/install-cli; do
+          for f in plugin/launcher/fsa1-mcp website/public/install-cli; do
             r=$(got "$f" SunOS sparc64)
             [ -z "$r" ] && [ "$(cat "$W/e")" != 0 ] \
               || { echo "$f on SunOS/sparc64 -> '${r:-no download}' exit $(cat "$W/e"), want a refusal"; rc=1; }

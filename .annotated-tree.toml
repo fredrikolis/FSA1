@@ -69,8 +69,15 @@ forbid_orphans = true
 #   ["fsa1-ast",    "fsa1-html"]   # WIRED: the engine never knows the HTML renderer
 #   ["fsa1-model",  "fsa1-html"]   # WIRED: the filesystem model never knows the renderer
 #   ["fsa1-html",   "fsa1-cli"]    # WIRED: the renderer never depends on the binary
+#   ["X",           "fsa1-verbs"]  # WIRED for every engine crate: the verb layer is above them all
+#   ["X",           "fsa1-mcp"]    # WIRED for every engine crate: a front end is depended on by nothing
+#   ["fsa1-verbs",  "fsa1-cli"]    # WIRED: the verb layer never depends on a front end
+#   ["fsa1-verbs",  "fsa1-mcp"]    # WIRED: nor on the other one
+#   ["fsa1-cli",    "fsa1-mcp"]    # WIRED: the two front ends never learn of each other
+#   ["fsa1-verbs",  "fsa1-ast"]    # WIRED: a verb knows no formula grammar, same rule as the binary
+#   ["fsa1-mcp",    "fsa1-ast"]    # WIRED: and neither does a front end
 #   ["fsa1-html",   "fsa1-ast"]    # WIRED: the renderer reads a rendered view, never the formula language
-# The direction that IS allowed: cli -> {model, ingest, xlsx, html} -> ast (and ingest/xlsx/html ->
+# The direction that IS allowed: {cli, mcp} -> verbs -> {model, ingest, xlsx, html} -> ast (and ingest/xlsx/html ->
 # model), except fsa1-html, which reaches fsa1-model only. This encodes the owner's hard rule that
 # the AST impl is swappable behind a narrow boundary AND the FORMAT
 # FIREWALL: the format libraries (calamine + zip/xml on the READ side in fsa1-ingest, zip/xml on the
@@ -92,4 +99,20 @@ deny = [
     ["fsa1-model", "fsa1-html"],
     ["fsa1-html", "fsa1-cli"],
     ["fsa1-html", "fsa1-ast"],
+    ["fsa1-verbs", "fsa1-cli"],
+    ["fsa1-mcp", "fsa1-cli"],
+    ["fsa1-cli", "fsa1-mcp"],
+    ["fsa1-verbs", "fsa1-mcp"],
+    ["fsa1-ast", "fsa1-verbs"],
+    ["fsa1-model", "fsa1-verbs"],
+    ["fsa1-ingest", "fsa1-verbs"],
+    ["fsa1-xlsx", "fsa1-verbs"],
+    ["fsa1-html", "fsa1-verbs"],
+    ["fsa1-ast", "fsa1-mcp"],
+    ["fsa1-model", "fsa1-mcp"],
+    ["fsa1-ingest", "fsa1-mcp"],
+    ["fsa1-xlsx", "fsa1-mcp"],
+    ["fsa1-html", "fsa1-mcp"],
+    ["fsa1-verbs", "fsa1-ast"],
+    ["fsa1-mcp", "fsa1-ast"],
 ]

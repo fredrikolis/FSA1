@@ -2,7 +2,7 @@
 # FSA1 as a Claude plugin
 
 This repo doubles as a [Claude Code / Cowork plugin](https://code.claude.com/docs/en/plugins-reference).
-Enabling the plugin puts the `fsa1-cli` command on the Bash tool's PATH and teaches Claude — via a
+Enabling the plugin starts an MCP server whose tools drive a workbook, and teaches Claude — via a
 skill — what it is and when to reach for it.
 
 ## What ships
@@ -11,8 +11,9 @@ skill — what it is and when to reach for it.
 .claude-plugin/marketplace.json      # the catalog users add, at the repo root where it must live
 plugin/                              # the plugin itself, and everything a host fetches
 plugin/.claude-plugin/plugin.json    # its manifest
-plugin/bin/fsa1-cli                  # cross-platform launcher (bash) -> execs the native binary
-plugin/skills/fsa1/SKILL.md          # tells Claude what fsa1-cli does and when to use it
+plugin/.mcp.json                     # declares the one MCP server the host starts
+plugin/launcher/fsa1-mcp             # cross-platform launcher (bash) -> execs the native server
+plugin/skills/fsa1/SKILL.md          # tells Claude what the tools do and when to reach for them
 .github/workflows/plugin-release.yml # cross-builds native binaries -> GitHub Release
 ```
 
@@ -32,35 +33,42 @@ without bumping it leaves `/plugin update` reporting they are already current. T
 is the one field that can never change: a published plugin name is the slug every install holds, and
 renaming it breaks all of them. Relabel with `displayName` instead.
 
-`plugin/bin/` = the capability (any file here is callable as a bare command while the plugin is enabled).
-`plugin/skills/` = the instructions (PATH alone doesn't teach Claude *when* to run it).
+`plugin/.mcp.json` = the capability (the host starts the server and its tools appear).
+`plugin/skills/` = the instructions (a tool list alone doesn't teach Claude *when* to reach for one).
 
-## Why `plugin/bin/fsa1-cli` is a launcher, not the binary
+A claude.ai-hosted plugin may not ship a top-level `bin/`: those land on PATH without appearing on
+the admin approval surface. An MCP server is declared, named and reviewable, so that is the door an
+executable comes through. A Claude Code user who wants the command in their own shell installs it
+with the one-liner at https://fsa1.sh.
 
-A plugin's `bin/` is shared across every host the plugin runs on: **Cowork's Linux cloud sandbox**
+## Why `plugin/launcher/fsa1-mcp` is a launcher, not the binary
+
+A plugin's launcher is shared across every host the plugin runs on: **Cowork's Linux cloud sandbox**
 and **Claude Code on the user's own macOS / Windows / Linux desktop**. A compiled Rust binary is
-per-(os, arch), so `plugin/bin/fsa1-cli` is a small bash script that resolves the matching binary and caches
+per-(os, arch), so `plugin/launcher/fsa1-mcp` is a small bash script that resolves the matching binary and caches
 it under `${CLAUDE_PLUGIN_DATA}` (persistent across plugin updates — `${CLAUDE_PLUGIN_ROOT}` changes
 every update, so nothing is cached there). Resolution order, all overridable:
 
-1. `$FSA1_CLI_BIN` — explicit path (dev / power users)
+1. `$FSA1_MCP_BIN` — explicit path (dev / power users)
 2. cached binary in `${CLAUDE_PLUGIN_DATA}/bin`
-3. bundled prebuilt `dist/<os>-<arch>/fsa1-cli` (if you choose to commit binaries)
-4. local dev build `target/{release,debug}/fsa1-cli` (contributors in the repo)
-5. **GitHub Release asset** `fsa1-cli-<os>-<arch>[.exe]` — the normal path for an installed plugin
-6. build from source with `cargo` — last resort, needs a Rust toolchain
+3. bundled prebuilt `dist/<os>-<arch>/fsa1-mcp` (if you choose to commit binaries)
+4. local dev build `../target/{release,debug}/fsa1-mcp` (contributors in the repo)
+5. **GitHub Release asset** `fsa1-mcp-<os>-<arch>[.exe]` — the normal path for an installed plugin
+6. build from source with `cargo -p fsa1-mcp` — last resort, needs a Rust toolchain
 
 ## Native binaries & platforms
 
-`.github/workflows/plugin-release.yml` builds `fsa1-cli` on push of a `v*` tag for:
+`.github/workflows/plugin-release.yml` builds BOTH front ends on push of a `v*` tag, one pair per
+platform: `fsa1-mcp-<slug>` is what the plugin's launcher fetches, `fsa1-cli-<slug>` is what
+`https://fsa1.sh/install-cli` fetches for a user who wants the command in their own shell.
 
-| Asset                          | Covers                          |
-| ------------------------------ | ------------------------------- |
-| `fsa1-cli-linux-x86_64`        | **Cowork sandbox**, Linux CLI   |
-| `fsa1-cli-linux-aarch64`       | ARM Linux, arm64 containers     |
-| `fsa1-cli-macos-x86_64`        | Intel Macs                      |
-| `fsa1-cli-macos-aarch64`       | Apple-silicon Macs              |
-| `fsa1-cli-windows-x86_64.exe`  | Windows desktop (Claude Code)   |
+| Slug                    | Covers                          |
+| ----------------------- | ------------------------------- |
+| `linux-x86_64`          | **Cowork sandbox**, Linux CLI   |
+| `linux-aarch64`         | ARM Linux, arm64 containers     |
+| `macos-x86_64`          | Intel Macs                      |
+| `macos-aarch64`         | Apple-silicon Macs              |
+| `windows-x86_64.exe`    | Windows desktop (Claude Code)   |
 
 Which runner builds which asset is the workflow's to say, and only its own: a table here restating
 that goes stale the first time a runner is retired.

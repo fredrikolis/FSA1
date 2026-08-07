@@ -1,9 +1,9 @@
-// Concern: draws a View as ASCII grids or nested nodes, and diagnostics as a table | Non-concern: computing any value | IO: (&View) -> String; (&[Diagnostic]) -> String
+// Concern: draws a View as ASCII grids or nested nodes, diagnostics as a table, and a trace as an indented chain | Non-concern: computing any value | IO: (&View, &[Diagnostic] or &TraceNode) -> String
 
 use annotated_tree::{CodebaseMap, DirNode, FileNode, Format as TreeFormat, for_format};
 use comfy_table::presets::ASCII_FULL;
 use comfy_table::{Cell, Table};
-use fsa1_model::{Diagnostic, NameView, Rect, RenderMode, SheetView, View, ViewScope};
+use fsa1_model::{Diagnostic, NameView, Rect, RenderMode, SheetView, TraceNode, View, ViewScope};
 
 pub fn table(view: &View) -> String {
     let named = view.sheets.len() > 1;
@@ -160,5 +160,37 @@ fn severity_str(d: &Diagnostic) -> &'static str {
     match d.code.severity() {
         Severity::Error => "error",
         Severity::Warning => "warning",
+    }
+}
+
+/// Past this depth the indent holds still: two columns per level down an unbounded dependency chain
+/// makes the text quadratic in depth. Every node still gets its own line.
+const MAX_INDENT_LEVEL: usize = 64;
+
+pub fn trace(root: &TraceNode) -> String {
+    let mut out = String::new();
+    trace_into(root, &mut out);
+    out
+}
+
+fn trace_into(root: &TraceNode, out: &mut String) {
+    let mut stack: Vec<(&TraceNode, usize)> = vec![(root, 0)];
+    while let Some((node, depth)) = stack.pop() {
+        let tag = match &node.hash {
+            Some(h) => h.as_str(),
+            None => node.status.as_str(),
+        };
+        let formula = match &node.formula {
+            Some(f) => format!("  {f}"),
+            None => String::new(),
+        };
+        let repeated = if node.repeated { "  (repeated)" } else { "" };
+        out.push_str(&format!(
+            "{}{}{formula}  -> {}  [{tag}]{repeated}\n",
+            "  ".repeat(depth.min(MAX_INDENT_LEVEL)),
+            node.cell,
+            node.value
+        ));
+        stack.extend(node.children.iter().rev().map(|c| (c, depth + 1)));
     }
 }

@@ -8,8 +8,7 @@ use std::path::{Path, PathBuf};
 
 use fsa1_model::{Diagnostic, NameTarget, Rect, Workbook, is_cell_filename, parse_viewport};
 
-use crate::output::{ErrorCode, emit_validation_diagnostics};
-use crate::{bad_arg, fail};
+use crate::refusal::{Kind, Refusal, bad_arg, fail, refused};
 
 /// The whole workbook always loads, so cross-tab refs resolve whatever the path selected.
 pub struct Resolved {
@@ -36,20 +35,20 @@ fn is_not_a_dir(e: &io::Error) -> bool {
     )
 }
 
-fn no_such_name(seg: &str, scope: &str) -> u8 {
+fn no_such_name(seg: &str, scope: &str) -> Refusal {
     bad_arg(&format!(
         "{seg:?} is not a canonical A1 cell or range (e.g. B2, A1:D9), and no defined name {seg:?} \
          is in scope (tab {scope:?})"
     ))
 }
 
-fn name_not_a_region(seg: &str) -> u8 {
+fn name_not_a_region(seg: &str) -> Refusal {
     bad_arg(&format!(
         "{seg:?} is a named formula/constant, not a cell or range"
     ))
 }
 
-fn resolve_name(wb: &Workbook, name: &str, scope: &str) -> Result<(u32, Rect), u8> {
+fn resolve_name(wb: &Workbook, name: &str, scope: &str) -> Result<(u32, Rect), Refusal> {
     match wb.name_table().resolve(name, scope) {
         None => Err(no_such_name(name, scope)),
         Some(NameTarget::Expr(_)) => Err(name_not_a_region(name)),
@@ -59,7 +58,7 @@ fn resolve_name(wb: &Workbook, name: &str, scope: &str) -> Result<(u32, Rect), u
 
 /// `NameTable::build` does not check that a cross-sheet target's sheet exists, so the `tab_index` miss
 /// below is reachable, not a build-guaranteed impossibility.
-fn name_ref_to_region(a1: &str, scope_tab: &str, wb: &Workbook) -> Result<(u32, Rect), u8> {
+fn name_ref_to_region(a1: &str, scope_tab: &str, wb: &Workbook) -> Result<(u32, Rect), Refusal> {
     let (sheet, addr) = match a1.rsplit_once('!') {
         Some((s, a)) => (Some(unquote_sheet(s)), a),
         None => (None, a1),
@@ -70,7 +69,7 @@ fn name_ref_to_region(a1: &str, scope_tab: &str, wb: &Workbook) -> Result<(u32, 
     };
     let Some(tab) = tab else {
         return Err(fail(
-            ErrorCode::NotFound,
+            Kind::NotFound,
             &format!("defined name target {a1:?} references a tab that does not exist"),
         ));
     };
@@ -215,7 +214,7 @@ struct Structure {
     loaded: io::Result<Result<Workbook, Vec<Diagnostic>>>,
 }
 
-fn structure(path: &str) -> Result<Structure, u8> {
+fn structure(path: &str) -> Result<Structure, Refusal> {
     let p = Path::new(path);
     let probe = probe_scope(p);
     match probe.class {
@@ -238,17 +237,17 @@ fn structure(path: &str) -> Result<Structure, u8> {
             }),
             Err(e) if is_not_a_dir(e) => peel_selector(p),
             Err(e) => Err(fail(
-                ErrorCode::Io,
+                Kind::Io,
                 &format!("cannot read {:?}: {e}", p.display()),
             )),
         },
     }
 }
 
-fn peel_selector(p: &Path) -> Result<Structure, u8> {
+fn peel_selector(p: &Path) -> Result<Structure, Refusal> {
     let Some((prefix, last)) = parent_base(p) else {
         return Err(fail(
-            ErrorCode::NotFound,
+            Kind::NotFound,
             &format!("no such workbook directory {:?}", p.display()),
         ));
     };
@@ -259,7 +258,7 @@ fn peel_selector(p: &Path) -> Result<Structure, u8> {
             Ok(_) => finish_selector(pprobe.wb_path, None, pprobe.loaded, &last),
             Err(e) if is_not_a_dir(e) => tab_position_error(&prefix),
             Err(e) => Err(fail(
-                ErrorCode::Io,
+                Kind::Io,
                 &format!("cannot read {:?}: {e}", prefix.display()),
             )),
         },
@@ -273,7 +272,7 @@ fn finish_selector(
     tab: Option<String>,
     loaded: io::Result<Result<Workbook, Vec<Diagnostic>>>,
     last: &str,
-) -> Result<Structure, u8> {
+) -> Result<Structure, Refusal> {
     match parse_viewport(last) {
         Ok(rect) => Ok(Structure {
             root,
@@ -294,36 +293,36 @@ fn finish_selector(
     }
 }
 
-fn tab_position_error(prefix: &Path) -> Result<Structure, u8> {
+fn tab_position_error(prefix: &Path) -> Result<Structure, Refusal> {
     let Some((wb_path, badtab)) = parent_base(prefix) else {
         return Err(fail(
-            ErrorCode::NotFound,
+            Kind::NotFound,
             &format!("no such workbook directory {:?}", prefix.display()),
         ));
     };
     let wprobe = probe_scope(&wb_path);
     match wprobe.loaded {
         Ok(Ok(wb)) => Err(fail(
-            ErrorCode::NotFound,
+            Kind::NotFound,
             &format!(
                 "no tab named {badtab:?} in {:?} (tabs: {:?})",
                 wb_path.display(),
                 wb.sheet_names()
             ),
         )),
-        Ok(Err(diags)) => Err(emit_validation_diagnostics(&diags)),
+        Ok(Err(diags)) => Err(refused(diags)),
         Err(e) if is_not_a_dir(&e) => Err(fail(
-            ErrorCode::NotFound,
+            Kind::NotFound,
             &format!("no such workbook directory {:?}", wb_path.display()),
         )),
         Err(e) => Err(fail(
-            ErrorCode::Io,
+            Kind::Io,
             &format!("cannot read {:?}: {e}", wb_path.display()),
         )),
     }
 }
 
-pub fn decompose(path: &str) -> Result<Decomposed, u8> {
+pub fn decompose(path: &str) -> Result<Decomposed, Refusal> {
     let s = structure(path)?;
     // On a workbook that does not load, the name stays unresolved and `check` surfaces `loaded`.
     if let Some(name) = &s.name
@@ -352,7 +351,7 @@ pub fn decompose(path: &str) -> Result<Decomposed, u8> {
 }
 
 /// An empty Root resolves to an empty `Resolved`; the caller's "has no tabs" guard is what refuses it.
-pub fn resolve(path: &str) -> Result<Resolved, u8> {
+pub fn resolve(path: &str) -> Result<Resolved, Refusal> {
     let s = structure(path)?;
     match s.loaded {
         Ok(Ok(wb)) => {
@@ -375,7 +374,7 @@ pub fn resolve(path: &str) -> Result<Resolved, u8> {
                     Some(idx) => Some(idx),
                     None => {
                         return Err(fail(
-                            ErrorCode::NotFound,
+                            Kind::NotFound,
                             &format!(
                                 "no tab named {name:?} in {:?} (tabs: {:?})",
                                 s.root.display(),
@@ -393,13 +392,13 @@ pub fn resolve(path: &str) -> Result<Resolved, u8> {
                 selector: s.selector,
             })
         }
-        Ok(Err(diags)) => Err(emit_validation_diagnostics(&diags)),
+        Ok(Err(diags)) => Err(refused(diags)),
         Err(e) if is_not_a_dir(&e) => Err(fail(
-            ErrorCode::NotFound,
+            Kind::NotFound,
             &format!("no such workbook directory {:?}", s.root.display()),
         )),
         Err(e) => Err(fail(
-            ErrorCode::Io,
+            Kind::Io,
             &format!("cannot read {:?}: {e}", s.root.display()),
         )),
     }
@@ -411,7 +410,7 @@ impl Resolved {
         self.region
     }
 
-    pub fn as_single_cell(&self) -> Result<(u32, u32), u8> {
+    pub fn as_single_cell(&self) -> Result<(u32, u32), Refusal> {
         match self.region {
             Some(rect) if rect.min_col == rect.max_col && rect.min_row == rect.max_row => {
                 Ok((rect.min_col, rect.min_row))
@@ -423,15 +422,15 @@ impl Resolved {
                 )))
             }
             None => Err(bad_arg(
-                "trace needs a cell, e.g. fsa1-cli trace ./budget/Sheet1/C3",
+                "trace needs exactly one cell, e.g. ./budget/Sheet1/C3",
             )),
         }
     }
 
-    pub fn as_context(&self) -> Result<(&Workbook, Option<u32>), u8> {
+    pub fn as_context(&self) -> Result<(&Workbook, Option<u32>), Refusal> {
         if self.region.is_some() {
             return Err(bad_arg(
-                "eval takes <wb> or <wb>/<tab>; it evaluates --formula, not a region",
+                "eval takes <wb> or <wb>/<tab>; it evaluates a formula you supply, not a region",
             ));
         }
         Ok((&self.workbook, self.tab))
@@ -479,10 +478,10 @@ mod tests {
         }
     }
 
-    fn err_code<T>(r: Result<T, u8>) -> u8 {
+    fn err_kind<T>(r: Result<T, Refusal>) -> Kind {
         match r {
             Ok(_) => panic!("expected a located refusal, got Ok"),
-            Err(code) => code,
+            Err(r) => r.kind,
         }
     }
 
@@ -564,8 +563,8 @@ mod tests {
     fn broken_root_surfaces_load_diags_and_is_not_a_tab_of_parent() {
         let t = Tmp::new("broken");
         t.file("Model", "A1:D9", "one literal in a 9x4 range");
-        let code = err_code(resolve(&t.root()));
-        assert_eq!(code, 3, "a broken root refuses at exit 3");
+        let code = err_kind(resolve(&t.root()));
+        assert_eq!(code, Kind::Validation, "a broken root refuses");
     }
 
     #[test]
@@ -656,17 +655,22 @@ mod tests {
         let t = Tmp::new("name-expr");
         t.file("Model", "A1", "1")
             .file("Model", "Rate", "=Base*1.05");
-        let code = err_code(resolve(&t.at("Model/Rate")));
-        assert_eq!(code, 2, "a named formula/constant is a bad-args refusal");
+        let code = err_kind(resolve(&t.at("Model/Rate")));
+        assert_eq!(
+            code,
+            Kind::InvalidArguments,
+            "a named formula/constant is a bad-args refusal"
+        );
     }
 
     #[test]
     fn unknown_final_non_a1_segment_is_a_bad_args_refusal() {
         let t = Tmp::new("name-unknown");
         t.file("Model", "A1", "1");
-        let code = err_code(resolve(&t.at("Model/nope")));
+        let code = err_kind(resolve(&t.at("Model/nope")));
         assert_eq!(
-            code, 2,
+            code,
+            Kind::InvalidArguments,
             "an unknown final non-A1 segment is a bad-args refusal"
         );
     }
@@ -675,8 +679,12 @@ mod tests {
     fn non_final_missing_tab_is_a_no_tab_named_refusal() {
         let t = Tmp::new("notab");
         t.file("Model", "A1", "1");
-        let code = err_code(resolve(&t.at("Nope/A1")));
-        assert_eq!(code, 24, "a non-final missing tab is a not-found refusal");
+        let code = err_kind(resolve(&t.at("Nope/A1")));
+        assert_eq!(
+            code,
+            Kind::NotFound,
+            "a non-final missing tab is a not-found refusal"
+        );
     }
 
     #[test]

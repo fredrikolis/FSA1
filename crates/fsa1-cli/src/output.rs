@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use fsa1_model::{Diagnostic, Severity, TraceNode};
 
-use crate::present::diagnostics_table;
+use fsa1_verbs::present::diagnostics_table;
 
 #[derive(Clone, Copy)]
 pub enum ErrorCode {
@@ -76,33 +76,5 @@ pub fn emit_version() {
 }
 
 pub fn emit_trace(node: &TraceNode) {
-    let mut out = String::new();
-    trace_text(node, &mut out);
-    print!("{out}");
-}
-
-/// Past this depth the indent holds still: two columns per level down an unbounded dependency chain
-/// makes the text quadratic in depth. Every node still gets its own line.
-const MAX_INDENT_LEVEL: usize = 64;
-
-fn trace_text(root: &TraceNode, out: &mut String) {
-    let mut stack: Vec<(&TraceNode, usize)> = vec![(root, 0)];
-    while let Some((node, depth)) = stack.pop() {
-        let tag = match &node.hash {
-            Some(h) => h.as_str(),
-            None => node.status.as_str(),
-        };
-        let formula = match &node.formula {
-            Some(f) => format!("  {f}"),
-            None => String::new(),
-        };
-        let repeated = if node.repeated { "  (repeated)" } else { "" };
-        out.push_str(&format!(
-            "{}{}{formula}  -> {}  [{tag}]{repeated}\n",
-            "  ".repeat(depth.min(MAX_INDENT_LEVEL)),
-            node.cell,
-            node.value
-        ));
-        stack.extend(node.children.iter().rev().map(|c| (c, depth + 1)));
-    }
+    print!("{}", fsa1_verbs::present::trace(node));
 }

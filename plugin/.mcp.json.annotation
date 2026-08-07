@@ -1,0 +1,1 @@
+Concern: declares the one MCP server this plugin starts, and the command that serves it | Non-concern: what the server exposes (its tools/list answers that) | IO: none
