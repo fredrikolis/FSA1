@@ -21,6 +21,9 @@ ARGS=(--strict-check --include-tests
 	-I 'conformance/render/**'
 	-I 'conformance/serde/accept/**'
 	-I 'conformance/serde/refuse/**'
+	# The npm manifests describe a PUBLISHING channel, not a crate in this workspace's graph, so
+	# the orphan rule has nothing real to say about them. Their scripts and shim stay governed.
+	-I 'distribution/npm/**/package.json'
 	.)
 
 npm_bin="${npm_config_prefix:-$HOME/.npm-global}/bin"

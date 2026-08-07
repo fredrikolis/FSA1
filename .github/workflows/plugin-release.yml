@@ -22,12 +22,24 @@ jobs:
             asset: fsa1-cli-linux-x86_64
             mcp_asset: fsa1-mcp-linux-x86_64
             ext: ""
+          # Static: the npm channel ships these, and a sandbox whose glibc we never see cannot
+          # disagree with a binary that carries no dynamic libc at all.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: fsa1-cli-linux-x86_64-musl
+            mcp_asset: fsa1-mcp-linux-x86_64-musl
+            ext: ""
           # The launcher resolves linux-aarch64 too (Apple-silicon containers, ARM cloud sandboxes);
           # without this asset those hosts fall all the way through to building from source.
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             asset: fsa1-cli-linux-aarch64
             mcp_asset: fsa1-mcp-linux-aarch64
+            ext: ""
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: fsa1-cli-linux-aarch64-musl
+            mcp_asset: fsa1-mcp-linux-aarch64-musl
             ext: ""
           - os: macos-14
             target: aarch64-apple-darwin
@@ -58,6 +70,10 @@ jobs:
       # on is not a special case, and the output path is the same shape everywhere.
       - name: Add the target
         run: rustup target add ${{ matrix.target }}
+
+      - name: musl toolchain
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       # Both front ends ship: the launcher fetches `mcp_asset`, and website/public/install-cli
       # fetches `asset` for anyone who wants the command in their own shell.
@@ -100,3 +116,44 @@ jobs:
         with:
           files: dist/*
           fail_on_unmatched_files: true
+
+  # npx is how a Claude host reaches this server: `npx -y fsa1-mcp` resolves the one binary for the
+  # machine from an npm cache that survives sessions, so no first-run download sits in front of the
+  # MCP handshake. Every local MCP server published in the official plugin directory is reached the
+  # same way.
+  npm:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # REQUIRED: mints the short-lived OIDC token trusted publishing uses
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Ensure npm >= 11.5.1 (OIDC trusted publishing)
+        run: npm install -g npm@latest && npm --version
+      - name: Download the published binaries
+        run: |
+          set -eux
+          mkdir -p dist
+          for a in fsa1-mcp-linux-x86_64-musl fsa1-mcp-linux-aarch64-musl \
+                   fsa1-mcp-macos-x86_64 fsa1-mcp-macos-aarch64 fsa1-mcp-windows-x86_64.exe; do
+            gh release download "${{ github.ref_name }}" -p "$a" -O "dist/$a" --clobber
+          done
+      - name: Stamp the version and inject the binaries
+        run: node distribution/npm/scripts/build-npm.mjs "${GITHUB_REF_NAME#v}" dist
+      # No NODE_AUTH_TOKEN: `npm publish` auto-detects the OIDC id-token. A platform package must
+      # exist before the wrapper that names it as an optional dependency.
+      - name: Publish the platform packages, then the wrapper
+        run: |
+          set -eux
+          for plat in linux-x64-musl linux-arm64-musl darwin-x64 darwin-arm64 win32-x64; do
+            npm publish "./distribution/npm/platforms/${plat}"
+          done
+          npm publish ./distribution/npm

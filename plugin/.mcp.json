@@ -1,9 +1,10 @@
 {
   "mcpServers": {
     "fsa1": {
-      "command": "bash",
+      "command": "npx",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/launcher/fsa1-mcp"
+        "-y",
+        "fsa1-mcp"
       ]
     }
   }

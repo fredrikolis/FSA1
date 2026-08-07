@@ -1,0 +1,1 @@
+Concern: how a built binary reaches a machine that did not build it | Non-concern: building it (.github/workflows), what it does | IO: none

@@ -1,0 +1,10 @@
+{
+  "name": "fsa1-mcp-win32-x64",
+  "version": "0.0.0",
+  "description": "Prebuilt fsa1-mcp binary for win32 x64. Installed automatically as an optional dependency of `fsa1-mcp`.",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/fredrikolis/FSA1.git" },
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["fsa1-mcp.exe"]
+}

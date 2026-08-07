@@ -1,0 +1,19 @@
+{
+  "name": "fsa1-mcp",
+  "version": "0.0.0",
+  "description": "MCP server for FSA1: read and edit spreadsheets as a file tree. Tabs are folders, cells are files.",
+  "keywords": ["mcp", "spreadsheet", "xlsx", "excel", "filesystem", "agents"],
+  "homepage": "https://fsa1.sh",
+  "repository": { "type": "git", "url": "git+https://github.com/fredrikolis/FSA1.git" },
+  "license": "MIT",
+  "bin": { "fsa1-mcp": "bin/fsa1-mcp.js" },
+  "files": ["bin/fsa1-mcp.js"],
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {
+    "fsa1-mcp-linux-x64-musl": "0.0.0",
+    "fsa1-mcp-linux-arm64-musl": "0.0.0",
+    "fsa1-mcp-darwin-x64": "0.0.0",
+    "fsa1-mcp-darwin-arm64": "0.0.0",
+    "fsa1-mcp-win32-x64": "0.0.0"
+  }
+}
