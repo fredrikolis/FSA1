@@ -25,8 +25,10 @@
 # occupancy" from "dropped in silence".
 warning: gray125 pattern fill at Blanks!D4 dropped
 warning: diagonal border at Blanks!E5 dropped
-file: Blanks/A1:B1
-|kept	
-|@scope {
+file: Blanks/@presentation.css
+|@scope (A1:B1) {
 |  td:last-child { background-color: #00b0f0 }
 |}
+|
+file: Blanks/A1:B1
+|kept	

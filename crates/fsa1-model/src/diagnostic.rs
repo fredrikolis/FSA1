@@ -23,7 +23,6 @@ pub enum Code {
     RaggedGrid,
     DimensionMismatch,
     Overlap,
-    GeometryConflict,
     Cycle,
     FormulaSyntax,
     MalformedEscape,
@@ -31,7 +30,7 @@ pub enum Code {
     CellOutOfRange,
     NameRefusal,
     ForgeRefusal,
-    AmbiguousGridTail,
+    PresentationInGrid,
     PresentationSyntax,
     PresentationSelector,
     PresentationProperty,
@@ -51,7 +50,6 @@ impl Code {
         Code::RaggedGrid,
         Code::DimensionMismatch,
         Code::Overlap,
-        Code::GeometryConflict,
         Code::Cycle,
         Code::FormulaSyntax,
         Code::MalformedEscape,
@@ -59,7 +57,7 @@ impl Code {
         Code::CellOutOfRange,
         Code::NameRefusal,
         Code::ForgeRefusal,
-        Code::AmbiguousGridTail,
+        Code::PresentationInGrid,
         Code::PresentationSyntax,
         Code::PresentationSelector,
         Code::PresentationProperty,
@@ -79,7 +77,6 @@ impl Code {
             Code::RaggedGrid => "ragged-grid",
             Code::DimensionMismatch => "dimension-mismatch",
             Code::Overlap => "overlap",
-            Code::GeometryConflict => "geometry-conflict",
             Code::Cycle => "cycle",
             Code::FormulaSyntax => "formula-syntax",
             Code::MalformedEscape => "malformed-escape",
@@ -87,7 +84,7 @@ impl Code {
             Code::CellOutOfRange => "cell-out-of-range",
             Code::NameRefusal => "name-refusal",
             Code::ForgeRefusal => "forge-refusal",
-            Code::AmbiguousGridTail => "ambiguous-grid-tail",
+            Code::PresentationInGrid => "presentation-in-grid",
             Code::PresentationSyntax => "presentation-syntax",
             Code::PresentationSelector => "presentation-selector",
             Code::PresentationProperty => "presentation-property",
@@ -109,9 +106,6 @@ impl Code {
             Code::RaggedGrid => "a TSV grid's rows must have equal field counts",
             Code::DimensionMismatch => "the grid must fill the declared range exactly",
             Code::Overlap => "two files in a tab claim intersecting cells",
-            Code::GeometryConflict => {
-                "two files in a tab give one sheet column or row two different sizes"
-            }
             Code::Cycle => "a formula cell must not depend on itself (directly or via a chain)",
             Code::FormulaSyntax => "a formula body must parse into a fsa1-ast expression",
             Code::MalformedEscape => {
@@ -125,8 +119,8 @@ impl Code {
             Code::ForgeRefusal => {
                 "a reference-forging call (INDIRECT/OFFSET) must resolve to a static reference: its arguments must not themselves forge, must not cycle back to it, and must name an on-grid target"
             }
-            Code::AmbiguousGridTail => {
-                "a file's trailing `@scope` block must not also read as a legal grid tail"
+            Code::PresentationInGrid => {
+                "presentation lives in the tab's stylesheet, never in a range file's grid"
             }
             Code::PresentationSyntax => {
                 "a presentation block is `@scope {` ... `}` holding `<selector> { <property>: <value>; ... }` rules"
@@ -180,9 +174,6 @@ impl Code {
             Code::Overlap => {
                 "move or resize one of the two files so their declared ranges no longer intersect within the tab"
             }
-            Code::GeometryConflict => {
-                "a sheet column's `width` and a sheet row's `height` are the tab's, not one file's: give the axis the same size in every file that declares it, or drop the declaration from all but one"
-            }
             Code::Cycle => {
                 "break the dependency cycle: a formula cell must not, directly or through a chain, depend on itself"
             }
@@ -204,8 +195,8 @@ impl Code {
             Code::ForgeRefusal => {
                 "rewrite the INDIRECT/OFFSET call so its target is static: avoid nesting a forging call inside another's arguments, avoid an argument that depends on the call's own cell, and keep the computed reference on the grid"
             }
-            Code::AmbiguousGridTail => {
-                "make the two readings disagree: prefix a line with `'` where it is cell content, or give the block its rules, so the file cannot fill its declared range both with and without the block"
+            Code::PresentationInGrid => {
+                "move the trailing `@scope { ... }` block into the tab's `@presentation.css`, wrapping its rules in a `@scope (<range>) { ... }` prelude that names the absolute A1 range the range file declared"
             }
             Code::PresentationSyntax => {
                 "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, give each selector one rule and each property one declaration, and drop `!important` and any at-rule"
@@ -398,7 +389,7 @@ mod tests {
     fn registry_is_self_consistent() {
         assert_eq!(
             Code::ALL.len(),
-            24,
+            23,
             "every Code variant must be listed in ALL"
         );
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();

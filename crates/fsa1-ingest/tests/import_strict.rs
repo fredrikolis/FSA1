@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use fsa1_ingest::{Decomposition, ErrorKind, import_file, import_file_as};
+use fsa1_ingest::{ErrorKind, import_file};
 
 /// The committed fixtures are pure data, so these tests need no python toolchain.
 fn fixture(name: &str) -> PathBuf {
@@ -74,56 +74,28 @@ fn strict_refuses_an_out_of_scope_package_part_naming_the_part() {
     );
 }
 
-/// The refusal the SOURCE alone cannot predict: gapped_columns.xlsx authors a width on the empty
-/// column C, and which range file covers C is the cut's answer, not the file's. `--strict` promises a
-/// file it accepts round-trips identically, so a size the tree never states is a refusal — the axis
-/// is named, and the destination the run had already started writing is left absent.
+/// The refusal the SOURCE alone cannot predict: a width authored on a column the sheet's root does
+/// not span, so the tree states it nowhere. `--strict` promises a file it accepts round-trips
+/// identically, so a size the tree never states is a refusal — the axis is named, and the
+/// destination the run had already started writing is left absent.
 #[test]
-fn strict_refuses_a_size_no_range_file_carries_naming_the_sheet_and_the_axis() {
+fn strict_refuses_a_size_the_tree_never_states_naming_the_sheet_and_the_axis() {
     let dest = temp_dest("geometry");
-    let err = import_file_as(
-        &fixture("gapped_columns.xlsx"),
-        &dest,
-        true,
-        Decomposition::Appearance,
-    )
-    .unwrap_err();
+    let err = import_file(&fixture("visuals.xlsx"), &dest, true).unwrap_err();
     assert_eq!(err.kind, ErrorKind::Invalid, "message: {}", err.message);
     let located = err.to_string();
     assert!(
-        located.contains("on sheet Gapped") && located.contains("column C"),
+        located.contains("on sheet Visual") && located.contains("column C"),
         "the diagnostic names the offending sheet + axis: {located}"
     );
     assert!(
         located.contains("without --strict"),
-        "and the fix an agent applies without inferring one: {located}"
+        "a refusal names the fix, not only the fault: {located}"
     );
     assert!(
         !dest.exists(),
         "the refusal lands mid-write, so the atomic cleanup must leave no output at all"
     );
-}
-
-/// The other half: the lossy contract is unchanged, and the loss `--strict` refuses over is the one a
-/// plain unpack still names.
-#[test]
-fn the_lossy_import_still_takes_the_file_strict_refuses_over_a_dropped_size() {
-    let dest = temp_dest("geometry-lossy");
-    let report = import_file_as(
-        &fixture("gapped_columns.xlsx"),
-        &dest,
-        false,
-        Decomposition::Appearance,
-    )
-    .expect("the unpack completes");
-    assert!(dest.join("Gapped").exists(), "the tab folder is written");
-    assert!(
-        report.warnings.iter().any(|w| w.to_string()
-            == "column width for C on sheet Gapped dropped: no range file covers column C"),
-        "the loss is named, not silent: {:?}",
-        report.warnings
-    );
-    std::fs::remove_dir_all(&dest).ok();
 }
 
 #[test]

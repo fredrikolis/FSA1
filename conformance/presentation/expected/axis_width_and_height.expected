@@ -1,10 +1,12 @@
 # axis_width_and_height.xlsx -- FROZEN EXPECTATION.
 # A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
 # Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
-file: Axes/A1:B2
-|A1	B1
-|A2	B2
-|@scope {
+file: Axes/@presentation.css
+|@scope (A1:B2) {
 |  tr:last-child td { height: 22.5pt }
 |  td:first-child { width: 14.5ch }
 |}
+|
+file: Axes/A1:B2
+|A1	B1
+|A2	B2

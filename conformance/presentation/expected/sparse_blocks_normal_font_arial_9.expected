@@ -16,26 +16,28 @@
 #    are blank, which is the shape neither `normal_font_arial_9` (2x2, fully occupied) nor
 #    `style_only_blank` (its blank carries a fill) holds.
 #
-# 3. A cell stating no style wears the workbook's Normal font, so all 25 cells of each block wear
-#    Arial 9 -- including the blanks. Arial 9 is not the format's own default (Calibri 11), which is
-#    what a writer restores for an undeclared cell, so both halves are DECLARED, uniform over the
-#    block, as ONE `td` rule. dk1 is `windowText`/000000, so the text colour IS the default and earns
-#    no declaration.
+# 3. PRESENTATION is stated over the sheet's USED REGION, which is that same bounding box A1:E60 --
+#    one root, not one per block. A cell stating no style wears the workbook's Normal font, so all
+#    300 coordinates of the root wear Arial 9: the four that state `s="1"` by stating it, and the 296
+#    that state nothing by inheriting it. Arial 9 is not the format's own default (Calibri 11), which
+#    is what a writer restores for an undeclared cell, so both halves are DECLARED, uniform over the
+#    whole root, as ONE `td` rule. dk1 is `windowText`/000000, so the text colour IS the default and
+#    earns no declaration. The 50 empty rows the cut opened are inside the root and wear the same one
+#    rule, which is why relocating presentation costs this fixture a rule rather than duplicating one.
+file: Gaps/@presentation.css
+|@scope (A1:E60) {
+|  td { font-family: Arial; font-size: 9pt }
+|}
+|
 file: Gaps/A1:E5
 |1				
 |				
 |				
 |				
 |				2
-|@scope {
-|  td { font-family: Arial; font-size: 9pt }
-|}
 file: Gaps/A56:E60
 |3				
 |				
 |				
 |				
 |				4
-|@scope {
-|  td { font-family: Arial; font-size: 9pt }
-|}

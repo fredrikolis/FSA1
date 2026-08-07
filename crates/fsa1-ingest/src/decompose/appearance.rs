@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::decompose::{Block, StyledCell};
 
-/// What one more region is charged against one more `@scope` rule. Design-time measurement taken
+/// What one more region is charged against one more presentation rule. Design-time measurement taken
 /// elsewhere, NOT reproducible in this repo and governing nothing in it: agreement is nearly flat
 /// from 1 to 12, but 1 favours recall and 12 precision, and recall wins under the owner's bar — a
 /// spurious boundary is a merge an agent performs later, a missed one is structure never expressed.
@@ -57,7 +57,7 @@ impl Appearance {
         self.stated.contains_key(&(col, row))
     }
 
-    /// How many `@scope` selector targets the encoder would emit over `r`, mirroring
+    /// How many selector targets the encoder would emit over `r`, mirroring
     /// [`crate::scope_block`]'s `encode_property` with a signature standing in for a declaration.
     /// A search heuristic, so it models neither that function's model-default suppression nor the
     /// per-property split; what it does reproduce is which cells one rule can still speak for.

@@ -234,19 +234,20 @@ fn the_ods_verbatim_report_source_equals_the_on_disk_cell_content() {
     std::fs::remove_dir_all(&dest).ok();
 }
 
-/// The write leg over a real styled package: the appearance that CONVERTS rides in the block file's
-/// own `@scope`, the workbook still loads clean, and every attribute that did not convert is named.
+/// The write leg over a real styled package: the appearance that CONVERTS rides in the tab's own
+/// stylesheet, the workbook still loads clean, and every attribute that did not convert is named.
 #[test]
 fn a_styled_xlsx_carries_its_appearance_and_names_every_loss() {
     let dest = temp_dest("visuals");
     let report = import_file(&fixture("visuals.xlsx"), &dest, false).expect("import completes");
     assert_eq!(report.files, 1, "one block over the sheet's occupancy");
+    assert_eq!(written(&dest, "Visual"), vec!["A1:B4".to_string()]);
 
-    let content = std::fs::read_to_string(
-        dest.join("Visual")
-            .join(fsa1_model::range_file_name("A1:B4")),
-    )
-    .expect("the block file");
+    let content = stylesheet(&dest, "Visual").expect("the tab states presentation");
+    assert!(
+        content.starts_with("@scope (A1:B4) {"),
+        "one root, the sheet's used region: {content}"
+    );
     for declaration in [
         "background-color: #ffc000",
         "border-top: 1px solid #ff0000",
@@ -420,22 +421,20 @@ fn a_cols_block_restating_the_whole_axis_completes_rather_than_aborting() {
     });
     let wide_dest = temp_dest("col-bomb-wide-out");
     let wide_report = import_file(&wide, &wide_dest, false).expect("the unpack completes");
-    assert_eq!(
-        unowned_axis_warnings(&wide_report).len(),
-        1,
-        "every column past the two blocks is one run: {:?}",
+    assert!(
+        unowned_axis_warnings(&wide_report).is_empty(),
+        "the sheet's own content reaches XFD, so the root spans every restated column: {:?}",
         unowned_axis_warnings(&wide_report),
     );
     std::fs::remove_dir_all(&wide_dest).ok();
     std::fs::remove_file(&wide).ok();
 }
 
-/// The OTHER producer of the same warning. An axis INSIDE the sheet's extent that no range file
-/// covers is named by the block-ownership pass, not by the extent clip, and that pass named one line
-/// per row: a height over rows 5..=2000 printed 1,996 lines for one authored fact. Both producers
-/// hand their axes to one fold, so neither can spell this pair of variants its own way.
+/// The producer of that warning that no longer fires. An axis INSIDE the sheet's extent is inside the
+/// root by construction, so a height over rows 5..=2000 with content at row 3000 is CARRIED rather
+/// than named as a loss — the retired half of the pass that once printed 1,996 lines for one fact.
 #[test]
-fn rows_inside_the_extent_that_no_block_covers_cost_one_line_not_one_per_row() {
+fn rows_inside_the_extent_that_no_block_covers_are_carried_by_the_root() {
     let src = patched_sheet1("smoke.xlsx", "orphan-heights", |xml| {
         let heights: String = (5..=2000)
             .map(|r| format!(r#"<row r="{r}" ht="30" customHeight="1"/>"#))
@@ -447,13 +446,17 @@ fn rows_inside_the_extent_that_no_block_covers_cost_one_line_not_one_per_row() {
     });
     let dest = temp_dest("orphan-heights-out");
     let report = import_file(&src, &dest, false).expect("the unpack completes");
+    assert!(
+        unowned_axis_warnings(&report).is_empty(),
+        "the rows lie inside the root, so none of them is unowned: {:?}",
+        report.warnings
+    );
+    let css = stylesheet(&dest, "Sheet1").expect("the tab states its heights");
+    assert!(css.starts_with("@scope (A1:B3000) {"), "{}", &css[..40]);
     assert_eq!(
-        unowned_axis_warnings(&report),
-        vec![
-            "row height for 5:2000 on sheet Sheet1 dropped: no range file covers row 5:2000"
-                .to_string()
-        ],
-        "the rows lie between the sheet's two blocks, so ONE run names them all",
+        css.matches("height: 30pt").count(),
+        1996,
+        "one rule per authored row, and no row it was never authored on",
     );
     std::fs::remove_dir_all(&dest).ok();
     std::fs::remove_file(&src).ok();
@@ -510,24 +513,28 @@ fn canonical(name: &str) -> String {
     fsa1_model::canonical_range_name(name)
 }
 
-/// The range files one tab was written, by name and in order.
+/// The RANGE files one tab was written, by name and in order — the blocks the cut produced. The
+/// tab's stylesheet is presentation rather than a block, and [`stylesheet`] is what reads it.
 fn written(dest: &Path, tab: &str) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dest.join(tab))
         .expect("the tab is written")
-        .map(|e| canonical(&e.expect("a readable entry").file_name().to_string_lossy()))
+        .map(|e| {
+            e.expect("a readable entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name != fsa1_model::PRESENTATION_ENTRY)
+        .map(|name| canonical(&name))
         .collect();
     names.sort();
     names
 }
 
-/// `file` is given canonically, with `:`; the host is asked how it actually spelled that name.
-fn scope_of(dest: &Path, tab: &str, file: &str) -> String {
-    let content = std::fs::read_to_string(dest.join(tab).join(fsa1_model::range_file_name(file)))
-        .expect("the block file is written");
-    let at = content.find("@scope").unwrap_or_else(|| {
-        panic!("no @scope block in {tab}/{file}:\n{content}");
-    });
-    content[at..].to_string()
+/// The tab's whole stylesheet. A tab that states no presentation writes none, so its absence is a
+/// fact a caller may assert rather than an empty string it has to tell apart from one.
+fn stylesheet(dest: &Path, tab: &str) -> Option<String> {
+    std::fs::read_to_string(dest.join(tab).join(fsa1_model::PRESENTATION_ENTRY)).ok()
 }
 
 /// A whole-column and a whole-row format, which neither states on any `<c>`: Excel and openpyxl write
@@ -545,8 +552,8 @@ fn a_column_and_a_row_default_style_reach_the_cells_that_state_none() {
     let dest = temp_dest("col-default-out");
     let report = import_file(&column, &dest, false).expect("the unpack completes");
     assert_eq!(
-        scope_of(&dest, "Sheet1", "A1:B3"),
-        "@scope {\n  td:last-child { font-weight: bold }\n}",
+        stylesheet(&dest, "Sheet1").as_deref(),
+        Some("@scope (A1:B3) {\n  td:last-child { font-weight: bold }\n}\n"),
         "no `<c>` of column B states a style, and the whole column is bold anyway",
     );
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
@@ -559,8 +566,8 @@ fn a_column_and_a_row_default_style_reach_the_cells_that_state_none() {
     let row_dest = temp_dest("row-default-out");
     let row_report = import_file(&row, &row_dest, false).expect("the unpack completes");
     assert_eq!(
-        scope_of(&row_dest, "Sheet1", "A1:B3"),
-        "@scope {\n  tr:nth-child(2) td { font-weight: bold }\n}",
+        stylesheet(&row_dest, "Sheet1").as_deref(),
+        Some("@scope (A1:B3) {\n  tr:nth-child(2) td { font-weight: bold }\n}\n"),
         "and neither does any `<c>` of row 2",
     );
     assert!(row_report.warnings.is_empty(), "{:?}", row_report.warnings);
@@ -602,7 +609,9 @@ fn an_axis_default_occupies_a_blank_only_where_it_draws_on_one() {
     let filled_dest = temp_dest("filled-column-out");
     let filled_report = import_file(&filled, &filled_dest, false).expect("the unpack completes");
     assert!(
-        scope_of(&filled_dest, "Sheet1", "A1:B3").contains("background-color: #00b0f0"),
+        stylesheet(&filled_dest, "Sheet1")
+            .expect("the tab states presentation")
+            .contains("background-color: #00b0f0"),
         "the fill Excel paints over column B's blanks crosses with them",
     );
     assert_eq!(
@@ -712,55 +721,45 @@ fn the_workbook_features_an_unpacked_tree_has_no_place_for_are_named() {
     std::fs::remove_file(&src).ok();
 }
 
-/// Geometry authored on a column `appearance` leaves in NO block. Both column regions cost zero
-/// rules, so bridging column C gains nothing and is never a candidate. What makes that acceptable is
-/// the other half: the width is NAMED, not dropped in silence, and `--decompose occupancy` spans the
-/// column and keeps it — so the loss is the cut's, and the agent handed the warning has a fix.
+/// Geometry authored on a column `appearance` leaves in no BLOCK. It is carried anyway, because the
+/// root presentation is stated over is the sheet's USED REGION and not any block: a column can carry
+/// content and no style and still have an authored width, and column C here has neither. Both cuts
+/// therefore keep the width, and which one ran stops being visible in the appearance at all.
 #[test]
-fn a_width_on_a_column_no_block_covers_is_named_and_kept_by_occupancy() {
-    let dest = temp_dest("gapped-default");
-    let report = import_file_as(
-        &fixture("gapped_columns.xlsx"),
-        &dest,
-        false,
-        Decomposition::Appearance,
-    )
-    .expect("import completes");
+fn a_width_on_a_column_no_block_covers_is_carried_by_the_sheets_root() {
+    let mut carried = Vec::new();
+    for (tag, policy) in [
+        ("gapped-appearance", Decomposition::Appearance),
+        ("gapped-occupancy", Decomposition::Occupancy),
+    ] {
+        let dest = temp_dest(tag);
+        let report = import_file_as(&fixture("gapped_columns.xlsx"), &dest, false, policy)
+            .expect("import completes");
+        assert!(
+            unowned_axis_warnings(&report).is_empty(),
+            "{tag}: the root spans column C, so nothing is unowned: {:?}",
+            report.warnings
+        );
+        carried.push((
+            written(&dest, "Gapped"),
+            stylesheet(&dest, "Gapped").expect("the tab states a width"),
+        ));
+        std::fs::remove_dir_all(&dest).ok();
+    }
     assert_eq!(
-        written(&dest, "Gapped"),
+        carried[0].0,
         vec!["A1:B20".to_string(), "D1:E20".to_string()],
         "columns A,B and D,E are two zero-rule rectangles, and the empty C between them pays nothing",
     );
+    assert_eq!(carried[1].0, vec!["A1:E20".to_string()]);
     assert_eq!(
-        unowned_axis_warnings(&report),
-        vec![
-            "column width for C on sheet Gapped dropped: no range file covers column C".to_string()
-        ],
+        carried[0].1, carried[1].1,
+        "one root over one used region, so the two cuts state the same presentation",
     );
-    std::fs::remove_dir_all(&dest).ok();
-
-    let occupancy_dest = temp_dest("gapped-occupancy");
-    let occupancy = import_file_as(
-        &fixture("gapped_columns.xlsx"),
-        &occupancy_dest,
-        false,
-        Decomposition::Occupancy,
-    )
-    .expect("import completes");
     assert_eq!(
-        written(&occupancy_dest, "Gapped"),
-        vec!["A1:E20".to_string()]
+        carried[0].1, "@scope (A1:E20) {\n  td:nth-child(3) { width: 14.5ch }\n}\n",
+        "column C is index 3 of the root A1:E20",
     );
-    assert!(
-        scope_of(&occupancy_dest, "Gapped", "A1:E20").contains("width: 14.5ch"),
-        "one block spanning column C carries the width it was authored with",
-    );
-    assert!(
-        unowned_axis_warnings(&occupancy).is_empty(),
-        "nothing is unowned under a cut that covers the column: {:?}",
-        occupancy.warnings
-    );
-    std::fs::remove_dir_all(&occupancy_dest).ok();
 }
 
 /// A block spanning coordinates the sheet never occupied — the shape `conformance/presentation/`'s

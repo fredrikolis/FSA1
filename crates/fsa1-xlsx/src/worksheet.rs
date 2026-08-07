@@ -55,29 +55,34 @@ fn emit_inner(
     write_cols(&mut w, &wb.column_widths(sheet))?;
 
     let heights = wb.row_heights(sheet);
+    // What a coordinate a scope root covers and no file does holds: nothing but its look, which is exactly what a covered blank holds, so the two take one arm below.
+    let style_only = Cell::Value {
+        value: Value::Blank,
+        format: None,
+    };
     w.write_event(Event::Start(BytesStart::new("sheetData")))?;
     if let Some(region) = region {
         for row in region.min_row..=region.max_row {
             let mut cells: Vec<cell::Sited<'_>> = Vec::new();
             for col in region.min_col..=region.max_col {
-                let Some(cs) = wb.source_at(sheet, col, row) else {
+                // The used region spans scope roots too, so a coordinate inside it may be stated by nothing at all; that is the gap, and it writes no `<c>`.
+                let Some(style) = wb.cell_style(sheet, col, row) else {
                     continue;
                 };
-                if cs.array_continuation {
+                let source = wb.source_at(sheet, col, row);
+                if source.is_some_and(|cs| cs.array_continuation) {
                     continue;
                 }
-                let style = wb
-                    .cell_style(sheet, col, row)
-                    .expect("a coordinate source_at answered for is covered, so cell_style is too");
+                let cell = source.map_or(&style_only, |cs| cs.cell);
                 if matches!(
-                    cs.cell,
+                    cell,
                     Cell::Value {
                         value: Value::Blank,
                         ..
                     }
                 ) {
                     // A blank's whole content is its look, so every look is carried — deliberately wider than the read leg's occupancy, which is only what SHOWS on a blank.
-                    let carried = styles.index_of(&style, cs.cell);
+                    let carried = styles.index_of(&style, cell);
                     debug_assert!(
                         !style.blank_paint().shows() || carried.is_some(),
                         "a fill or an edge mints an <xf>, so a blank the read leg counts as occupancy is always carried",
@@ -88,7 +93,7 @@ fn emit_inner(
                 }
                 cells.push(cell::Sited {
                     col,
-                    cell: cs.cell,
+                    cell,
                     style,
                     array_ref: anchors.get(&(col, row)).copied(),
                 });
@@ -191,10 +196,13 @@ mod tests {
 
     #[test]
     fn a_sized_axis_reaches_its_col_and_its_row_verbatim() {
-        let xml = sheet_xml(&[(
-            "B2:C3",
-            "1\t2\n3\t4\n@scope {\n  td { height: 22.5pt; width: 14.5ch }\n}",
-        )]);
+        let xml = sheet_xml(&[
+            ("B2:C3", "1\t2\n3\t4"),
+            (
+                "@presentation.css",
+                "@scope (B2:C3) {\n  td { height: 22.5pt; width: 14.5ch }\n}\n",
+            ),
+        ]);
         assert!(
             xml.contains(
                 r#"<cols><col min="2" max="3" width="14.5" customWidth="1"/></cols><sheetData>"#
@@ -224,10 +232,12 @@ mod tests {
     #[test]
     fn runs_merge_across_the_tabs_files_and_a_column_rule_carves_them() {
         let xml = sheet_xml(&[
-            ("A1:B1", "1\t2\n@scope {\n  td { width: 10ch }\n}"),
+            ("A1:B1", "1\t2"),
+            ("C1:E1", "3\t4\t5"),
             (
-                "C1:E1",
-                "3\t4\t5\n@scope {\n  td { width: 10ch }\n  td:nth-child(2) { width: 4ch }\n}",
+                "@presentation.css",
+                "@scope (A1:B1) {\n  td { width: 10ch }\n}\n\
+                 @scope (C1:E1) {\n  td { width: 10ch }\n  td:nth-child(2) { width: 4ch }\n}\n",
             ),
         ]);
         assert!(
@@ -246,7 +256,11 @@ mod tests {
     fn a_style_exists_wherever_a_cell_source_does() {
         let files: &[(&str, &str)] = &[
             ("A1:A2", "1\n2"),
-            ("C1:C2", "3\n4\n@scope {\n  td { font-weight: bold }\n}"),
+            ("C1:C2", "3\n4"),
+            (
+                "@presentation.css",
+                "@scope (C1:C2) {\n  td { font-weight: bold }\n}\n",
+            ),
         ];
         let wb = Workbook::from_tabs(&[("Sheet1", files)])
             .unwrap_or_else(|d| panic!("{files:?} should load: {:?}", d[0]));
@@ -271,10 +285,13 @@ mod tests {
     /// the cell leaves on the pack and never comes back.
     #[test]
     fn a_blank_wearing_a_look_is_written_as_a_c_carrying_only_its_style() {
-        let xml = sheet_xml(&[(
-            "A1:B2",
-            "1\t\n\t2\n@scope {\n  td { background-color: #00ff00 }\n}",
-        )]);
+        let xml = sheet_xml(&[
+            ("A1:B2", "1\t\n\t2"),
+            (
+                "@presentation.css",
+                "@scope (A1:B2) {\n  td { background-color: #00ff00 }\n}\n",
+            ),
+        ]);
         assert!(xml.contains(r#"<c r="B1" s="1"/>"#), "{xml}");
         assert!(xml.contains(r#"<c r="A2" s="1"/>"#), "{xml}");
 
@@ -288,7 +305,13 @@ mod tests {
     /// A height belongs to the ROW, not to the cells on it, so an all-blank row keeps it.
     #[test]
     fn a_sized_row_holding_no_cell_survives_as_an_empty_row() {
-        let xml = sheet_xml(&[("A1:A2", "1\n\n\n@scope {\n  td { height: 20pt }\n}")]);
+        let xml = sheet_xml(&[
+            ("A1:A2", "1\n\n"),
+            (
+                "@presentation.css",
+                "@scope (A1:A2) {\n  td { height: 20pt }\n}\n",
+            ),
+        ]);
         assert!(
             xml.contains(r#"<row r="2" ht="20" customHeight="1"/>"#),
             "{xml}"

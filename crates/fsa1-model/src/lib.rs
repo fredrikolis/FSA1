@@ -39,7 +39,7 @@ pub use names::{
     Name, NameRepr, NameScope, NameTable, NameTarget, RawNameEntry, is_cell_filename, quote_sheet,
 };
 pub use overlap::{Rect, detect_overlaps};
-pub use presentation::{Presentation, Rule, Target, spell_block};
+pub use presentation::{Presentation, Rule, Target, parse_stylesheet, spell_stylesheet};
 pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, combined_cell, display_value,
     parse_viewport, render, viewport_cell_count,
@@ -54,16 +54,15 @@ pub use workbook::{
 
 use fsa1_ast::Shape;
 
-/// One loaded file: the closed range its name declares, and the grid and presentation its content
-/// deserialized to. `array_formula` marks the second legal form — a lone `1x1` `=formula` grid under
-/// a multi-coordinate range, evaluated once and spread across the region.
+/// One loaded file: the closed range its name declares, and the grid its content deserialized to.
+/// `array_formula` marks the second legal form — a lone `1x1` `=formula` grid under a multi-coordinate
+/// range, evaluated once and spread across the region.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedFile {
     pub region: Rect,
     pub declared_shape: Shape,
     pub grid: Grid,
     pub array_formula: bool,
-    pub presentation: Option<Presentation>,
 }
 
 /// The `.gitattributes` a workbook carries so git cannot corrupt it. Under Windows' default
@@ -125,48 +124,83 @@ pub fn write_name_alias(target: &str, link: &std::path::Path) -> std::io::Result
     std::fs::write(link, target)
 }
 
-/// The file content is its grid — no header, annotation, or metadata line, and the first line is the
-/// first row — optionally followed by a presentation block, which is found from the END so a cell
-/// spelling `@scope {` cannot truncate the grid.
+/// The file content is its grid, whole — no header, annotation, or metadata line, the first line the
+/// first row, and no trailing block: presentation lives in the tab's [`PRESENTATION_ENTRY`], so a
+/// grid that still ends in one is a located refusal rather than a shorter grid.
 pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Vec<Diagnostic>> {
     let declared = parse_filename(name).map_err(|d| vec![d])?;
     let declared_shape = declared.declared_shape;
-    let (grid_src, block) = presentation::split(contents);
-
-    let grid = deserialize_tsv(name, grid_src).map_err(|d| vec![d])?;
-    let Some(array_formula) = conforms(&grid, declared_shape) else {
-        return Err(vec![dimension_mismatch(
-            name,
-            &grid,
-            declared_shape,
-            &block,
-        )]);
-    };
-    // Only the array-formula reading can tie: under an exact fill the block's own lines are left over, so reading the whole file as a grid always yields more rows than the range declares.
-    if block.is_some() && array_formula && whole_file_also_conforms(name, contents, declared_shape)
-    {
-        return Err(vec![Diagnostic::new(
-            Code::AmbiguousGridTail,
-            Loc::file(name),
-            format!(
-                "{name:?} fills its range both as a {}x{} grid and as one =formula followed by a \
-                 presentation block: which of the two is meant cannot be decided from the file",
-                declared_shape.rows, declared_shape.cols,
-            ),
-        )]);
+    if let Some(line) = trailing_block_line(contents) {
+        return Err(vec![presentation_in_grid(Loc::body(name, line, 1))]);
     }
 
-    let presentation = match &block {
-        Some(b) => Some(presentation::parse_block(name, b, declared_shape)?),
-        None => None,
+    let grid = deserialize_tsv(name, contents).map_err(|d| vec![d])?;
+    let Some(array_formula) = conforms(&grid, declared_shape) else {
+        return Err(vec![dimension_mismatch(name, &grid, declared_shape)]);
     };
     Ok(ParsedFile {
         region: declared.region,
         declared_shape,
         grid,
         array_formula,
-        presentation,
     })
+}
+
+/// The tree entry a tab's presentation is encoded as. One per tab folder, and content rather than
+/// tooling: it is what FS3's reserved set is NOT, since a coordinate's appearance is the workbook's.
+pub const PRESENTATION_ENTRY: &str = "@presentation.css";
+
+const OPEN: &str = "@scope {";
+const CLOSE: &str = "}";
+
+/// The 1-based line a RETIRED in-grid presentation block opens on, or `None` where the file is all
+/// grid. Found from the END — the last non-empty line must be `}`, brace-matched backwards to a line
+/// that is exactly `@scope {` — so a CELL whose text is `@scope {` never reads as one.
+fn trailing_block_line(content: &str) -> Option<u32> {
+    let mut lines: Vec<&str> = Vec::new();
+    for line in content.split('\n') {
+        lines.push(line);
+    }
+    let close = lines.iter().rposition(|l| !l.is_empty())?;
+    if lines[close] != CLOSE {
+        return None;
+    }
+    match_open(&lines, close).map(|open| (open + 1) as u32)
+}
+
+/// Returns the line whose `{` closes the outermost brace, and ONLY when that line is exactly
+/// `@scope {` — a grid holding stray braces therefore matches nothing and stays whole.
+fn match_open(lines: &[&str], close: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (idx, line) in lines[..=close].iter().enumerate().rev() {
+        for ch in line.chars().rev() {
+            match ch {
+                '}' => depth += 1,
+                '{' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return (*line == OPEN).then_some(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// The one wording for the retired in-grid block, so a range file's refusal and the workbook root's
+/// send an author to the same place.
+pub fn presentation_in_grid(loc: Loc) -> Diagnostic {
+    Diagnostic::new(
+        Code::PresentationInGrid,
+        loc,
+        format!(
+            "presentation is the tab's {PRESENTATION_ENTRY}, never a block in a grid: move the \
+             rules there under a `@scope (<range>) {{ ... }}` prelude naming the absolute range \
+             they styled"
+        ),
+    )
 }
 
 /// The two shapes a grid may take under a declared range: it fills the range exactly, or it is the
@@ -181,33 +215,14 @@ fn conforms(grid: &Grid, declared: Shape) -> Option<bool> {
     (spans_multiple && is_single_formula).then_some(true)
 }
 
-fn whole_file_also_conforms(name: &str, contents: &str, declared: Shape) -> bool {
-    deserialize_tsv(name, contents)
-        .ok()
-        .is_some_and(|g| conforms(&g, declared).is_some())
-}
-
-fn dimension_mismatch(
-    name: &str,
-    grid: &Grid,
-    declared: Shape,
-    block: &Option<presentation::Block<'_>>,
-) -> Diagnostic {
-    // Without this an author who wrote a block reads a row count that is nowhere in the file.
-    let split_off = match block {
-        Some(b) => format!(
-            " (a presentation block was split off at line {}, and holds no cell)",
-            b.line()
-        ),
-        None => String::new(),
-    };
+fn dimension_mismatch(name: &str, grid: &Grid, declared: Shape) -> Diagnostic {
     Diagnostic::new(
         Code::DimensionMismatch,
         Loc::file(name),
         format!(
             "the grid is {}x{} but the file's range {name:?} declares {}x{}: the grid must \
              fill the closed range exactly (GRID4), or be a single =formula whose array value \
-             fills the range (GRID5){split_off}",
+             fills the range (GRID5)",
             grid.shape.rows, grid.shape.cols, declared.rows, declared.cols,
         ),
     )
@@ -291,29 +306,38 @@ mod tests {
         assert_eq!(d[0].code, Code::LowercaseColumn);
     }
 
+    /// The retired form, pinned here rather than as a fixture: a range file is its grid whole, and a
+    /// trailing block is ONE refusal naming where presentation now lives — never a shorter grid, and
+    /// never a second fault about the rows that block's lines are no longer counted as.
     #[test]
-    fn a_presentation_block_loads_beside_the_grid_it_styles() {
-        let f = parse_file(
-            "A1:C2",
-            "1\t2\t3\n4\t5\t6\n@scope {\n  td { text-align: right }\n}",
-        )
-        .unwrap();
-        assert_eq!(f.grid.shape, Shape { rows: 2, cols: 3 });
-        let rules = f.presentation.expect("a presentation").rules;
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].target, Target::All);
+    fn a_range_file_ending_in_a_block_is_one_refusal_naming_the_tabs_stylesheet() {
+        for content in [
+            "1\t2\t3\n@scope {\n  td { text-align: right }\n}",
+            "1\t2\t3\n@scope {\n}",
+            "1\t2\t3\n@scope {\n  th { color: red }\n}",
+        ] {
+            let d = parse_file("A1:C1", content).unwrap_err();
+            assert_eq!(d.len(), 1, "{content:?} -> {d:?}");
+            assert_eq!(d[0].code, Code::PresentationInGrid, "{content:?}");
+            assert!(
+                matches!(d[0].loc, Loc::Body { line: 2, .. }),
+                "{content:?}: {:?}",
+                d[0].loc
+            );
+            assert!(
+                d[0].message.contains(PRESENTATION_ENTRY),
+                "{content:?} -> {}",
+                d[0].message
+            );
+        }
     }
 
-    #[test]
-    fn a_file_without_a_block_carries_no_presentation() {
-        assert_eq!(parse_file("A1:C1", "1\t2\t3").unwrap().presentation, None);
-    }
-
+    /// The detector is anchored to the file's LAST line, so an interior `@scope {` is cell text and a
+    /// grid holding one still loads. A false positive here would turn a legal grid into a refusal.
     #[test]
     fn a_text_cell_spelling_the_block_open_stays_a_cell() {
         let f = parse_file("A1:A3", "1\n@scope {\n3").unwrap();
         assert_eq!(f.grid.shape, Shape { rows: 3, cols: 1 });
-        assert_eq!(f.presentation, None);
         assert_eq!(
             f.grid.cells[1],
             Cell::Value {
@@ -323,28 +347,49 @@ mod tests {
         );
     }
 
+    /// The whole file is the grid, with nothing split off it: the row count a mismatch reports is the
+    /// one an author can count in the file.
     #[test]
-    fn a_block_that_is_also_a_legal_grid_tail_is_refused_rather_than_guessed() {
-        let d = parse_file("A1:A3", "=SUM(B1:B9)\n@scope {\n}").unwrap_err();
-        assert_eq!(d[0].code, Code::AmbiguousGridTail);
-    }
-
-    #[test]
-    fn a_grid_that_stops_fitting_once_the_block_is_split_off_names_the_block() {
-        let d = parse_file("A1:A4", "1\n2\n@scope {\n}").unwrap_err();
+    fn a_dimension_mismatch_counts_every_line_of_the_file() {
+        let d = parse_file("A1:A4", "1\n2\n3").unwrap_err();
         assert_eq!(d[0].code, Code::DimensionMismatch);
-        assert!(
-            d[0].message.contains("split off at line 3"),
-            "{}",
-            d[0].message
-        );
+        assert!(d[0].message.contains("3x1"), "{}", d[0].message);
     }
-
+    /// The detector's whole job now: say WHICH line a retired in-grid block opens on, so the refusal
+    /// that replaces it points at one. Every case a grid could be mistaken for a block is still here,
+    /// because a false positive would turn a legal grid into a refusal.
     #[test]
-    fn a_malformed_block_refuses_the_file_with_every_fault_at_once() {
-        let d = parse_file("A1:C1", "1\t2\t3\n@scope {\n  th { color: red }\n}").unwrap_err();
-        assert_eq!(d.len(), 2, "{d:?}");
-        assert_eq!(d[0].code, Code::PresentationSelector);
-        assert_eq!(d[1].code, Code::PresentationValue);
+    fn a_grid_that_merely_looks_like_a_block_opens_none() {
+        for content in [
+            "Rent\t1500\n@scope {\tx\ty\nSalaries\t1600",
+            // Anchored to the file's LAST line, so an interior `@scope {` cell is inert.
+            "@scope {\n1\n2",
+            "a\nx { y\n}",
+            "a\n}",
+            "{\n}",
+            "a\n}\n}",
+            // An unbalanced tail matches nothing, so the file is judged as the grid it is.
+            "@scope {\n  td color: #3f0421 }\n}",
+            "@scope {\n  td { color: #3f0421\n}",
+        ] {
+            assert_eq!(trailing_block_line(content), None, "{content:?}");
+        }
+    }
+    #[test]
+    fn a_retired_in_grid_block_is_found_at_the_line_it_opens_on() {
+        assert_eq!(
+            trailing_block_line("1\t2\n3\t4\n@scope {\n  td { color: #3f0421 }\n}"),
+            Some(3),
+        );
+        // Blank lines after the close do not hide it.
+        assert_eq!(
+            trailing_block_line("1\n@scope {\n  td { color: #3f0421 }\n}\n\n"),
+            Some(2),
+        );
+        // A multi-line rule body is still brace-matched back to the open.
+        assert_eq!(
+            trailing_block_line("1\n@scope {\n  td {\n    color: #3f0421\n  }\n}"),
+            Some(2),
+        );
     }
 }

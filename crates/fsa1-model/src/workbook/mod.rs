@@ -23,15 +23,13 @@ use fsa1_ast::{
 
 use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
-use crate::geometry::{
-    AxisRun, FileGeometry, declared_heights, declared_widths, detect_geometry_conflicts,
-};
+use crate::geometry::{AxisRun, declared_heights, declared_widths};
 use crate::grid::{Cell as GridCell, Grid};
 use crate::names::{NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename};
 use crate::overlap::{Rect, detect_overlaps};
-use crate::presentation::Presentation;
+use crate::presentation::{Presentation, parse_stylesheet};
 use crate::style::{CellStyle, resolve};
-use crate::{ParsedFile, parse_file};
+use crate::{PRESENTATION_ENTRY, ParsedFile, parse_file, presentation_in_grid};
 
 use forge::ForgeStore;
 use plan::DepGraph;
@@ -70,9 +68,6 @@ struct LoadedFile {
     region: Rect,
     grid: Grid,
     array_formula: bool,
-    /// Indexed by the DECLARED region, never by the grid, so an array-formula file styles its whole
-    /// region exactly as an explicit grid does.
-    presentation: Option<Presentation>,
 }
 
 /// The coordinate index is SPLIT because a tab post-import is overwhelmingly single-cell files:
@@ -83,6 +78,9 @@ struct LoadedFile {
 struct Tab {
     name: String,
     files: Vec<LoadedFile>,
+    /// The tab's stylesheet, in the order written, which IS the cascade: a coordinate several roots
+    /// cover wears them layered later-over-earlier. Roots overlap freely and answer to no file.
+    blocks: Vec<(Rect, Presentation)>,
     single: HashMap<(u32, u32), usize>,
     spans: Vec<(Rect, usize)>,
     by_name: HashMap<String, usize>,
@@ -90,7 +88,7 @@ struct Tab {
 
 impl Tab {
     /// File order is PRESERVED: a [`FileId`]'s second component indexes `files`.
-    fn new(name: String, files: Vec<LoadedFile>) -> Tab {
+    fn new(name: String, files: Vec<LoadedFile>, blocks: Vec<(Rect, Presentation)>) -> Tab {
         let mut single = HashMap::new();
         let mut spans = Vec::new();
         let mut by_name = HashMap::new();
@@ -106,6 +104,7 @@ impl Tab {
         Tab {
             name,
             files,
+            blocks,
             single,
             spans,
             by_name,
@@ -116,7 +115,15 @@ impl Tab {
 /// `(sheet index, file index within the tab)` — what an eval-time refusal's file anchor is keyed by.
 type FileId = (u32, usize);
 
-type TabParts = (Vec<(String, String)>, Vec<RawNameEntry>);
+/// One tab's tree as the reader classified it: its range files, and the text its stylesheet entry
+/// holds. Three entry kinds, and this is what says which of them each was.
+struct TabInput {
+    name: String,
+    files: Vec<(String, String)>,
+    stylesheet: Option<String>,
+}
+
+type TabParts = (Vec<(String, String)>, Vec<RawNameEntry>, Option<String>);
 
 /// `(sheet index, zero-based col, zero-based row)`. Every grid cell is a DISTINCT computation, so
 /// the graph and the caches are keyed per cell, never per file.
@@ -241,7 +248,7 @@ impl Workbook {
         if c1 != RangeNode::OPEN && r1 != RangeNode::OPEN {
             return (c1, r1);
         }
-        let used = self.used_region(sheet);
+        let used = self.content_region(sheet);
         (
             if c1 == RangeNode::OPEN {
                 used.map(|u| u.max_col).unwrap_or(c0)
@@ -290,9 +297,10 @@ impl Workbook {
     /// The outer `io::Result` reports a filesystem failure and the inner one the workbook's own
     /// refusals — kept apart, an unreadable directory not being a spreadsheet diagnostic.
     pub fn load_dir(root: &Path) -> std::io::Result<Result<Workbook, Vec<Diagnostic>>> {
-        let mut tabs: Vec<(String, Vec<(String, String)>)> = Vec::new();
+        let mut tabs: Vec<TabInput> = Vec::new();
         // Read here, where the filesystem is present: the pure `names` module never touches it.
         let mut raw_names: Vec<RawNameEntry> = Vec::new();
+        let mut prior: Vec<Diagnostic> = Vec::new();
         let mut scratch = Vec::new();
         let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
         entries.sort_by_key(|e| e.file_name());
@@ -304,9 +312,16 @@ impl Workbook {
                 continue;
             }
             if ft.is_dir() {
-                let (files, names) = read_tab_dir(root, &entry_name, &entry.path())?;
-                tabs.push((entry_name, files));
+                let (files, names, stylesheet) = read_tab_dir(root, &entry_name, &entry.path())?;
+                tabs.push(TabInput {
+                    name: entry_name,
+                    files,
+                    stylesheet,
+                });
                 raw_names.extend(names);
+            } else if entry_name == PRESENTATION_ENTRY {
+                // A stylesheet styles COORDINATES, and a coordinate is a tab's; at the root it names none.
+                prior.push(presentation_in_grid(Loc::file(&entry_name)));
             } else if let Some(name) = read_name_entry(
                 root,
                 NameScope::Workbook,
@@ -319,7 +334,7 @@ impl Workbook {
                 raw_names.push(name);
             }
         }
-        Ok(Workbook::from_dir_parts(tabs, raw_names))
+        Ok(Workbook::from_dir_parts(tabs, raw_names, prior))
     }
 
     /// An in-memory workbook has no symlinks, so a name here is always the ref-file representation.
@@ -328,8 +343,12 @@ impl Workbook {
         let mut raw_names = Vec::new();
         for (tab_name, files) in tabs {
             let mut cells = Vec::new();
+            let mut stylesheet = None;
             for (fname, contents) in files {
-                if is_cell_filename(&fname) {
+                // The stylesheet is classified FIRST, exactly as on disk: its name is a legal defined name, so a later arm would swallow it.
+                if fname == PRESENTATION_ENTRY {
+                    stylesheet = Some(contents);
+                } else if is_cell_filename(&fname) {
                     cells.push((fname, contents));
                 } else {
                     raw_names.push(RawNameEntry {
@@ -339,19 +358,31 @@ impl Workbook {
                     });
                 }
             }
-            cell_tabs.push((tab_name, cells));
+            cell_tabs.push(TabInput {
+                name: tab_name,
+                files: cells,
+                stylesheet,
+            });
         }
-        Workbook::from_dir_parts(cell_tabs, raw_names)
+        Workbook::from_dir_parts(cell_tabs, raw_names, Vec::new())
     }
 
     /// Name resolution is a source rewrite AT LOAD, so the engine stays A1-only.
     fn from_dir_parts(
-        tabs: Vec<(String, Vec<(String, String)>)>,
+        tabs: Vec<TabInput>,
         raw_names: Vec<RawNameEntry>,
+        prior: Vec<Diagnostic>,
     ) -> Result<Workbook, Vec<Diagnostic>> {
-        let (name_table, mut diags) = NameTable::build(raw_names);
+        let (name_table, table_diags) = NameTable::build(raw_names);
+        let mut diags = prior;
+        diags.extend(table_diags);
         let mut out_tabs = Vec::with_capacity(tabs.len());
-        for (tab_name, files) in tabs {
+        for tab in tabs {
+            let TabInput {
+                name: tab_name,
+                files,
+                stylesheet,
+            } = tab;
             let mut loaded = Vec::new();
             let mut regions: Vec<(String, Rect)> = Vec::new();
             for (fname, contents) in files {
@@ -363,7 +394,6 @@ impl Workbook {
                         declared_shape: _,
                         grid,
                         array_formula,
-                        presentation,
                     }) => {
                         regions.push((fname.clone(), region));
                         loaded.push(LoadedFile {
@@ -371,23 +401,22 @@ impl Workbook {
                             region,
                             grid,
                             array_formula,
-                            presentation,
                         });
                     }
                     Err(d) => diags.extend(d),
                 }
             }
             diags.extend(detect_overlaps(&tab_name, &regions));
-            let geometry: Vec<FileGeometry<'_>> = loaded
-                .iter()
-                .map(|f| FileGeometry {
-                    name: &f.name,
-                    region: f.region,
-                    presentation: f.presentation.as_ref(),
-                })
-                .collect();
-            diags.extend(detect_geometry_conflicts(&tab_name, &geometry));
-            out_tabs.push(Tab::new(tab_name, loaded));
+            let blocks = match stylesheet {
+                Some(text) => {
+                    parse_stylesheet(&stylesheet_name(&tab_name), &text).unwrap_or_else(|d| {
+                        diags.extend(d);
+                        Vec::new()
+                    })
+                }
+                None => Vec::new(),
+            };
+            out_tabs.push(Tab::new(tab_name, loaded, blocks));
         }
         if diags.is_empty() {
             let has_array_regions = out_tabs
@@ -579,17 +608,34 @@ impl Workbook {
         self.tabs[idx].by_name.get(name).copied()
     }
 
-    /// `None` for an out-of-range sheet or an empty tab.
+    /// Every coordinate the tab states anything about — file regions AND scope roots, a block over a
+    /// rectangle no file covers still having to reach a renderer and a pack. NOT what an open-axis
+    /// reference clamps to: that is [`Workbook::content_region`], presentation moving no value.
     pub fn used_region(&self, sheet: u32) -> Option<Rect> {
         let tab = self.tabs.get(sheet as usize)?;
-        let mut files = tab.files.iter();
-        let first = files.next()?.region;
-        Some(files.fold(first, |acc, f| Rect {
-            min_col: acc.min_col.min(f.region.min_col),
-            min_row: acc.min_row.min(f.region.min_row),
-            max_col: acc.max_col.max(f.region.max_col),
-            max_row: acc.max_row.max(f.region.max_row),
-        }))
+        let stated = tab
+            .files
+            .iter()
+            .map(|f| f.region)
+            .chain(tab.blocks.iter().map(|(root, _)| *root));
+        stated.reduce(|acc, r| Rect {
+            min_col: acc.min_col.min(r.min_col),
+            min_row: acc.min_row.min(r.min_row),
+            max_col: acc.max_col.max(r.max_col),
+            max_row: acc.max_row.max(r.max_row),
+        })
+    }
+
+    /// How far the tab's CONTENT reaches — file regions only. A stylesheet states no value, so a
+    /// block cannot move the bound an open-axis reference resolves against (VAL1).
+    pub fn content_region(&self, sheet: u32) -> Option<Rect> {
+        let tab = self.tabs.get(sheet as usize)?;
+        tab.files.iter().map(|f| f.region).reduce(|acc, r| Rect {
+            min_col: acc.min_col.min(r.min_col),
+            min_row: acc.min_row.min(r.min_row),
+            max_col: acc.max_col.max(r.max_col),
+            max_row: acc.max_row.max(r.max_row),
+        })
     }
 
     /// `None` for a gap. Overlaps are rejected at load, so at most one file covers a cell.
@@ -610,24 +656,41 @@ impl Workbook {
         })
     }
 
-    /// `col` and `row` are zero-based and absolute, as [`Workbook::value_at`]'s are. `None` is a gap;
-    /// a covering file declaring no presentation is an EMPTY style, the two being different facts.
+    /// `col` and `row` are zero-based and absolute, as [`Workbook::value_at`]'s are. `Some` wherever
+    /// the tab STATES something at the coordinate — a file covers it, or a scope root does, or both —
+    /// and `None` only where it states neither; a covered coordinate no block reaches is an EMPTY
+    /// style, which is a different fact from a gap. Blocks layer in the order written.
     pub fn cell_style(&self, sheet: u32, col: u32, row: u32) -> Option<CellStyle> {
-        let (_, file) = self.covering(sheet, col, row)?;
-        Some(match &file.presentation {
-            Some(p) => resolve(
-                p,
-                row - file.region.min_row + 1,
-                col - file.region.min_col + 1,
-            ),
-            None => CellStyle::default(),
-        })
+        let tab = self.tabs.get(sheet as usize)?;
+        let mut style: Option<CellStyle> = None;
+        for (root, presentation) in &tab.blocks {
+            if root.contains(col, row) {
+                let matched = resolve(presentation, row - root.min_row + 1, col - root.min_col + 1);
+                style.get_or_insert_default().layer(&matched);
+            }
+        }
+        let mut style = match style {
+            Some(style) => style,
+            None => self
+                .covering(sheet, col, row)
+                .map(|_| CellStyle::default())?,
+        };
+        // An axis size belongs to the AXIS: resolved per coordinate, one column renders two widths.
+        style.width = self.axis_size(self.column_widths(sheet), col);
+        style.height = self.axis_size(self.row_heights(sheet), row);
+        Some(style)
     }
 
-    /// The sheet columns this tab's files size, ascending, disjoint and coalesced — what a `<col min=
-    /// max= width=>` run is. Every file sizing a given axis sizes it alike, `geometry-conflict`
-    /// refusing a tab where two disagree, so the first declaration read stands for all of them. An
-    /// axis no file sizes is absent rather than defaulted.
+    fn axis_size<T: Copy>(&self, runs: Vec<AxisRun<T>>, index: u32) -> Option<T> {
+        runs.iter()
+            .find(|r| index >= r.start && index <= r.end)
+            .map(|r| r.size)
+    }
+
+    /// The sheet columns this tab's stylesheet sizes, ascending, disjoint and coalesced — what a
+    /// `<col min= max= width=>` run is. Two blocks may size one axis differently and neither is a
+    /// fault: the cascade answers it, so the LAST declaration read stands. An axis no block sizes is
+    /// absent rather than defaulted.
     pub fn column_widths(&self, sheet: u32) -> Vec<AxisRun<Chars>> {
         self.axis_runs(sheet, declared_widths)
     }
@@ -637,8 +700,9 @@ impl Workbook {
         self.axis_runs(sheet, declared_heights)
     }
 
-    /// Two files' runs may interleave and part-overlap, so they are merged one axis at a time and
-    /// re-coalesced rather than intersected pairwise.
+    /// Two blocks' runs may interleave and part-overlap, so they are merged one axis at a time and
+    /// re-coalesced rather than intersected pairwise. The overwrite IS the cascade read on an axis:
+    /// blocks come in the order written, so the last one sizing a given axis is the one that stands.
     fn axis_runs<T: Copy + PartialEq>(
         &self,
         sheet: u32,
@@ -648,13 +712,10 @@ impl Workbook {
             return Vec::new();
         };
         let mut sized: BTreeMap<u32, T> = BTreeMap::new();
-        for file in &tab.files {
-            let Some(presentation) = &file.presentation else {
-                continue;
-            };
-            for run in declared(file.region, presentation) {
+        for (root, presentation) in &tab.blocks {
+            for run in declared(*root, presentation) {
                 for axis in run.start..=run.end {
-                    sized.entry(axis).or_insert(run.size);
+                    sized.insert(axis, run.size);
                 }
             }
         }
@@ -847,10 +908,13 @@ impl Workbook {
     }
 }
 
-/// Entries are sorted, for a deterministic load order.
+/// Entries are sorted, for a deterministic load order. Three entry kinds are told apart HERE, and the
+/// stylesheet is tested for first: `@presentation.css` is a legal defined name, so the name arm below
+/// would otherwise take it and the tab would load styleless and clean.
 fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabParts> {
     let mut files = Vec::new();
     let mut names = Vec::new();
+    let mut stylesheet = None;
     let mut scratch = Vec::new();
     let mut file_entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     file_entries.sort_by_key(|e| e.file_name());
@@ -864,7 +928,9 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
         if Workbook::is_reserved_entry(&name) {
             continue;
         }
-        if ft.is_file() && is_cell_filename(&name) {
+        if ft.is_file() && name == PRESENTATION_ENTRY {
+            stylesheet = Some(read_file_to_string(&f.path(), &mut scratch)?);
+        } else if ft.is_file() && is_cell_filename(&name) {
             files.push((name, read_file_to_string(&f.path(), &mut scratch)?));
         } else if let Some(entry) = read_name_entry(
             root,
@@ -877,7 +943,13 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
             names.push(entry);
         }
     }
-    Ok((files, names))
+    Ok((files, names, stylesheet))
+}
+
+/// What a stylesheet's refusals are located against: the tab-qualified path, since the entry's own
+/// name is the same on every tab and a bare one could not say which sheet's rules were wrong.
+fn stylesheet_name(tab: &str) -> String {
+    format!("{tab}/{PRESENTATION_ENTRY}")
 }
 
 /// `None` for an A1-shaped regular file, which is a cell, or an unreadable kind. A degraded symlink

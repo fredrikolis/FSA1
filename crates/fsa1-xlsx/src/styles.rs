@@ -86,13 +86,14 @@ fn collect(wb: &Workbook) -> BTreeSet<XfKey> {
         };
         for row in region.min_row..=region.max_row {
             for col in region.min_col..=region.max_col {
-                let Some(cs) = wb.source_at(sheet, col, row) else {
-                    continue;
-                };
+                // Keyed off the STYLE, so a coordinate a scope root covers and no file does mints its `<xf>` too; it has no value and so no number format.
                 let Some(style) = wb.cell_style(sheet, col, row) else {
                     continue;
                 };
-                let key = xf_key(&style, cell_format(cs.cell));
+                let format = wb
+                    .source_at(sheet, col, row)
+                    .and_then(|cs| cell_format(cs.cell));
+                let key = xf_key(&style, format);
                 if key != XfKey::default() {
                     keys.insert(key);
                 }
@@ -375,7 +376,7 @@ fn escape_attr(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fsa1_model::{Chars, CurrencySymbol, DatePattern, Format, Points, Workbook, parse_file};
+    use fsa1_model::{Chars, CurrencySymbol, DatePattern, Format, Points, Workbook};
 
     /// The Office default stylesheet: what a workbook declaring no style and no format must emit, byte
     /// for byte, since `xl/styles.xml` is a graded part of the round-trip corpus.
@@ -399,10 +400,11 @@ mod tests {
         (table, xml)
     }
 
-    fn styled(block: &str) -> CellStyle {
-        let f = parse_file("A1:B2", &format!("1\t2\n3\t4\n@scope {{\n  {block}\n}}"))
-            .unwrap_or_else(|d| panic!("{block:?} should load: {:?}", d[0]));
-        fsa1_model::style::resolve(&f.presentation.expect("a presentation"), 1, 1)
+    fn styled(rule: &str) -> CellStyle {
+        let sheet = format!("@scope (A1:B2) {{\n  {rule}\n}}\n");
+        let blocks = fsa1_model::parse_stylesheet("S/@presentation.css", &sheet)
+            .unwrap_or_else(|d| panic!("{rule:?} should parse: {:?}", d[0]));
+        fsa1_model::style::resolve(&blocks[0].1, 1, 1)
     }
 
     #[test]
@@ -609,10 +611,13 @@ mod tests {
     fn a_loaded_workbook_interns_the_look_each_cell_reads_back() {
         let wb = Workbook::from_tabs(&[(
             "Sheet1",
-            &[(
-                "A1:A2",
-                "Total\n12.50%\n@scope {\n  tr:first-child td { font-weight: bold }\n}",
-            )],
+            &[
+                ("A1:A2", "Total\n12.50%"),
+                (
+                    "@presentation.css",
+                    "@scope (A1:A2) {\n  tr:first-child td { font-weight: bold }\n}\n",
+                ),
+            ],
         )]);
         let wb = wb.unwrap_or_else(|d| panic!("the workbook loads: {:?}", d[0]));
         let table = build(&wb);

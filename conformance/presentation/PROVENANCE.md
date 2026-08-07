@@ -29,7 +29,7 @@ every fixture is a fresh LFS object even when nothing about it changed. Run the 
 > wrong — never edited to chase an FSA1 regression.**
 
 An `expected/<fixture>.expected` file states what `unpack` must write for that fixture: the range
-files, their contents, their trailing `@scope` block, and the SER3 warnings the run must report. It is
+files, their contents, the tab's `@presentation.css`, and the SER3 warnings the run must report. It is
 a **reading** of the fixture's own `xl/styles.xml`, `xl/worksheets/sheetN.xml` and `xl/theme/theme1.xml`
 against the encoder rules in plan 01 — not a transcript of FSA1 output. When FSA1 and an expectation
 disagree, the default verdict is an FSA1 defect. The sentence above is repeated in the assertion
@@ -40,12 +40,15 @@ message of both graders, so a failure carries it without anyone opening this fil
 One directive per line; `#` comments and blank lines are ignored.
 
     warning: <the exact SER3 line the run must report>
-    file: <tab>/<range-file-name>
-    |<a line of that file's contents, verbatim>
+    file: <tab>/<entry-name>
+    |<a line of that entry's contents, verbatim>
 
+A `file:` entry is a range file or the tab's `@presentation.css`; the two are listed alike, in the
+`<tab>/<name>` order the grader sorts by, which puts `@presentation.css` ahead of every range name.
 Every content line is `|`-prefixed, which is what makes an empty grid line distinguishable from
-nothing at all. A fixture with no `warning:` line must print `unpack fidelity: nothing lost`; a fixture
-with one must not. A fixture with no `file:` line must write no range file.
+nothing at all. A stylesheet ends in a newline, so its last content line is a bare `|`. A fixture with
+no `warning:` line must print `unpack fidelity: nothing lost`; a fixture with one must not. A fixture
+with no `file:` line must write no entry at all.
 
 That unconditional `nothing lost` is expected here because every fixture is an `.xlsx` — the one source
 format whose readers open all seven categories the report tracks. A run that inspected fewer prints a
@@ -54,27 +57,33 @@ line naming what it did not look at instead, which is why an `.ods` cannot be gr
 
 ### The block's layout, and where it comes from
 
-The `@scope` block's **content** — which rules, which selectors, which declarations, which values — is
-derived from the fixture's own bytes against plan 01 §D2/§D3/§D4, and `fsa1-model`'s parser is what
-makes the selector spelling, the rule order and the alphabetical declaration order canonical rather
-than a matter of taste (it refuses every other spelling as `non-canonical-presentation`).
+A stylesheet is a sequence of `@scope (<range>) { … }` blocks. The **prelude** names the block's
+scoping root in the tab's own absolute A1 coordinates, and the encoder states one root per SHEET —
+its used region, the bounding box of its occupancy — so a tab cut into several blocks still carries
+one prelude, and the root is wider than any one range file whenever it was.
+
+The block's **content** — which rules, which selectors, which declarations, which values — is
+derived from the fixture's own bytes against plan 01 §D2/§D3/§D4 read over that root, and
+`fsa1-model`'s parser is what makes the selector spelling, the rule order and the alphabetical
+declaration order canonical rather than a matter of taste (it refuses every other spelling as
+`non-canonical-presentation`).
 
 The block's **whitespace** is fixed by no contract — the parser accepts a rule on one line or five. The
 corpus freezes the form the repo's own hand-written examples already use, so the expectation is not a
 transcript of the writer's formatting choice:
 
-    @scope {
+    @scope (<range>) {
       <selector> { <property>: <value>; <property>: <value> }
     }
 
 Two-space indent, one rule per line, `; `-separated declarations, a space inside each brace, no
-trailing `;`.
+trailing `;`, one space between `@scope` and its parenthesized root, and a newline after the block.
 
 ## What grades it, and where each half runs
 
 | leg | runs under | asserts |
 |---|---|---|
-| `conformance/tests/presentation_scope.rs` | `cargo test --workspace` — no venv, no network | the frozen `@scope` and warnings; `check` accepts what `unpack` wrote; `unpack(pack(unpack(x))) == unpack(x)` |
+| `conformance/tests/presentation_scope.rs` | `cargo test --workspace` — no venv, no network | the frozen stylesheet and warnings; `check` accepts what `unpack` wrote; `unpack(pack(unpack(x))) == unpack(x)` |
 | `presentation_oracle.py` (via `run.sh`) | the CI `presentation-roundtrip` job | the same frozen expectation through the CLI, plus a **third-party reopen**: openpyxl must find the source's own look on the packed export |
 
 `scripts/gate.sh` does not run the Python leg (it needs a network `pip install`), so the Rust half is
@@ -157,8 +166,19 @@ than mechanism:
 
 ## Corpus history
 
-Every entry records a fixture ADDED or an expectation CORRECTED, and why. No expectation here has
-been corrected: the corrections column stays empty until a reading is shown to have been wrong.
+Every entry records a fixture ADDED, an expectation CORRECTED, or the whole corpus RE-DERIVED under a
+changed encoding, and why. No expectation here has been corrected: the corrections column stays empty
+until a reading is shown to have been wrong.
+
+- **All 15 scoped readings re-derived** — presentation moved out of the range file's tail into the
+  tab's `@presentation.css`, addressed in absolute A1 (plan 08). This is not a correction: no reading
+  was wrong. Fourteen of the fifteen re-derivations are the identity, because their tab holds ONE
+  range file and the sheet's used region is exactly that file's range, so the rules over the new root
+  are the rules over the old one, relocated. The fifteenth, `sparse_blocks_normal_font_arial_9`, is
+  the one tab holding TWO blocks: its root is now the used region A1:E60 rather than A1:E5 and
+  A56:E60 separately, so its two identical `td` rules re-derive to ONE over the whole rectangle. That
+  fixture is therefore also the only one whose reading could have gone wrong here, and it is derived
+  in full at the head of its own file.
 
 - **`column_and_row_default_style` added** — the read leg took a cell's style off `<c s=>` and nowhere
   else, so the two other places .xlsx states one — `<col style=>` and `<row s= customFormat=>`, which

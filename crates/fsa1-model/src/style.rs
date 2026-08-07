@@ -118,6 +118,15 @@ impl CellStyle {
         .collect()
     }
 
+    /// One block's match laid over what earlier blocks left, property by property: `over` wins every
+    /// property it declares and takes back none it does not. Routed through the declaration
+    /// vocabulary rather than field by field, so a property added later cannot miss the cascade.
+    pub fn layer(&mut self, over: &CellStyle) {
+        for declaration in over.declarations() {
+            self.apply(&declaration);
+        }
+    }
+
     /// Exhaustive by construction, so a property added later cannot reach a rule without landing here.
     fn apply(&mut self, declaration: &Declaration) {
         match declaration {
@@ -231,24 +240,23 @@ pub fn resolve(presentation: &Presentation, row: u32, col: u32) -> CellStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_file;
+    use crate::parse_stylesheet;
 
-    const GRID: &str = "1\t2\t3\n4\t5\t6\n7\t8\t9\n";
-    /// Four rows, so `2n` reaches TWO of them and stays periodic rather than folding to a literal.
-    const GRID4: &str = "1\t2\t3\n4\t5\t6\n7\t8\t9\na\tb\tc\n";
-
-    fn tall_presentation_of(block: &str) -> Presentation {
-        parse_file("A1:C4", &format!("{GRID4}{block}"))
-            .unwrap_or_else(|d| panic!("{block:?} should load: {:?}", d[0]))
-            .presentation
-            .expect("a presentation")
+    fn presentation_over(root: &str, rules: &str) -> Presentation {
+        let sheet = format!("@scope ({root}) {{\n{rules}\n}}\n");
+        parse_stylesheet("Sheet1/@presentation.css", &sheet)
+            .unwrap_or_else(|d| panic!("{sheet:?} should parse: {:?}", d[0]))
+            .remove(0)
+            .1
     }
 
-    fn presentation_of(block: &str) -> Presentation {
-        parse_file("A1:C3", &format!("{GRID}{block}"))
-            .unwrap_or_else(|d| panic!("{block:?} should load: {:?}", d[0]))
-            .presentation
-            .expect("a presentation")
+    /// Four rows, so `2n` reaches TWO of them and stays periodic rather than folding to a literal.
+    fn tall_presentation_of(rules: &str) -> Presentation {
+        presentation_over("A1:C4", rules)
+    }
+
+    fn presentation_of(rules: &str) -> Presentation {
+        presentation_over("A1:C3", rules)
     }
 
     /// The row-over-column cascade is CSS specificity and predates the periodic forms; widening the
@@ -256,7 +264,7 @@ mod tests {
     #[test]
     fn a_row_rule_still_outranks_a_column_rule() {
         let p = presentation_of(
-            "@scope {\n  tr:nth-child(2) td { color: #ff0000 }\n  td:last-child { color: #0000ff }\n}",
+            "  tr:nth-child(2) td { color: #ff0000 }\n  td:last-child { color: #0000ff }",
         );
         assert_eq!(resolve(&p, 2, 3).color, Some(Rgb { r: 255, g: 0, b: 0 }));
     }
@@ -266,8 +274,8 @@ mod tests {
     #[test]
     fn a_literal_index_wins_its_tie_with_the_periodic_it_overlaps() {
         let p = tall_presentation_of(
-            "@scope {\n  td { color: #000000 }\n  tr:nth-child(2n) td { color: #00ff00 }\n  \
-             tr:nth-child(2) td { color: #ff0000 }\n}",
+            "  td { color: #000000 }\n  tr:nth-child(2n) td { color: #00ff00 }\n  \
+             tr:nth-child(2) td { color: #ff0000 }",
         );
         assert_eq!(resolve(&p, 2, 1).color, Some(Rgb { r: 255, g: 0, b: 0 }));
         assert_eq!(resolve(&p, 3, 1).color, Some(Rgb { r: 0, g: 0, b: 0 }));
@@ -276,7 +284,7 @@ mod tests {
     /// The whole point of the form: one rule reaching every line it names, at any distance from it.
     #[test]
     fn a_periodic_rule_reaches_every_line_it_names() {
-        let p = tall_presentation_of("@scope {\n  tr:nth-child(2n) td { font-weight: bold }\n}");
+        let p = tall_presentation_of("  tr:nth-child(2n) td { font-weight: bold }");
         assert_eq!(resolve(&p, 2, 1).font_weight, Some(FontWeight::Bold));
         assert_eq!(resolve(&p, 4, 1).font_weight, Some(FontWeight::Bold));
         assert_eq!(resolve(&p, 1, 1).font_weight, None);
@@ -287,7 +295,7 @@ mod tests {
     /// a region is promised.
     #[test]
     fn a_bare_td_styles_every_cell_of_the_range() {
-        let p = presentation_of("@scope {\n  td { font-weight: bold }\n}");
+        let p = presentation_of("  td { font-weight: bold }");
         for row in 1..=3 {
             for col in 1..=3 {
                 assert_eq!(
@@ -310,7 +318,7 @@ mod tests {
              font-size: 11pt; font-style: italic; font-weight: bold; height: 22.5pt; \
              text-align: right; text-decoration: line-through; vertical-align: middle; \
              white-space: nowrap; width: 14.5ch";
-        let p = presentation_of(&format!("@scope {{\n  td {{ {DECLARATIONS} }}\n}}"));
+        let p = presentation_of(&format!("  td {{ {DECLARATIONS} }}"));
         let spelled: Vec<String> = resolve(&p, 1, 1)
             .declarations()
             .iter()
@@ -324,7 +332,7 @@ mod tests {
     #[test]
     fn a_row_rule_outranks_a_column_rule_where_both_match() {
         let p = presentation_of(
-            "@scope {\n  tr:nth-child(2) td { color: #3f0421 }\n  td:nth-child(2) { color: #ffffff }\n}",
+            "  tr:nth-child(2) td { color: #3f0421 }\n  td:nth-child(2) { color: #ffffff }",
         );
         let plum = Rgb {
             r: 0x3f,

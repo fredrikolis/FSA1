@@ -67,7 +67,7 @@
      ground, on the tinted band and inside a panel alike. */
   --l-fx : light-dark(oklch(0.485 0.100 163), oklch(0.785 0.150 163));  /* =formula        */
   --l-fmt: light-dark(oklch(0.505 0.115 62),  oklch(0.795 0.150 70));   /* ~display format */
-  --l-css: light-dark(oklch(0.500 0.145 255), oklch(0.775 0.115 250));  /* @scope { … }    */
+  --l-css: light-dark(oklch(0.500 0.145 255), oklch(0.775 0.115 250));  /* @scope (R) {…}  */
   /* the accent is the formula green and nothing else: a fourth
      colour for chrome would be the first decorative one */
   --accent     : var(--l-fx);
@@ -525,7 +525,7 @@ ul.claims .note{
 .rendered caption{ font-weight:600; padding:0 0 8px; text-align:left; color:#111; }
 .rendered th,.rendered td{ border:1px solid light-dark(#ddd,#C4C7CB); padding:3px 9px; white-space:pre; }
 .rendered th{ background:light-dark(#f0f0f0,#D6D8DC); font-weight:400; color:#444; }
-/* these two classes are emitted by fsa1-cli, one per @scope block in
+/* these two classes are emitted by fsa1-cli, one per distinct style in
    the workbook — the cells' own CSS, carried into the document. The
    literal hex is quoted verbatim in the anatomy block above, so it is
    the workbook's colour and not the page's, and it does not move when
@@ -707,7 +707,8 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
 <span class="p">$</span> fsa1-cli unpack Q3.xlsx
 <span class="p">$</span> cat Q3/Orders/D5
 <span class="fx">=FUNCTION</span><span class="fmt">~NUMBER-FORMAT</span>
-<span class="css">@scope {
+<span class="p">$</span> cat Q3/Orders/@presentation.css
+<span class="css">@scope (RANGE) {
   <span class="decl">CSS-STYLING</span>
 }</span></div>
       </div>
@@ -717,7 +718,8 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
 <span class="p">$</span> fsa1-cli unpack Q3.xlsx
 <span class="p">$</span> cat Q3/Orders/D5
 <span class="fx">=SUM(D2:D4)</span><span class="fmt">~$#,##0</span>
-<span class="css">@scope {
+<span class="p">$</span> cat Q3/Orders/@presentation.css
+<span class="css">@scope (D5) {
   <span class="decl">td { border-top: 2px solid #1b6b58 }</span>
 }</span></div>
       </div>

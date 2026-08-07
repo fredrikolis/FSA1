@@ -1,11 +1,13 @@
-// Concern: the @scope block — finding it, its selectors and rule order | Non-concern: what a declaration means, applying a style | IO: (content) -> (grid, Block); (Block) -> Presentation -> @scope text
+// Concern: the tab's stylesheet — its @scope blocks, their roots, selectors and rule order | Non-concern: what a declaration means, applying a style | IO: (stylesheet) <-> [(Rect, Presentation)]
 
 use crate::declaration::{Declaration, parse_declaration, syntax};
 use crate::diagnostic::{Code, Diagnostic, Loc};
+use crate::filename::parse_filename;
+use crate::overlap::Rect;
 use fsa1_ast::Shape;
 
-const OPEN: &str = "@scope {";
 const CLOSE: &str = "}";
+const PRELUDE: &str = "@scope (";
 
 /// The set of cells a rule selects, region-relative. SIX variants, not the ten selector forms: a
 /// LITERAL index's pseudo-class follows from the region's extent, so it is a spelling ([`spell`]),
@@ -32,89 +34,125 @@ pub struct Presentation {
     pub rules: Vec<Rule>,
 }
 
-/// One located presentation block: `body` holds the rules BETWEEN `@scope {` and its closing `}`, so
-/// only [`split`] can build one and [`parse_block`] never re-finds delimiters it would have to trust.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Block<'a> {
-    body: &'a str,
-    line: u32,
-}
-
-impl Block<'_> {
-    /// The 1-based file line the block opens on: where the grid stopped, for a caller diagnosing it.
-    pub(crate) fn line(&self) -> u32 {
-        self.line
-    }
-}
-
-/// A range file is its grid, optionally followed by a presentation block. The block is found from the
-/// END — the last non-empty line must be `}`, brace-matched backwards to a line that is exactly
-/// `@scope {` — so a CELL whose text is `@scope {` can never truncate the grid.
-pub(crate) fn split(content: &str) -> (&str, Option<Block<'_>>) {
-    let mut lines: Vec<(usize, &str)> = Vec::new();
-    let mut at = 0usize;
-    for line in content.split('\n') {
-        lines.push((at, line));
-        at += line.len() + 1;
-    }
-    let Some(close) = lines.iter().rposition(|(_, l)| !l.is_empty()) else {
-        return (content, None);
-    };
-    if lines[close].1 != CLOSE {
-        return (content, None);
-    }
-    let Some(open) = match_open(&lines, close) else {
-        return (content, None);
-    };
-    let (start, _) = lines[open];
-    let grid = if start == 0 {
-        ""
-    } else {
-        &content[..start - 1]
-    };
-    let block = Block {
-        body: &content[start + OPEN.len() + 1..lines[close].0],
-        line: (open + 1) as u32,
-    };
-    (grid, Some(block))
-}
-
-/// Returns the line whose `{` closes the outermost brace, and ONLY when that line is exactly
-/// `@scope {` — a grid holding stray braces therefore matches nothing and stays whole.
-fn match_open(lines: &[(usize, &str)], close: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    for (idx, (_, line)) in lines[..=close].iter().enumerate().rev() {
-        for ch in line.chars().rev() {
-            match ch {
-                '}' => depth += 1,
-                '{' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return (*line == OPEN).then_some(idx);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    None
-}
-
-/// `shape` is the region the block styles: every selector is region-relative, so which index is
-/// `:last-child` — and whether an axis carries a selector of its own at all — depends on it.
-pub(crate) fn parse_block(
+/// A stylesheet is a sequence of `@scope (<absolute A1 range>) { … }` blocks. Each prelude's root
+/// supplies the `Shape` its selectors are region-relative to, so which index is `:last-child` — and
+/// whether an axis carries a selector of its own at all — follows from the root rather than from any
+/// file. Roots may overlap and repeat; the blocks come back in the order written, which IS the cascade.
+pub fn parse_stylesheet(
     file: &str,
-    block: &Block<'_>,
-    shape: Shape,
-) -> Result<Presentation, Vec<Diagnostic>> {
-    let mut cur = Cursor::new(block.body, block.line + 1);
-    let mut placed: Vec<(u32, u32, Rule)> = Vec::new();
+    content: &str,
+) -> Result<Vec<(Rect, Presentation)>, Vec<Diagnostic>> {
+    let mut cur = Cursor::new(content, 1);
+    let mut blocks: Vec<(Rect, Presentation)> = Vec::new();
     let mut diags: Vec<Diagnostic> = Vec::new();
 
     loop {
         cur.skip_ws();
         if cur.peek().is_none() {
             break;
+        }
+        let (line, col) = (cur.line, cur.col);
+        let Some(root) = parse_prelude(file, &mut cur, &mut diags) else {
+            break;
+        };
+        let shape = shape_of(root);
+        let (placed, closed) = parse_rules(file, &mut cur, shape, &mut diags);
+        check_rule_order(file, &placed, shape, &mut diags);
+        if placed.is_empty() && diags.is_empty() {
+            diags.push(located(
+                file,
+                line,
+                col,
+                Code::PresentationSyntax,
+                "an empty presentation block is not written; delete it".to_string(),
+            ));
+        }
+        blocks.push((
+            root,
+            Presentation {
+                rules: placed.into_iter().map(|(_, _, r)| r).collect(),
+            },
+        ));
+        if !closed {
+            break;
+        }
+    }
+
+    if diags.is_empty() {
+        Ok(blocks)
+    } else {
+        Err(diags)
+    }
+}
+
+/// The root the `@scope (<range>) {` line opens the block over. `None` once it has earned a refusal,
+/// which ends the whole read: a prelude nobody could parse leaves no way to know what the block below
+/// it means, and reading its rules against a guessed shape would mint refusals the author never earned.
+fn parse_prelude(file: &str, cur: &mut Cursor<'_>, diags: &mut Vec<Diagnostic>) -> Option<Rect> {
+    let (line, col) = (cur.line, cur.col);
+    let head = cur.take_until(&['{', '}', ';']).trim_end();
+    let mut refuse = |code, message| {
+        diags.push(located(file, line, col, code, message));
+        None::<Rect>
+    };
+    if cur.peek() != Some('{') {
+        return refuse(
+            Code::PresentationSyntax,
+            format!("a stylesheet holds `@scope (<range>) {{ ... }}` blocks; found {head:?}"),
+        );
+    }
+    cur.bump();
+    let Some(range) = head.strip_prefix(PRELUDE).and_then(|r| r.strip_suffix(')')) else {
+        return refuse(
+            Code::PresentationSyntax,
+            format!("a block opens `@scope (<range>) {{`; found {head:?}"),
+        );
+    };
+    // The A1 reader a FILENAME goes through, so a root and a range file are read by one grammar: `A:A` and a degenerate `A1:A1` are refused here for the reasons they are refused there.
+    let root = match parse_filename(range) {
+        Ok(parsed) => parsed.region,
+        Err(d) => return refuse(d.code, d.message),
+    };
+    if range != root.label() {
+        return refuse(
+            Code::NonCanonicalPresentation,
+            format!(
+                "non-canonical scoping root {range:?}: write `{}`",
+                root.label()
+            ),
+        );
+    }
+    Some(root)
+}
+
+/// The rules between a prelude and its closing `}`, and whether that `}` was reached. Recovery is per
+/// rule while the block's shape still holds; a rule that is not `<selector> { … }` ends the read,
+/// since nothing after it can be located against a block whose extent is no longer known.
+fn parse_rules(
+    file: &str,
+    cur: &mut Cursor<'_>,
+    shape: Shape,
+    diags: &mut Vec<Diagnostic>,
+) -> (Vec<(u32, u32, Rule)>, bool) {
+    let mut placed: Vec<(u32, u32, Rule)> = Vec::new();
+    loop {
+        cur.skip_ws();
+        match cur.peek() {
+            None => {
+                diags.push(located(
+                    file,
+                    cur.line,
+                    cur.col,
+                    Code::PresentationSyntax,
+                    "the block is never closed; a block ends with `}`".to_string(),
+                ));
+                return (placed, false);
+            }
+            Some('}') => {
+                cur.bump();
+                return (placed, true);
+            }
+            _ => {}
         }
         let (line, col) = (cur.line, cur.col);
         let selector = cur.take_until(&['{', '}', ';']).trim_end();
@@ -126,12 +164,12 @@ pub(crate) fn parse_block(
                 Code::PresentationSyntax,
                 format!("a rule is `<selector> {{ <declarations> }}`; found {selector:?}"),
             ));
-            break;
+            return (placed, false);
         }
         cur.bump();
-        let target = resolve_target(file, selector, line, col, shape, &mut diags);
+        let target = resolve_target(file, selector, line, col, shape, diags);
         let faults_before = diags.len();
-        let declarations = parse_declarations(file, &mut cur, target, shape, &mut diags);
+        let declarations = parse_declarations(file, cur, target, shape, diags);
         let Some(target) = target else { continue };
         if !declarations.is_empty() {
             placed.push((
@@ -155,31 +193,20 @@ pub(crate) fn parse_block(
             ));
         }
     }
-
-    check_rule_order(file, &placed, shape, &mut diags);
-    if placed.is_empty() && diags.is_empty() {
-        diags.push(located(
-            file,
-            block.line,
-            1,
-            Code::PresentationSyntax,
-            "an empty presentation block is not written; delete it".to_string(),
-        ));
-    }
-    if diags.is_empty() {
-        Ok(Presentation {
-            rules: placed.into_iter().map(|(_, _, r)| r).collect(),
-        })
-    } else {
-        Err(diags)
-    }
 }
 
-/// [`parse_block`] read backward: the whole `@scope` block a presentation is written as, over the
-/// region `shape` — which decides both which pseudo-class an index takes and which axis carries a
-/// selector at all. The rules must already ascend by [`Target`] with each rule's declarations
-/// alphabetical, the one order this parses back from; a writer holding no rule writes NO block.
-pub fn spell_block(presentation: &Presentation, shape: Shape) -> String {
+/// [`parse_stylesheet`] read backward. Each block's rules must already ascend by [`Target`] with each
+/// rule's declarations alphabetical, the one order this parses back from; a root holding no rule
+/// writes NO block, and a tab with no block writes no stylesheet at all.
+pub fn spell_stylesheet(blocks: &[(Rect, Presentation)]) -> String {
+    blocks
+        .iter()
+        .map(|(root, presentation)| spell_block(*root, presentation))
+        .collect()
+}
+
+fn spell_block(root: Rect, presentation: &Presentation) -> String {
+    let shape = shape_of(root);
     let rules: Vec<String> = presentation
         .rules
         .iter()
@@ -208,7 +235,19 @@ pub fn spell_block(presentation: &Presentation, shape: Shape) -> String {
                 .all(|w| w[0].target < w[1].target),
         "a written presentation holds rules, ascending by target",
     );
-    format!("{OPEN}\n{}\n{CLOSE}", rules.join("\n"))
+    format!(
+        "{PRELUDE}{}) {{\n{}\n{CLOSE}\n",
+        root.label(),
+        rules.join("\n")
+    )
+}
+
+/// The extent a root's selectors count in: its own, the filename no longer supplying one.
+fn shape_of(root: Rect) -> Shape {
+    Shape {
+        rows: root.max_row - root.min_row + 1,
+        cols: root.max_col - root.min_col + 1,
+    }
 }
 
 /// `None` once the selector has earned a refusal of its own, which is also what keeps a rule from
@@ -688,6 +727,9 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
+    /// The retired form's open line, which these helpers rewrite into a prelude.
+    const OPEN: &str = "@scope {";
+
     use super::*;
     use crate::declaration::{
         BORDER_LINES, Border, BorderLine, Chars, Edge, FontStyle, FontWeight, Points, Rgb,
@@ -695,14 +737,31 @@ mod tests {
     };
 
     const REGION: Shape = Shape { rows: 4, cols: 3 };
+    const SHEET: &str = "Sheet1/@presentation.css";
 
-    fn block_of(content: &str) -> Block<'_> {
-        let (_, block) = split(content);
-        block.unwrap_or_else(|| panic!("{content:?} should carry a block"))
+    /// The root a `shape` spells when it is anchored at A1 — the one a test's block is read under.
+    fn root_of(shape: Shape) -> Rect {
+        Rect {
+            min_col: 0,
+            min_row: 0,
+            max_col: shape.cols - 1,
+            max_row: shape.rows - 1,
+        }
+    }
+
+    /// The stylesheet a test's block text is read as. A case below states the block's BODY under the
+    /// bare open the format retired, plus the shape it is read at; which root spells that shape is
+    /// mechanical, so the prelude is substituted here rather than restated in every literal. Anything
+    /// before the open is dropped: a stylesheet holds blocks and no grid.
+    fn stylesheet(content: &str, shape: Shape) -> String {
+        let block = &content[content
+            .find(OPEN)
+            .expect("a case opens its block `@scope {`")..];
+        block.replacen(OPEN, &format!("{PRELUDE}{}) {{", root_of(shape).label()), 1) + "\n"
     }
 
     fn parse(content: &str, shape: Shape) -> Result<Presentation, Vec<Diagnostic>> {
-        parse_block("A1:C4", &block_of(content), shape)
+        parse_stylesheet(SHEET, &stylesheet(content, shape)).map(|mut blocks| blocks.remove(0).1)
     }
 
     fn rules(content: &str) -> Vec<Rule> {
@@ -729,56 +788,11 @@ mod tests {
     }
 
     #[test]
-    fn a_file_with_no_trailing_brace_is_all_grid() {
-        let content = "Rent\t1500\n@scope {\tx\ty\nSalaries\t1600";
-        let (grid, block) = split(content);
-        assert_eq!(grid, content);
-        assert_eq!(block, None);
-    }
-
-    #[test]
-    fn a_text_cell_spelling_the_open_line_never_truncates_the_grid() {
-        // Anchored to the file's LAST line, so an interior `@scope {` cell is inert.
-        let content = "@scope {\n1\n2";
-        let (grid, block) = split(content);
-        assert_eq!(grid, content);
-        assert_eq!(block, None);
-    }
-
-    #[test]
-    fn stray_braces_in_grid_text_match_nothing() {
-        for content in ["a\nx { y\n}", "a\n}", "{\n}", "a\n}\n}"] {
-            let (grid, block) = split(content);
-            assert_eq!(grid, content, "{content:?} must stay whole");
-            assert_eq!(block, None, "{content:?} must find no block");
-        }
-    }
-
-    #[test]
-    fn the_block_is_split_off_and_the_grid_keeps_its_line_numbers() {
-        let content = "1\t2\n3\t4\n@scope {\n  td { color: #3f0421 }\n}";
-        let (grid, block) = split(content);
-        assert_eq!(grid, "1\t2\n3\t4");
-        let block = block.expect("a block");
-        assert_eq!(block.line, 3);
-        assert_eq!(block.body, "  td { color: #3f0421 }\n");
-    }
-
-    #[test]
-    fn blank_lines_after_the_closing_brace_do_not_hide_the_block() {
-        let content = "1\n@scope {\n  td { color: #3f0421 }\n}\n\n";
-        let (grid, block) = split(content);
-        assert_eq!(grid, "1");
-        assert_eq!(block.expect("a block").line, 2);
-    }
-
-    #[test]
-    fn a_multi_line_rule_body_is_still_brace_matched_to_the_open() {
-        let content = "1\n@scope {\n  td {\n    color: #3f0421\n  }\n}";
-        let (grid, block) = split(content);
-        assert_eq!(grid, "1");
-        assert_eq!(block.expect("a block").line, 2);
-        assert_eq!(rules(content)[0].target, Target::All);
+    fn a_multi_line_rule_body_reads_as_one_rule() {
+        assert_eq!(
+            rules("@scope {\n  td {\n    color: #3f0421\n  }\n}")[0].target,
+            Target::All,
+        );
     }
 
     #[test]
@@ -1273,7 +1287,7 @@ mod tests {
                 "write `14.5ch`",
                 "@scope {\n  td { width: 14.5ch }\n}",
             ),
-            // An axis may measure zero, so `-0ch` is in range and spells back to itself; left canonical it would be a second zero that `geometry-conflict` reads as disagreeing with the first.
+            // An axis may measure zero, so `-0ch` is in range and spells back to itself; left canonical it would be a second spelling of the one size zero.
             (
                 "@scope {\n  td { width: -0ch }\n}",
                 "write `0ch`",
@@ -1320,15 +1334,15 @@ mod tests {
         }
     }
 
-    /// The two directions over one text: what [`spell_block`] writes is what [`parse_block`] reads,
-    /// including which axis of extent 1 carries no selector.
+    /// The two directions over one text: what [`spell_stylesheet`] writes is what [`parse_stylesheet`]
+    /// reads, prelude included, and including which axis of extent 1 carries no selector.
     #[test]
-    fn every_canonical_block_spells_back_to_the_text_it_was_read_from() {
+    fn every_canonical_stylesheet_spells_back_to_the_text_it_was_read_from() {
         for (shape, content) in [
-            (REGION, "1\n@scope {\n  td { font-size: 11pt }\n}"),
+            (REGION, "@scope {\n  td { font-size: 11pt }\n}"),
             (
                 REGION,
-                "1\n@scope {\n  td { color: #3f0421; font-weight: bold }\n  \
+                "@scope {\n  td { color: #3f0421; font-weight: bold }\n  \
                  tr:first-child td { font-size: 14pt }\n  tr:nth-child(2) td { height: 22.5pt }\n  \
                  tr:last-child td { font-style: italic }\n  td:first-child { width: 14.5ch }\n  \
                  td:last-child { text-align: right }\n  \
@@ -1336,22 +1350,119 @@ mod tests {
             ),
             (
                 Shape { rows: 1, cols: 3 },
-                "1\n@scope {\n  td { white-space: nowrap }\n  td:nth-child(2) { width: 4ch }\n}",
+                "@scope {\n  td { white-space: nowrap }\n  td:nth-child(2) { width: 4ch }\n}",
             ),
             (
                 Shape { rows: 1, cols: 1 },
-                "1\n@scope {\n  td { border-bottom: 1px solid #3f0421; height: 15pt; width: 9ch }\n}",
+                "@scope {\n  td { border-bottom: 1px solid #3f0421; height: 15pt; width: 9ch }\n}",
             ),
         ] {
+            let text = stylesheet(content, shape);
             let parsed =
-                parse(content, shape).unwrap_or_else(|d| panic!("{content:?}: {:?}", d[0]));
-            let (grid, _) = split(content);
+                parse_stylesheet(SHEET, &text).unwrap_or_else(|d| panic!("{text:?}: {:?}", d[0]));
             assert_eq!(
-                format!("{grid}\n{}", spell_block(&parsed, shape)),
-                content,
-                "{content:?} did not spell back to itself",
+                spell_stylesheet(&parsed),
+                text,
+                "{text:?} did not spell back to itself",
             );
         }
+    }
+
+    /// A stylesheet is a SEQUENCE, and every root form is a legal prelude: the two spellings a closed
+    /// range takes, a rectangle no file need cover, and two blocks over one coordinate.
+    #[test]
+    fn a_stylesheet_reads_every_block_it_holds_in_the_order_written() {
+        let text = "@scope (A1) {\n  td { font-weight: bold }\n}\n\
+                    @scope (E1:G5) {\n  td { background-color: #00ffff }\n}\n\
+                    @scope (A1:C3) {\n  td { color: #3f0421 }\n}\n";
+        let blocks = parse_stylesheet(SHEET, text).expect("three blocks");
+        assert_eq!(
+            blocks.iter().map(|(r, _)| r.label()).collect::<Vec<_>>(),
+            vec!["A1", "E1:G5", "A1:C3"],
+        );
+        assert_eq!(blocks[1].1.rules.len(), 1);
+        assert_eq!(spell_stylesheet(&blocks), text, "and it spells back whole");
+    }
+
+    /// The root is read by the FILENAME grammar, so a root and a range file are refused for the same
+    /// reasons — and each refusal lands on the prelude's own line rather than on some file.
+    #[test]
+    fn a_prelude_is_refused_located_for_every_root_a_range_file_would_be() {
+        for (text, code) in [
+            (
+                "@scope (A:A) {\n  td { color: #3f0421 }\n}\n",
+                Code::WholeColumnRowReserved,
+            ),
+            (
+                "@scope (3:3) {\n  td { color: #3f0421 }\n}\n",
+                Code::WholeColumnRowReserved,
+            ),
+            (
+                "@scope (A1:A1) {\n  td { color: #3f0421 }\n}\n",
+                Code::DegenerateRange,
+            ),
+            (
+                "@scope (a1:c3) {\n  td { color: #3f0421 }\n}\n",
+                Code::LowercaseColumn,
+            ),
+            (
+                "@scope (C3:A1) {\n  td { color: #3f0421 }\n}\n",
+                Code::NonCanonicalRange,
+            ),
+            (
+                "@scope (A1.css) {\n  td { color: #3f0421 }\n}\n",
+                Code::MalformedFilename,
+            ),
+            // The one spelling: `-` is a FILENAME's separator, and a prelude is content.
+            (
+                "@scope (A1-C3) {\n  td { color: #3f0421 }\n}\n",
+                Code::NonCanonicalPresentation,
+            ),
+            (
+                "@scope A1:C3 {\n  td { color: #3f0421 }\n}\n",
+                Code::PresentationSyntax,
+            ),
+            (
+                "@scope(A1:C3) {\n  td { color: #3f0421 }\n}\n",
+                Code::PresentationSyntax,
+            ),
+            ("@scope (A1:C3)\n", Code::PresentationSyntax),
+            ("td { color: #3f0421 }\n", Code::PresentationSyntax),
+        ] {
+            let d = parse_stylesheet(SHEET, text).expect_err(text).remove(0);
+            assert_eq!(d.code, code, "{text:?} -> {}", d.message);
+            assert!(
+                matches!(d.loc, Loc::Body { line: 1, .. }),
+                "{text:?}: {:?}",
+                d.loc
+            );
+        }
+    }
+
+    /// A root's own extent is what the selectors below it count in, the filename supplying none.
+    #[test]
+    fn a_selector_index_is_bounded_by_the_root_and_nothing_else() {
+        let ok = "@scope (C5:D9) {\n  tr:last-child td { height: 20pt }\n  td:last-child { width: 9ch }\n}\n";
+        assert!(parse_stylesheet(SHEET, ok).is_ok());
+        let d = parse_stylesheet(
+            SHEET,
+            "@scope (C5:D9) {\n  td:nth-child(3) { width: 9ch }\n}\n",
+        )
+        .expect_err("column 3 is outside a two-column root")
+        .remove(0);
+        assert_eq!(d.code, Code::PresentationSelector);
+        assert!(d.message.contains("column 3 is outside"), "{}", d.message);
+    }
+
+    /// A block that never closes ends the read rather than running the next prelude's rules against
+    /// its shape, and it says so at the point the text ran out.
+    #[test]
+    fn an_unclosed_block_is_refused_where_it_ran_out() {
+        let d = parse_stylesheet(SHEET, "@scope (A1:C3) {\n  td { color: #3f0421 }\n")
+            .expect_err("never closed")
+            .remove(0);
+        assert_eq!(d.code, Code::PresentationSyntax);
+        assert!(d.message.contains("never closed"), "{}", d.message);
     }
 
     #[test]
@@ -1544,17 +1655,6 @@ mod tests {
     }
 
     #[test]
-    fn a_tail_whose_braces_do_not_balance_is_no_block_at_all() {
-        // The two facts must AGREE: an unbalanced tail matches nothing, so the file is judged as a grid and its refusal comes from there.
-        for content in [
-            "@scope {\n  td color: #3f0421 }\n}",
-            "@scope {\n  td { color: #3f0421\n}",
-        ] {
-            assert_eq!(split(content).1, None, "{content:?}");
-        }
-    }
-
-    #[test]
     fn every_fault_in_a_rule_is_reported_at_once() {
         let d = parse(
             "@scope {\n  td { color: red; font-size: 9px; box-shadow: none }\n}",
@@ -1659,22 +1759,28 @@ mod tests {
     }
 
     #[test]
-    fn hostile_block_bodies_never_panic() {
-        for body in [
+    fn hostile_stylesheets_never_panic() {
+        for text in [
             "",
             "{{{{\n",
             "}}}}\n",
-            "  td { color: #\n",
-            "  td { color: #3f0421\n",
-            "  \u{1F600} { color: #3f0421 }\n",
-            "  td:nth-child(99999999999) { color: #3f0421 }\n",
-            "  td:nth-child(-1) { color: #3f0421 }\n",
-            "  td { font-family: \u{4e2d}\u{6587} }\n",
-            &format!("  td {{ font-family: {} }}\n", "x".repeat(500)),
-            &"  td { color: #3f0421 }\n".repeat(200),
+            "@scope\n",
+            "@scope (\n",
+            "@scope () {\n}\n",
+            "@scope (A1:C4) {\n  td { color: #\n",
+            "@scope (\u{1F600}) {\n  td { color: #3f0421 }\n}\n",
+            "@scope (A1:C4) {\n  \u{1F600} { color: #3f0421 }\n}\n",
+            "@scope (A99999999999) {\n  td { color: #3f0421 }\n}\n",
+            "@scope (A1:C4) {\n  td:nth-child(99999999999) { color: #3f0421 }\n}\n",
+            "@scope (A1:C4) {\n  td:nth-child(-1) { color: #3f0421 }\n}\n",
+            "@scope (A1:C4) {\n  td { font-family: \u{4e2d}\u{6587} }\n}\n",
+            &format!(
+                "@scope (A1:C4) {{\n  td {{ font-family: {} }}\n}}\n",
+                "x".repeat(500)
+            ),
+            &"@scope (A1:C4) {\n  td { color: #3f0421 }\n}\n".repeat(200),
         ] {
-            let block = Block { body, line: 1 };
-            let _ = parse_block("A1:C4", &block, REGION);
+            let _ = parse_stylesheet(SHEET, text);
         }
     }
 }

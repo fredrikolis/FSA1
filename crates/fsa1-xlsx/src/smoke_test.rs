@@ -116,11 +116,14 @@ fn excels_future_function_prefix_survives_the_pack_leg_verbatim() {
 fn a_styled_workbook_reopens_with_its_values_intact() {
     let wb = Workbook::from_tabs(&[(
         "Sheet1",
-        &[(
-            "A1:A2",
-            "Item\n42\n@scope {\n  td { background-color: #ffe0b2; border-top: 1px solid #3f0421; \
-             color: #3f0421; font-weight: bold; height: 22.5pt; text-align: center; width: 14.5ch }\n}",
-        )],
+        &[
+            ("A1:A2", "Item\n42"),
+            (
+                "@presentation.css",
+                "@scope (A1:A2) {\n  td { background-color: #ffe0b2; border-top: 1px solid #3f0421; \
+                 color: #3f0421; font-weight: bold; height: 22.5pt; text-align: center; width: 14.5ch }\n}\n",
+            ),
+        ],
     )])
     .expect("the styled workbook loads cleanly");
     let dest = temp_xlsx("styled");

@@ -36,11 +36,15 @@ fn no_font_family_byte_can_swallow_a_later_cells_rule() {
         "a\\65 vil",   // an escape that could re-form one of the above
     ] {
         let html = doc(&[
+            ("A1", "x"),
+            ("A2", "y"),
             (
-                "A1",
-                &format!("x\n@scope {{\n  td {{ font-family: {hostile} }}\n}}"),
+                "@presentation.css",
+                &format!(
+                    "@scope (A1) {{\n  td {{ font-family: {hostile} }}\n}}\n\
+                     @scope (A2) {{\n  td {{ background-color: #ff0000 }}\n}}\n"
+                ),
             ),
-            ("A2", "y\n@scope {\n  td { background-color: #ff0000 }\n}"),
         ]);
         assert_eq!(
             html.matches("</style>").count(),
@@ -78,10 +82,13 @@ fn an_embedded_newline_and_padding_survive_the_html_carrier() {
 /// rather than being dropped for want of a table-level carrier.
 #[test]
 fn an_axis_size_reaches_the_documents_css() {
-    let html = doc(&[(
-        "A1:B2",
-        "1\t2\n3\t4\n@scope {\n  td { height: 22.5pt; width: 14.5ch }\n}",
-    )]);
+    let html = doc(&[
+        ("A1:B2", "1\t2\n3\t4"),
+        (
+            "@presentation.css",
+            "@scope (A1:B2) {\n  td { height: 22.5pt; width: 14.5ch }\n}\n",
+        ),
+    ]);
     assert!(
         html.contains(".c0 { height: 22.5pt; width: 14.5ch }"),
         "the author's own sizes must reach the stylesheet:\n{html}"
@@ -91,7 +98,13 @@ fn an_axis_size_reaches_the_documents_css() {
 /// The output contract: the stylesheet is one rule per DISTINCT style, not one per cell.
 #[test]
 fn two_cells_with_the_same_declarations_share_one_class_and_one_rule() {
-    let html = doc(&[("A1:B1", "1\t2\n@scope {\n  td { font-weight: bold }\n}")]);
+    let html = doc(&[
+        ("A1:B1", "1\t2"),
+        (
+            "@presentation.css",
+            "@scope (A1:B1) {\n  td { font-weight: bold }\n}\n",
+        ),
+    ]);
     assert_eq!(
         html.matches("<td class=\"c0\">").count(),
         2,

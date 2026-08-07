@@ -1,11 +1,13 @@
 # formatted_column.xlsx -- FROZEN EXPECTATION.
 # A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
 # Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+file: Ledger/@presentation.css
+|@scope (A1:B4) {
+|  td:last-child { font-style: italic; text-align: right }
+|}
+|
 file: Ledger/A1:B4
 |Opening	100
 |Fees	25
 |Interest	7
 |Closing	82
-|@scope {
-|  td:last-child { font-style: italic; text-align: right }
-|}

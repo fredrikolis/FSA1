@@ -1,4 +1,4 @@
-// Concern: encodes what a block's styles cross as, names what they cannot, and assigns each axis to one block | Non-concern: cutting the blocks | IO: (sheet, blocks) -> geometry, rules, warnings
+// Concern: encodes what a sheet's styles and axis sizes cross as, and names what they cannot | Non-concern: cutting the blocks | IO: (sheet, root) -> geometry, rules, warnings
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -26,28 +26,23 @@ pub fn key(block: &Block) -> (u32, u32, u32, u32) {
     )
 }
 
-/// The sheet axes ONE block sizes, block-relative and 1-based. Every file whose own range contains
-/// an axis would state the same number, so which of them states it is a canonicity question.
+/// The sheet axes the root sizes, root-relative and 1-based.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlockGeometry {
     pub widths: Vec<(u32, Chars)>,
     pub heights: Vec<(u32, Points)>,
 }
 
-/// Hands each authored width and height to the one block that will write it, and names the axes no
-/// block can — an axis lying outside the sheet's whole occupancy. `blocks` come in canonical order,
-/// which is the tie-break when two of them carry equally much of the axis. The unowned axes go to
-/// [`unowned`] whole: a height over a row range no block reaches is ONE authored fact, not one a row.
-pub fn assign_geometry(
+/// Spells each authored width and height as a declaration the root can carry, and names the two ways
+/// one fails to cross: a number no `width` or `height` can state, and an axis the root does not span.
+/// The unowned axes go to [`unowned`] whole, a height over a row range the root never reaches being
+/// ONE authored fact rather than one a row.
+pub fn geometry(
     sheet: &SheetSource,
-    blocks: &[Block],
+    root: Option<Block>,
     warnings: &mut Vec<UnpackWarning>,
-) -> Vec<BlockGeometry> {
-    debug_assert!(
-        blocks.windows(2).all(|w| key(&w[0]) < key(&w[1])),
-        "assign_geometry breaks its ties by the order it is given",
-    );
-    let mut out = vec![BlockGeometry::default(); blocks.len()];
+) -> BlockGeometry {
+    let mut out = BlockGeometry::default();
     let mut unowned_columns = Vec::new();
     for (&col, &width) in &sheet.col_widths {
         let Some(size) = Chars::column_width(width) else {
@@ -58,17 +53,8 @@ pub fn assign_geometry(
             });
             continue;
         };
-        let owner = owner(
-            blocks,
-            |b| holds(b.col, b.cols, col),
-            |b| {
-                (b.row..b.row + b.rows)
-                    .filter(|r| sheet.is_occupied(col, r - 1))
-                    .count()
-            },
-        );
-        match owner {
-            Some(i) => out[i].widths.push((col + 2 - blocks[i].col, size)),
+        match root.filter(|r| holds(r.col, r.cols, col)) {
+            Some(root) => out.widths.push((col + 2 - root.col, size)),
             None => unowned_columns.push((col, col)),
         }
     }
@@ -83,17 +69,8 @@ pub fn assign_geometry(
             });
             continue;
         };
-        let owner = owner(
-            blocks,
-            |b| holds(b.row, b.rows, row),
-            |b| {
-                (b.col..b.col + b.cols)
-                    .filter(|c| sheet.is_occupied(c - 1, row))
-                    .count()
-            },
-        );
-        match owner {
-            Some(i) => out[i].heights.push((row + 2 - blocks[i].row, size)),
+        match root.filter(|r| holds(r.row, r.rows, row)) {
+            Some(root) => out.heights.push((row + 2 - root.row, size)),
             None => unowned_rows.push((row, row)),
         }
     }
@@ -101,25 +78,13 @@ pub fn assign_geometry(
     out
 }
 
-/// The 0-based sheet axis `axis` against a block's 1-based anchor and extent.
+/// The 0-based sheet axis `axis` against a root's 1-based anchor and extent.
 fn holds(anchor: u32, extent: u32, axis: u32) -> bool {
     (anchor..anchor + extent).contains(&(axis + 1))
 }
 
-/// The containing block carrying most of the axis's occupancy; ties keep the earliest, `min_by_key`
-/// returning the first of equal keys where `max_by_key` returns the last.
-fn owner(
-    blocks: &[Block],
-    holds: impl Fn(&Block) -> bool,
-    carries: impl Fn(&Block) -> usize,
-) -> Option<usize> {
-    (0..blocks.len())
-        .filter(|&i| holds(&blocks[i]))
-        .min_by_key(|&i| std::cmp::Reverse(carries(&blocks[i])))
-}
-
-/// The rules a block's own cells and its owned axes earn. `None` where they earn none: an empty
-/// block is not written.
+/// The rules the root's cells and its axes earn. `None` where they earn none: a sheet with nothing to
+/// state writes no block, and a tab with no block writes no stylesheet.
 pub fn encode(sheet: &SheetSource, block: Block, geometry: &BlockGeometry) -> Option<Presentation> {
     let ctx = Ctx::of(&sheet.styles);
     let restored = fsa1_model::default_style().declarations();
@@ -874,11 +839,26 @@ mod tests {
         )
     }
 
+    /// The stylesheet ONE root's presentation is written as — prelude included, since the root is
+    /// what the selectors below it are counted in and an assertion that hid it could not say so.
+    fn spell(root: Block, presentation: &Presentation) -> String {
+        fsa1_model::spell_stylesheet(&[(root_rect(root), presentation.clone())])
+    }
+
+    fn root_rect(block: Block) -> fsa1_model::Rect {
+        fsa1_model::Rect {
+            min_col: block.col - 1,
+            min_row: block.row - 1,
+            max_col: block.col + block.cols - 2,
+            max_row: block.row + block.rows - 2,
+        }
+    }
+
     fn block_of(rows: u32, cols: u32, points: &[f64]) -> String {
         let (sheet, block) = sizes(rows, cols, points);
         let presentation = encode(&sheet, block, &BlockGeometry::default())
             .unwrap_or_else(|| panic!("{points:?} should earn a rule"));
-        fsa1_model::spell_block(&presentation, fsa1_ast::Shape { rows, cols })
+        spell(block, &presentation)
     }
 
     /// One property over one block, resolved All -> Col -> Row -> Cell: the modal value carries the
@@ -892,7 +872,7 @@ mod tests {
                 3,
                 &[14.0, 11.0, 11.0, 14.0, 11.0, 11.0, 14.0, 11.0, 11.0]
             ),
-            "@scope {\n  td:first-child { font-size: 14pt }\n}",
+            "@scope (A1:C3) {\n  td:first-child { font-size: 14pt }\n}\n",
             "a uniform column against a modal that is the default costs ONE rule",
         );
         assert_eq!(
@@ -901,8 +881,8 @@ mod tests {
                 3,
                 &[14.0, 14.0, 14.0, 11.0, 11.0, 11.0, 12.0, 12.0, 12.0]
             ),
-            "@scope {\n  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n  \
-             tr:last-child td { font-size: 12pt }\n}",
+            "@scope (A1:C3) {\n  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n  \
+             tr:last-child td { font-size: 12pt }\n}\n",
             "the modal takes the tie by first appearance, and row 1 is already correct",
         );
         assert_eq!(
@@ -911,9 +891,9 @@ mod tests {
                 3,
                 &[14.0, 14.0, 14.0, 11.0, 11.0, 20.0, 11.0, 11.0, 20.0]
             ),
-            "@scope {\n  tr:first-child td { font-size: 14pt }\n  \
+            "@scope (A1:C3) {\n  tr:first-child td { font-size: 14pt }\n  \
              tr:nth-child(2) td:last-child { font-size: 20pt }\n  \
-             tr:last-child td:last-child { font-size: 20pt }\n}",
+             tr:last-child td:last-child { font-size: 20pt }\n}\n",
             "a uniform row, then a cell rule for each coordinate the cascade still leaves wrong",
         );
     }
@@ -936,8 +916,8 @@ mod tests {
         let presentation = encode(&sheet, CELL, &BlockGeometry::default())
             .expect("a Normal font unlike the format's default earns a rule");
         assert_eq!(
-            fsa1_model::spell_block(&presentation, fsa1_ast::Shape { rows: 1, cols: 1 }),
-            "@scope {\n  td { font-family: Arial; font-size: 9pt }\n}",
+            spell(CELL, &presentation),
+            "@scope (A1) {\n  td { font-family: Arial; font-size: 9pt }\n}\n",
             "the cell states no style of its own, so the Normal font is all it can be wearing",
         );
 
@@ -1072,41 +1052,27 @@ mod tests {
         );
     }
 
-    /// Every file whose own range contains the axis would state the same number, so the choice is
-    /// about canonicity: the one carrying most of the axis's occupancy states it, ties by file order.
+    /// One root per sheet, so an axis it spans is sized by it and an axis outside it by nothing:
+    /// the contest two containing blocks used to have has no second party left.
     #[test]
-    fn one_axis_is_sized_by_the_containing_block_that_carries_most_of_it() {
+    fn the_root_sizes_every_axis_it_spans_and_no_axis_it_does_not() {
         let (mut sheet, _) = sizes(10, 1, &[11.0; 10]);
-        sheet.cells = (0..10)
-            .map(|row| SourceCell {
-                value: match row {
-                    0..=2 | 9 => SourceValue::Number(1.0),
-                    _ => SourceValue::Blank,
-                },
-                style: None,
-            })
-            .collect();
         sheet.col_widths.insert(0, 12.0);
-        let block = |row, rows| Block {
+        sheet.row_heights.insert(4, 20.0);
+        let root = Block {
             col: 1,
-            row,
+            row: 1,
             cols: 1,
-            rows,
+            rows: 3,
         };
-
         let mut warnings = Vec::new();
-        let owned = assign_geometry(&sheet, &[block(1, 3), block(10, 1)], &mut warnings);
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(owned[0].widths, vec![(1, Chars(12.0))], "A1:A3 carries 3");
-        assert!(owned[1].widths.is_empty(), "A10 carries 1");
-
-        let tied = assign_geometry(&sheet, &[block(1, 1), block(2, 1)], &mut Vec::new());
+        let owned = geometry(&sheet, Some(root), &mut warnings);
+        assert_eq!(owned.widths, vec![(1, Chars(12.0))], "column A is spanned");
+        assert!(owned.heights.is_empty(), "row 5 is outside A1:A3");
         assert_eq!(
-            tied[0].widths,
-            vec![(1, Chars(12.0))],
-            "a tie keeps the first"
+            warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            vec!["row height for 5 on sheet S dropped: no range file covers row 5".to_string()],
         );
-        assert!(tied[1].widths.is_empty());
     }
 
     /// The collapse runs on BOTH axes off one function, so the column leg earns the same reading as
@@ -1115,7 +1081,7 @@ mod tests {
     fn a_banded_column_run_collapses_to_one_periodic_rule() {
         assert_eq!(
             block_of(1, 6, &[14.0, 11.0, 14.0, 11.0, 14.0, 11.0]),
-            "@scope {\n  td { font-size: 14pt }\n  td:nth-child(2n) { font-size: 11pt }\n}",
+            "@scope (A1:F1) {\n  td { font-size: 14pt }\n  td:nth-child(2n) { font-size: 11pt }\n}\n",
         );
     }
 
@@ -1125,8 +1091,8 @@ mod tests {
     fn two_alike_lines_stay_literal() {
         assert_eq!(
             block_of(1, 4, &[14.0, 11.0, 14.0, 11.0]),
-            "@scope {\n  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n  \
-             td:last-child { font-size: 11pt }\n}",
+            "@scope (A1:D1) {\n  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n  \
+             td:last-child { font-size: 11pt }\n}\n",
         );
     }
 
@@ -1142,9 +1108,9 @@ mod tests {
                 .map(|row| (row, Points(if row % 2 == 0 { 20.0 } else { 15.0 })))
                 .collect(),
         };
-        let spelled = fsa1_model::spell_block(
+        let spelled = spell(
+            block,
             &encode(&sheet, block, &geometry).expect("the heights earn rules"),
-            fsa1_ast::Shape { rows: 6, cols: 1 },
         );
         assert!(
             !spelled.contains("n)"),
@@ -1162,16 +1128,16 @@ mod tests {
     fn a_block_of_extent_one_spells_only_a_bare_td() {
         assert_eq!(
             block_of(1, 1, &[14.0]),
-            "@scope {\n  td { font-size: 14pt }\n}",
+            "@scope (A1) {\n  td { font-size: 14pt }\n}\n",
         );
         assert_eq!(
             block_of(1, 3, &[14.0, 11.0, 14.0]),
-            "@scope {\n  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n}",
+            "@scope (A1:C1) {\n  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n}\n",
             "one row spells columns, never cells",
         );
         assert_eq!(
             block_of(3, 1, &[14.0, 11.0, 14.0]),
-            "@scope {\n  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n}",
+            "@scope (A1:A3) {\n  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n}\n",
             "one column spells rows, never cells",
         );
     }
@@ -1182,32 +1148,34 @@ mod tests {
     #[test]
     fn a_block_sized_alike_on_every_axis_collapses_to_one_td_rule() {
         let (sheet, block) = sizes(2, 3, &[11.0; 6]);
-        let spell = |geometry: &BlockGeometry| {
-            let presentation = encode(&sheet, block, geometry).expect("a sized block earns a rule");
-            fsa1_model::spell_block(&presentation, fsa1_ast::Shape { rows: 2, cols: 3 })
+        let spelled = |geometry: &BlockGeometry| {
+            spell(
+                block,
+                &encode(&sheet, block, geometry).expect("a sized block earns a rule"),
+            )
         };
         assert_eq!(
-            spell(&BlockGeometry {
+            spelled(&BlockGeometry {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5)), (3, Chars(12.5))],
                 heights: vec![(1, Points(20.0)), (2, Points(20.0))],
             }),
-            "@scope {\n  td { height: 20pt; width: 12.5ch }\n}",
+            "@scope (A1:C2) {\n  td { height: 20pt; width: 12.5ch }\n}\n",
         );
         assert_eq!(
-            spell(&BlockGeometry {
+            spelled(&BlockGeometry {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5))],
                 heights: Vec::new(),
             }),
-            "@scope {\n  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n}",
+            "@scope (A1:C2) {\n  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n}\n",
             "column 3 is unsized, so no td may claim a width",
         );
         assert_eq!(
-            spell(&BlockGeometry {
+            spelled(&BlockGeometry {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5)), (3, Chars(9.0))],
                 heights: Vec::new(),
             }),
-            "@scope {\n  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n  \
-             td:last-child { width: 9ch }\n}",
+            "@scope (A1:C2) {\n  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n  \
+             td:last-child { width: 9ch }\n}\n",
             "the three do not agree, so none of them is modal",
         );
     }
@@ -1281,32 +1249,31 @@ mod tests {
         names
     }
 
-    /// The whole class B2 named, not its one instance: `check` must accept every `@scope` block the
-    /// write leg can emit, whatever the source states. Both directions read one vocabulary, so a value
-    /// the encoder admits is by construction one the parser accepts and re-reads identically — this
-    /// is the assertion that fails the moment a second copy of a range or a spelling appears.
+    /// The whole class B2 named, not its one instance: `check` must accept every stylesheet the write
+    /// leg can emit — its PRELUDE included — whatever the source states. Both directions read one
+    /// vocabulary, so this is the assertion that fails the moment a second copy of a range or a
+    /// spelling appears.
     #[test]
-    fn every_scope_block_the_encoder_can_emit_reparses_to_the_one_it_emitted() {
+    fn every_stylesheet_the_encoder_can_emit_reparses_to_the_one_it_emitted() {
         let reparses = |sheet: &SheetSource, geometry: &BlockGeometry, what: &str| {
             let Some(presentation) = encode(sheet, CELL, geometry) else {
                 return;
             };
-            let block =
-                fsa1_model::spell_block(&presentation, fsa1_ast::Shape { rows: 1, cols: 1 });
-            let parsed = fsa1_model::parse_file("A1", &format!("1\n{block}"))
-                .unwrap_or_else(|d| panic!("{what}: check refuses `{block}`: {d:?}"));
+            let text = spell(CELL, &presentation);
+            let parsed = fsa1_model::parse_stylesheet("S/@presentation.css", &text)
+                .unwrap_or_else(|d| panic!("{what}: check refuses `{text}`: {d:?}"));
             assert_eq!(
-                parsed.presentation.as_ref(),
-                Some(&presentation),
-                "{what}: `{block}` re-reads as a different presentation",
+                parsed,
+                vec![(root_rect(CELL), presentation)],
+                "{what}: `{text}` re-reads as a different stylesheet",
             );
         };
         for &n in ADVERSARIAL {
             let (mut sheet, _) = sizes(1, 1, &[n]);
             sheet.col_widths.insert(0, n);
             sheet.row_heights.insert(0, n);
-            let geometry = assign_geometry(&sheet, &[CELL], &mut Vec::new());
-            reparses(&sheet, &geometry[0], &format!("{n} on every measure"));
+            let geometry = geometry(&sheet, Some(CELL), &mut Vec::new());
+            reparses(&sheet, &geometry, &format!("{n} on every measure"));
         }
         for name in adversarial_families() {
             reparses(
@@ -1325,7 +1292,7 @@ mod tests {
         sheet.col_widths.insert(0, 300.0);
         sheet.row_heights.insert(0, 900.0);
         let mut warnings = Vec::new();
-        let geometry = assign_geometry(&sheet, &[CELL], &mut warnings);
+        let geometry = geometry(&sheet, Some(CELL), &mut warnings);
         assert_eq!(
             warnings,
             vec![
@@ -1341,7 +1308,7 @@ mod tests {
                 },
             ],
         );
-        assert_eq!(geometry[0], BlockGeometry::default(), "and nothing crossed");
+        assert_eq!(geometry, BlockGeometry::default(), "and nothing crossed");
     }
 
     fn losses(look: XlsxStyle) -> Vec<UnpackWarning> {

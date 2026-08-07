@@ -38,10 +38,10 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 
 ## FS — the workbook on disk
 
-- **FS1 · the filesystem is the workbook.** A workbook's content is exactly what its file tree holds — a tab per folder, and per file the A1 range it fills, or the name it declares, and in that same file the presentation of what it fills, and nothing besides — and enters only by an author writing that tree: fsa1-cli reads an existing workbook, derives a new file only where none exists, and never takes cell content from its own invocation.
+- **FS1 · the filesystem is the workbook.** A workbook's content is exactly what its file tree holds — a tab per folder, per file the A1 range it fills or the name it declares, per tab the presentation of its coordinates, and nothing besides — and enters only by an author writing that tree: fsa1-cli reads an existing workbook, derives a new file only where none exists, and never takes cell content from its own invocation.
 - **FS3 · tooling coexists with content.** A workbook reserves a named set of tree entries for tooling, and no cell's value derives from any of them.
 - **FS5 · every value exists at a coordinate some file declares.** (would violate FS1)
-- **FS6 · every coordinate is declared by at most one file.** (would violate FS1)
+- **FS6 · every coordinate takes its content from at most one file.** (would violate FS1)
 
 ## VAL — the value model
 
@@ -59,20 +59,22 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 > placeholder is deliberate: an encoding derived by reading the current implementation would be
 > cement, not a contract.
 
-- **Tree layout** — the workbook directory, a tab per folder, a file per range, and what nesting means.
+- **Tree layout** — the workbook directory, a tab per folder, a file per range, the tab's one
+  stylesheet, and what nesting means.
 - **Filename grammar** — the closed A1 range in canonical spelling (uppercase column, no leading-zero
-  row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, no whole-column `A:A`), and the
-  defined-name entry form.
+  row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, no whole-column `A:A`), the
+  defined-name entry form, and the tab's stylesheet entry.
 - **Cell encoding** — TSV; the file is its grid with no header or metadata line; first line is
   the first row; one field per coordinate; an empty field is Blank; the `\t` / `\n` / `\\` escapes.
-- **Presentation** — the trailing `@scope { … }` block, found from the file's end and confirmed
-  against the filename; the file's declared range as the scoping root, from which both a selector
-  index's region-relative basis and the extent of a bare `td` follow; those selectors, the
-  properties, and their one canonical spelling.
+- **Presentation** — the tab's stylesheet: a sequence of `@scope (<range>) { … }` blocks, each
+  prelude naming a closed A1 range in absolute coordinates as that block's scoping root, from which
+  both a selector index's region-relative basis and the extent of a bare `td` follow; those
+  selectors, the properties, their one canonical spelling, and the cascade between blocks — later
+  over earlier, property by property, whatever the roots overlap.
 - **In-cell content** — literal forms (number, `TRUE`/`FALSE`, the seven author-writable error
   spellings, `'`-prefixed text), the `=formula` form, and the trailing `~<code>` display-format marker.
 - **Coverage and overlap** — the grid fills its declared range exactly, or is a single `=formula`
-  whose array value does; every coordinate is declared by at most one file.
+  whose array value does; every coordinate takes its content from at most one file.
 - **Reserved entries** — the tree names reserved for tooling, which never contribute a cell value.
 - **Formula language** — the function set, and the Excel-compatibility claim with its declared
   divergences.

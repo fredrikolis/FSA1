@@ -1,11 +1,13 @@
 # total_row_top_border.xlsx -- FROZEN EXPECTATION.
 # A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
 # Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+file: Totals/@presentation.css
+|@scope (A1:B4) {
+|  tr:last-child td { border-top: 1px solid #000000; font-weight: bold }
+|}
+|
 file: Totals/A1:B4
 |Rent	1500
 |Power	210
 |Water	90
 |Total	1800
-|@scope {
-|  tr:last-child td { border-top: 1px solid #000000; font-weight: bold }
-|}

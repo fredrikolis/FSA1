@@ -9,7 +9,7 @@ use fsa1_model::{View, Workbook};
 use crate::stylesheet::Classes;
 
 /// Serialize `view` as one JavaScript-free document, each cell classed by the [`fsa1_model::CellStyle`]
-/// its `@scope` block resolves to in `workbook`. The tables are framed first: a class exists once the
+/// the tab's stylesheet resolves to in `workbook`. The tables are framed first: a class exists once the
 /// cell wearing it has been seen, so the stylesheet above them is complete and in document order.
 pub fn document(workbook: &Workbook, view: &View<'_>) -> String {
     let mut classes = Classes::default();

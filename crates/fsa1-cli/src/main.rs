@@ -804,7 +804,7 @@ COMMANDS:
            differ only in the output form. Default mode is COMBINED: a literal shows its value; a
            formula shows `<value> ← =<formula>` (value AND source in one glance). Narrow with --mode
            values (computed only) or --mode functions (authored source only). --format html carries the
-           SAME cells as one standalone HTML document on stdout, styled by each cell's @scope block.
+           SAME cells as one standalone HTML document on stdout, styled by the tab's stylesheet.
   check    Lint the workbook — overlap, dimension-mismatch, and cycle diagnostics — as an ASCII table
            pointing at the offending file(s). Exits non-zero if any error-severity diagnostic. Name a
            tab/region IN THE PATH (wb/Tab or wb/Tab/A1:B2) to report ONLY the diagnostics inside that
@@ -916,7 +916,7 @@ OUTPUT:
   mode). A multi-tab view names each tab above its grid.
   --format html emits ONE standalone, JavaScript-free HTML document on stdout instead (redirect it to a
   file): a <table> per in-scope tab with the same header row and gutter as <th>, carrying each cell's
-  @scope presentation as a class — one CSS rule per distinct style. Nothing else is written to stdout.
+  resolved presentation as a class — one CSS rule per distinct style. Nothing else is written to stdout.
 
 EXIT CODES:
   0   Success (grid drawn, incl. a region outside the used region — with a stderr note)
@@ -1161,7 +1161,7 @@ DESCRIPTION:
   extension — into an FSA1 workbook the format-blind engine renders and evaluates. Each sheet becomes
   a tab folder; each rectangular block the decomposition cuts becomes ONE grid file named by the closed
   A1 range it fills (a sheet with no content makes no file), and the appearance of its cells rides along
-  in that file's trailing @scope block. Cell values map to FSA1's value model (a date-typed cell becomes
+  in the tab's @presentation.css. Cell values map to FSA1's value model (a date-typed cell becomes
   its Excel serial); formulas are translated to FSA1's Excel-A1 grammar (an xlsx formula is already
   Excel-A1), and a formula FSA1 cannot parse is preserved verbatim and flagged as a located error at
   load (check reports it), not aborted. Refuses to overwrite a non-empty destination (never clobbers);

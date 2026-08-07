@@ -172,7 +172,7 @@ jobs:
   # provisions the .venv from the pinned requirements.txt (network for the one-time pip install), and
   # drives presentation_oracle.py, forwarding its exit code. This job is the leg where a THIRD-PARTY
   # reader (openpyxl) reopens the packed export and says whether the source's own look is on it; the
-  # frozen-@scope and `check`-accepts assertions (conformance/tests/presentation_scope.rs) run in the
+  # frozen-stylesheet and `check`-accepts assertions (conformance/tests/presentation_scope.rs) run in the
   # matrix `test` job on every OS, with no venv and no network.
   presentation-roundtrip:
     runs-on: ubuntu-latest

@@ -419,13 +419,13 @@ fn unpack_of_a_styled_ods_never_claims_nothing_lost_and_names_what_it_did_not_in
         err.contains("not inspected on this source, so not vouched for"),
         "{err}"
     );
-    let block = std::fs::read_to_string(
-        Path::new(&at(&fx, "wb"))
+    // No styling reader ran, so the tab states no presentation at all — not an empty stylesheet.
+    assert!(
+        !Path::new(&at(&fx, "wb"))
             .join("Styled")
-            .join(fsa1_model::range_file_name("A1:A2")),
-    )
-    .expect("the block file");
-    assert!(!block.contains("@scope"), "{block}");
+            .join(fsa1_model::PRESENTATION_ENTRY)
+            .exists()
+    );
 }
 
 #[test]

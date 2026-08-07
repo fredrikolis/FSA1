@@ -1,10 +1,11 @@
-// Concern: spells each block of a sheet as its own A1-named grid file | Non-concern: choosing the blocks, reading the source, writing to disk | IO: (&SheetSource + blocks) -> Vec<(name, content)>
+// Concern: spells a sheet's blocks as grid files and its presentation as one stylesheet | Non-concern: choosing the blocks, reading the source, writing to disk | IO: (sheet, blocks) -> [(name, body)]
 
-use fsa1_ast::Shape;
 use fsa1_ast::a1::format_cell;
 use fsa1_ast::{ErrKind, Value};
 use fsa1_model::format::lex_formatted_number;
-use fsa1_model::{Format, display_value, encode_field, lex_literal, spell_block};
+use fsa1_model::{
+    Format, PRESENTATION_ENTRY, Rect, display_value, encode_field, lex_literal, spell_stylesheet,
+};
 
 use crate::decompose::Block;
 use crate::resolve::Resolution;
@@ -13,9 +14,9 @@ use crate::source::{MergedRegion, SheetSource, SourceValue};
 use crate::translate::{strip_lead, translate_formula_ctx};
 use crate::warnings::UnpackWarning;
 
-/// One file per block, in the canonical file order `r0, c0, r1, c1` — which is also the tie-break
-/// deciding which of two files sizes a shared axis. A sheet with no occupancy has no block and so
-/// writes nothing at all.
+/// One grid file per block, in the canonical file order `r0, c0, r1, c1`, then the tab's stylesheet.
+/// A sheet with no occupancy has no block and so writes nothing at all; one whose look and geometry
+/// are both the format's own default writes its grids and no stylesheet.
 pub fn sheet_files(
     sheet: &SheetSource,
     blocks: &[Block],
@@ -32,22 +33,46 @@ pub fn sheet_files(
     scope_block::name_losses(sheet, warnings);
     let mut blocks = blocks.to_vec();
     blocks.sort_by_key(scope_block::key);
-    let geometry = scope_block::assign_geometry(sheet, &blocks, warnings);
-    let mut files = Vec::with_capacity(blocks.len());
-    for (block, geometry) in blocks.iter().zip(&geometry) {
-        let grid = block_grid(sheet, *block, res, warnings);
-        let presentation = scope_block::encode(sheet, *block, geometry);
-        let shape = Shape {
-            rows: block.rows,
-            cols: block.cols,
-        };
-        let content = match presentation {
-            Some(p) => format!("{grid}\n{}", spell_block(&p, shape)),
-            None => grid,
-        };
-        files.push((block_name(*block), content));
+    let mut files: Vec<(String, String)> = blocks
+        .iter()
+        .map(|block| (block_name(*block), block_grid(sheet, *block, res, warnings)))
+        .collect();
+    let root = used_region(&blocks);
+    let geometry = scope_block::geometry(sheet, root, warnings);
+    if let Some(root) = root
+        && let Some(presentation) = scope_block::encode(sheet, root, &geometry)
+    {
+        files.push((
+            PRESENTATION_ENTRY.to_string(),
+            spell_stylesheet(&[(root_rect(root), presentation)]),
+        ));
     }
     files
+}
+
+/// The sheet's whole occupancy as one rectangle — the root its presentation is stated over. Wider
+/// than any styled rect on purpose: a column may carry content and no style and still have an
+/// authored width, and only a root spanning it can say so.
+fn used_region(blocks: &[Block]) -> Option<Block> {
+    blocks.iter().copied().reduce(|acc, b| {
+        let (col, row) = (acc.col.min(b.col), acc.row.min(b.row));
+        Block {
+            col,
+            row,
+            cols: (acc.col + acc.cols).max(b.col + b.cols) - col,
+            rows: (acc.row + acc.rows).max(b.row + b.rows) - row,
+        }
+    })
+}
+
+/// A block's 1-based anchor and extent as the 0-based closed rectangle a scoping root is spelled from.
+fn root_rect(block: Block) -> Rect {
+    Rect {
+        min_col: block.col - 1,
+        min_row: block.row - 1,
+        max_col: block.col + block.cols - 2,
+        max_row: block.row + block.rows - 2,
+    }
 }
 
 /// The closed A1 range the block fills. A 1x1 block takes its BARE address: `A1:A1` is refused as a
@@ -822,9 +847,9 @@ mod tests {
             .collect()
     }
 
-    /// What the WRITTEN files say, read back through the real loader: the style in force at each
+    /// What the WRITTEN tree says, read back through the real loader: the style in force at each
     /// sheet coordinate, and the size each sheet axis is declared at. Sizes come out separately
-    /// because which file states one is the partition's business, and the cell it lands on with it.
+    /// because they are the AXIS's fact and resolve at every cell on it.
     #[allow(clippy::type_complexity)]
     fn readback(
         files: &[(String, String)],
@@ -833,41 +858,34 @@ mod tests {
         BTreeMap<u32, Chars>,
         BTreeMap<u32, Points>,
     ) {
+        let borrowed: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(n, c)| (n.as_str(), c.as_str()))
+            .collect();
+        let wb = Workbook::from_tabs(&[("Sheet1", &borrowed)])
+            .unwrap_or_else(|d| panic!("{files:?} must load: {d:?}"));
         let mut styles: BTreeMap<(u32, u32), CellStyle> = BTreeMap::new();
-        let mut widths: BTreeMap<u32, Chars> = BTreeMap::new();
-        let mut heights: BTreeMap<u32, Points> = BTreeMap::new();
-        for (name, content) in files {
-            let parsed = fsa1_model::parse_file(name, content)
-                .unwrap_or_else(|d| panic!("{name} must load: {d:?}"));
-            let region = parsed.region;
+        if let Some(region) = wb.used_region(0) {
             for row in region.min_row..=region.max_row {
                 for col in region.min_col..=region.max_col {
-                    // A file with no block wears the same appearance as one whose block declares nothing here.
-                    let mut style = match &parsed.presentation {
-                        Some(p) => fsa1_model::style::resolve(
-                            p,
-                            row - region.min_row + 1,
-                            col - region.min_col + 1,
-                        ),
-                        None => CellStyle::default(),
+                    let Some(mut style) = wb.cell_style(0, col, row) else {
+                        continue;
                     };
-                    // A size resolves at every cell of its axis, so it is compared as the axis's own fact.
                     (style.width, style.height) = (None, None);
                     styles.insert((col, row), style);
                 }
             }
-            let Some(presentation) = &parsed.presentation else {
-                continue;
-            };
-            for run in fsa1_model::declared_widths(region, presentation) {
-                for axis in run.start..=run.end {
-                    widths.insert(axis, run.size);
-                }
+        }
+        let mut widths: BTreeMap<u32, Chars> = BTreeMap::new();
+        for run in wb.column_widths(0) {
+            for axis in run.start..=run.end {
+                widths.insert(axis, run.size);
             }
-            for run in fsa1_model::declared_heights(region, presentation) {
-                for axis in run.start..=run.end {
-                    heights.insert(axis, run.size);
-                }
+        }
+        let mut heights: BTreeMap<u32, Points> = BTreeMap::new();
+        for run in wb.row_heights(0) {
+            for axis in run.start..=run.end {
+                heights.insert(axis, run.size);
             }
         }
         (styles, widths, heights)
@@ -954,12 +972,14 @@ mod tests {
         let written = files(&sheet, &mut Vec::new());
         assert_eq!(
             written,
-            vec![(
-                "A1:C3".to_string(),
-                "0\t1\t2\n3\t4\t5\n6\t7\t8\n@scope {\n  \
-                 td { font-family: Times New Roman; font-size: 14pt }\n}"
-                    .to_string()
-            )],
+            vec![
+                ("A1:C3".to_string(), "0\t1\t2\n3\t4\t5\n6\t7\t8".to_string()),
+                (
+                    "@presentation.css".to_string(),
+                    "@scope (A1:C3) {\n  td { font-family: Times New Roman; font-size: 14pt }\n}\n"
+                        .to_string()
+                ),
+            ],
             "one td rule, one declaration per property"
         );
         accepted(&written);
@@ -981,14 +1001,14 @@ mod tests {
         sheet.col_widths.insert(0, 14.5);
 
         let written = files(&sheet, &mut Vec::new());
-        assert_eq!(written.len(), 1, "{written:?}");
+        assert_eq!(written.len(), 2, "{written:?}");
         assert_eq!(written[0].0, "A1:D20");
-        assert!(
-            written[0]
-                .1
-                .ends_with("@scope {\n  td:first-child { width: 14.5ch }\n}"),
-            "{}",
-            written[0].1
+        assert_eq!(
+            written[1],
+            (
+                "@presentation.css".to_string(),
+                "@scope (A1:D20) {\n  td:first-child { width: 14.5ch }\n}\n".to_string()
+            ),
         );
         accepted(&written);
     }
@@ -1008,11 +1028,14 @@ mod tests {
         let written = files(&sheet, &mut Vec::new());
         assert_eq!(
             written,
-            vec![(
-                "A1:A2".to_string(),
-                "1\nx\n@scope {\n  td { width: 9ch }\n  tr:last-child td { height: 20pt }\n}"
-                    .to_string()
-            )],
+            vec![
+                ("A1:A2".to_string(), "1\nx".to_string()),
+                (
+                    "@presentation.css".to_string(),
+                    "@scope (A1:A2) {\n  td { width: 9ch }\n  tr:last-child td { height: 20pt }\n}\n"
+                        .to_string()
+                ),
+            ],
         );
         accepted(&written);
     }
