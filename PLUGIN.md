@@ -19,14 +19,20 @@ skills/fsa1/SKILL.md                 # tells Claude what fsa1-cli does and when 
 
 ```
 /plugin marketplace add fredrikolis/FSA1
-/plugin install fsa1@fsa1
+/plugin install fsa1@fredrikolis
 ```
 
-The marketplace and the plugin share the name `fsa1`: the repo carries ONE plugin and it is the repo
-root (`"source": "./"`). If the install summary says `Run /reload-plugins to activate.`, run that.
+The coordinate is `<plugin>@<marketplace>`: the plugin is `fsa1`, the marketplace is `fredrikolis`,
+and the repo carries ONE plugin which is the repo root (`"source": "./"`). If the install summary
+says `Run /reload-plugins to activate.`, run that.
 
 A version bump in `.claude-plugin/plugin.json` is what offers users an update — pushing commits
 without bumping it leaves `/plugin update` reporting they are already current.
+
+`v0.1.0` published this marketplace as `fsa1`, so anyone who added it then holds `fsa1@fsa1`. A
+marketplace has no `renames` migration the way a plugin does, so that coordinate cannot be forwarded:
+they remove the old marketplace and add it again. The plugin name `fsa1` has NOT changed and never
+will — a published plugin name cannot be renamed without breaking every install of it.
 
 `bin/` = the capability (any file here is callable as a bare command while the plugin is enabled).
 `skills/` = the instructions (PATH alone doesn't teach Claude *when* to run it).
@@ -84,7 +90,7 @@ by hand here; run the CLI check on a machine that has `claude` installed before 
 1. Make the GitHub repo **public** (closed-source is not accepted for the public catalog).
 2. Tag a release so the binaries get built and attached:
    ```bash
-   git tag v0.1.0 && git push origin v0.1.0
+   git tag vX.Y.Z && git push origin vX.Y.Z
    ```
    Confirm the five assets appear on the Release and that it is marked **Latest** (the launcher pulls
    `releases/latest/download/...`).

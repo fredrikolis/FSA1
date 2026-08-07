@@ -1,6 +1,6 @@
 {
-  "name": "fsa1",
-  "description": "Can load Excel files. Tabs are folders. Cells are files. A file-system based spreadsheet format designed for AI agents.",
+  "name": "fredrikolis",
+  "description": "Tools from fredrikolis. FSA1 turns Excel (.xlsx) and OpenDocument (.ods) spreadsheets into file trees an agent can grep, diff and edit.",
   "owner": {
     "name": "Fredrik",
     "url": "https://github.com/fredrikolis"
@@ -8,8 +8,7 @@
   "plugins": [
     {
       "name": "fsa1",
-      "source": "./",
-      "description": "Can load Excel files. Tabs are folders. Cells are files. A file-system based spreadsheet format designed for AI agents: unpack an Excel (.xlsx) or OpenDocument (.ods) spreadsheet into a file tree, then render, lint, evaluate and trace it \u2014 and pack it back into Excel."
+      "source": "./"
     }
   ]
 }

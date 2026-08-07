@@ -1,8 +1,8 @@
 {
   "name": "fsa1",
   "displayName": "FSA1",
-  "version": "0.1.0",
-  "description": "Can load Excel files. Tabs are folders. Cells are files. A file-system based spreadsheet format designed for AI agents: unpack an Excel (.xlsx) or OpenDocument (.ods) spreadsheet into a file tree, then render, lint, evaluate and trace it — and pack it back into Excel.",
+  "version": "0.1.1",
+  "description": "Work with Excel and OpenDocument spreadsheets as a file tree: tabs become folders, cells become files, so Claude can grep, diff and edit a workbook with ordinary tools. Unpack .xlsx or .ods, render, lint, evaluate and trace it, then pack it back to Excel.",
   "author": {
     "name": "Fredrik",
     "url": "https://github.com/fredrikolis"

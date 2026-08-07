@@ -19,7 +19,7 @@ As a Claude Code plugin:
 
 ```
 /plugin marketplace add fredrikolis/FSA1
-/plugin install fsa1@fsa1
+/plugin install fsa1@fredrikolis
 ```
 
 Or from source:
