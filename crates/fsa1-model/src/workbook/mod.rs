@@ -23,13 +23,16 @@ use fsa1_ast::{
 
 use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
+use crate::filename::parse_filename;
 use crate::geometry::{AxisRun, declared_heights, declared_widths};
 use crate::grid::{Cell as GridCell, Grid};
-use crate::names::{NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename};
+use crate::names::{
+    NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename, presentation_stem,
+};
 use crate::overlap::{Rect, detect_overlaps};
-use crate::presentation::{Presentation, parse_stylesheet};
+use crate::presentation::{Presentation, parse_rules};
 use crate::style::{CellStyle, resolve};
-use crate::{PRESENTATION_ENTRY, ParsedFile, parse_file, presentation_in_grid};
+use crate::{ParsedFile, parse_file, presentation_in_grid};
 
 use forge::ForgeStore;
 use plan::DepGraph;
@@ -78,8 +81,8 @@ struct LoadedFile {
 struct Tab {
     name: String,
     files: Vec<LoadedFile>,
-    /// The tab's stylesheet, in the order written, which IS the cascade: a coordinate several roots
-    /// cover wears them layered later-over-earlier. Roots overlap freely and answer to no file.
+    /// The tab's sidecars in CASCADE order — widest root first, ties by filename — so a coordinate
+    /// several roots cover wears them layered later-over-earlier and the narrowest one stands.
     blocks: Vec<(Rect, Presentation)>,
     single: HashMap<(u32, u32), usize>,
     spans: Vec<(Rect, usize)>,
@@ -115,15 +118,19 @@ impl Tab {
 /// `(sheet index, file index within the tab)` — what an eval-time refusal's file anchor is keyed by.
 type FileId = (u32, usize);
 
-/// One tab's tree as the reader classified it: its range files, and the text its stylesheet entry
-/// holds. Three entry kinds, and this is what says which of them each was.
+/// One tab's tree as the reader classified it: its range files, and its presentation sidecars as
+/// `(name, text)`. Three entry kinds, and this is what says which of them each was.
 struct TabInput {
     name: String,
     files: Vec<(String, String)>,
-    stylesheet: Option<String>,
+    sidecars: Vec<(String, String)>,
 }
 
-type TabParts = (Vec<(String, String)>, Vec<RawNameEntry>, Option<String>);
+type TabParts = (
+    Vec<(String, String)>,
+    Vec<RawNameEntry>,
+    Vec<(String, String)>,
+);
 
 /// `(sheet index, zero-based col, zero-based row)`. Every grid cell is a DISTINCT computation, so
 /// the graph and the caches are keyed per cell, never per file.
@@ -300,7 +307,7 @@ impl Workbook {
         let mut tabs: Vec<TabInput> = Vec::new();
         // Read here, where the filesystem is present: the pure `names` module never touches it.
         let mut raw_names: Vec<RawNameEntry> = Vec::new();
-        let mut prior: Vec<Diagnostic> = Vec::new();
+        let mut root_faults: Vec<Diagnostic> = Vec::new();
         let mut scratch = Vec::new();
         let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
         entries.sort_by_key(|e| e.file_name());
@@ -312,16 +319,16 @@ impl Workbook {
                 continue;
             }
             if ft.is_dir() {
-                let (files, names, stylesheet) = read_tab_dir(root, &entry_name, &entry.path())?;
+                let (files, names, sidecars) = read_tab_dir(root, &entry_name, &entry.path())?;
                 tabs.push(TabInput {
                     name: entry_name,
                     files,
-                    stylesheet,
+                    sidecars,
                 });
                 raw_names.extend(names);
-            } else if entry_name == PRESENTATION_ENTRY {
-                // A stylesheet styles COORDINATES, and a coordinate is a tab's; at the root it names none.
-                prior.push(presentation_in_grid(Loc::file(&entry_name)));
+            } else if presentation_stem(&entry_name).is_some() {
+                // A sidecar styles COORDINATES, and a coordinate is a tab's; at the root it names none.
+                root_faults.push(presentation_in_grid(Loc::file(&entry_name)));
             } else if let Some(name) = read_name_entry(
                 root,
                 NameScope::Workbook,
@@ -334,7 +341,10 @@ impl Workbook {
                 raw_names.push(name);
             }
         }
-        Ok(Workbook::from_dir_parts(tabs, raw_names, prior))
+        if !root_faults.is_empty() {
+            return Ok(Err(root_faults));
+        }
+        Ok(Workbook::from_dir_parts(tabs, raw_names))
     }
 
     /// An in-memory workbook has no symlinks, so a name here is always the ref-file representation.
@@ -343,11 +353,11 @@ impl Workbook {
         let mut raw_names = Vec::new();
         for (tab_name, files) in tabs {
             let mut cells = Vec::new();
-            let mut stylesheet = None;
+            let mut sidecars = Vec::new();
             for (fname, contents) in files {
-                // The stylesheet is classified FIRST, exactly as on disk: its name is a legal defined name, so a later arm would swallow it.
-                if fname == PRESENTATION_ENTRY {
-                    stylesheet = Some(contents);
+                // A sidecar is classified FIRST, exactly as on disk: its stem holds a range separator, so the cell arm would otherwise take it and its name would die as malformed.
+                if presentation_stem(&fname).is_some() {
+                    sidecars.push((fname, contents));
                 } else if is_cell_filename(&fname) {
                     cells.push((fname, contents));
                 } else {
@@ -361,27 +371,24 @@ impl Workbook {
             cell_tabs.push(TabInput {
                 name: tab_name,
                 files: cells,
-                stylesheet,
+                sidecars,
             });
         }
-        Workbook::from_dir_parts(cell_tabs, raw_names, Vec::new())
+        Workbook::from_dir_parts(cell_tabs, raw_names)
     }
 
     /// Name resolution is a source rewrite AT LOAD, so the engine stays A1-only.
     fn from_dir_parts(
         tabs: Vec<TabInput>,
         raw_names: Vec<RawNameEntry>,
-        prior: Vec<Diagnostic>,
     ) -> Result<Workbook, Vec<Diagnostic>> {
-        let (name_table, table_diags) = NameTable::build(raw_names);
-        let mut diags = prior;
-        diags.extend(table_diags);
+        let (name_table, mut diags) = NameTable::build(raw_names);
         let mut out_tabs = Vec::with_capacity(tabs.len());
         for tab in tabs {
             let TabInput {
                 name: tab_name,
                 files,
-                stylesheet,
+                sidecars,
             } = tab;
             let mut loaded = Vec::new();
             let mut regions: Vec<(String, Rect)> = Vec::new();
@@ -407,16 +414,11 @@ impl Workbook {
                 }
             }
             diags.extend(detect_overlaps(&tab_name, &regions));
-            let blocks = match stylesheet {
-                Some(text) => {
-                    parse_stylesheet(&stylesheet_name(&tab_name), &text).unwrap_or_else(|d| {
-                        diags.extend(d);
-                        Vec::new()
-                    })
-                }
-                None => Vec::new(),
-            };
-            out_tabs.push(Tab::new(tab_name, loaded, blocks));
+            out_tabs.push(Tab::new(
+                tab_name.clone(),
+                loaded,
+                read_sidecars(&tab_name, sidecars, &mut diags),
+            ));
         }
         if diags.is_empty() {
             let has_array_regions = out_tabs
@@ -626,7 +628,7 @@ impl Workbook {
         })
     }
 
-    /// How far the tab's CONTENT reaches — file regions only. A stylesheet states no value, so a
+    /// How far the tab's CONTENT reaches — file regions only. A sidecar states no value, so a
     /// block cannot move the bound an open-axis reference resolves against (VAL1).
     pub fn content_region(&self, sheet: u32) -> Option<Rect> {
         let tab = self.tabs.get(sheet as usize)?;
@@ -687,9 +689,9 @@ impl Workbook {
             .map(|r| r.size)
     }
 
-    /// The sheet columns this tab's stylesheet sizes, ascending, disjoint and coalesced — what a
+    /// The sheet columns this tab's sidecars size, ascending, disjoint and coalesced — what a
     /// `<col min= max= width=>` run is. Two blocks may size one axis differently and neither is a
-    /// fault: the cascade answers it, so the LAST declaration read stands. An axis no block sizes is
+    /// fault: the cascade answers it, so the SMALLEST root stands, ties to the later name. An axis no block sizes is
     /// absent rather than defaulted.
     pub fn column_widths(&self, sheet: u32) -> Vec<AxisRun<Chars>> {
         self.axis_runs(sheet, declared_widths)
@@ -908,13 +910,13 @@ impl Workbook {
     }
 }
 
-/// Entries are sorted, for a deterministic load order. Three entry kinds are told apart HERE, and the
-/// stylesheet is tested for first: `@presentation.css` is a legal defined name, so the name arm below
-/// would otherwise take it and the tab would load styleless and clean.
+/// Entries are sorted, for a deterministic load order. Three entry kinds are told apart HERE, and a
+/// sidecar is tested for first: its stem holds a range separator, so the cell arm below would
+/// otherwise take `A1:C3.css` and refuse it as a malformed range name.
 fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabParts> {
     let mut files = Vec::new();
     let mut names = Vec::new();
-    let mut stylesheet = None;
+    let mut sidecars = Vec::new();
     let mut scratch = Vec::new();
     let mut file_entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     file_entries.sort_by_key(|e| e.file_name());
@@ -928,8 +930,8 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
         if Workbook::is_reserved_entry(&name) {
             continue;
         }
-        if ft.is_file() && name == PRESENTATION_ENTRY {
-            stylesheet = Some(read_file_to_string(&f.path(), &mut scratch)?);
+        if ft.is_file() && presentation_stem(&name).is_some() {
+            sidecars.push((name, read_file_to_string(&f.path(), &mut scratch)?));
         } else if ft.is_file() && is_cell_filename(&name) {
             files.push((name, read_file_to_string(&f.path(), &mut scratch)?));
         } else if let Some(entry) = read_name_entry(
@@ -943,17 +945,58 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
             names.push(entry);
         }
     }
-    Ok((files, names, stylesheet))
+    Ok((files, names, sidecars))
 }
 
-/// What a stylesheet's refusals are located against: the tab-qualified path, since the entry's own
-/// name is the same on every tab and a bare one could not say which sheet's rules were wrong.
-fn stylesheet_name(tab: &str) -> String {
-    format!("{tab}/{PRESENTATION_ENTRY}")
+/// The tab's sidecars, read against the root each is NAMED for, then laid in cascade order: widest
+/// root first so the narrowest reaching a coordinate is the last layered over it, ties settled by
+/// canonical filename. Total over distinct roots, so every coordinate has exactly one winner.
+fn read_sidecars(
+    tab: &str,
+    sidecars: Vec<(String, String)>,
+    diags: &mut Vec<Diagnostic>,
+) -> Vec<(Rect, Presentation)> {
+    let mut read: Vec<(Rect, String, Presentation)> = Vec::new();
+    for (name, text) in sidecars {
+        let stem = presentation_stem(&name).expect("the classifier admitted only sidecars");
+        let located = format!("{tab}/{name}");
+        match parse_filename(stem) {
+            Ok(parsed) => match parse_rules(&located, parsed.region, &text) {
+                Ok(presentation) => read.push((
+                    parsed.region,
+                    crate::canonical_range_name(&name),
+                    presentation,
+                )),
+                Err(d) => diags.extend(d),
+            },
+            Err(d) => diags.push(Diagnostic::new(d.code, Loc::file(&located), d.message)),
+        }
+    }
+    // Two spellings of one root canonicalize alike, so no order separates them. Refused, not ordered.
+    let mut seen: Vec<&String> = Vec::new();
+    for (_, key, _) in &read {
+        if seen.contains(&key) {
+            diags.push(Diagnostic::new(
+                Code::DuplicateSidecarRoot,
+                Loc::file(&format!("{tab}/{key}")),
+                format!(
+                    "two sidecars state the presentation of {key}; one root is stated once, however \
+                     its name is spelled -- delete or merge the duplicate"
+                ),
+            ));
+        }
+        seen.push(key);
+    }
+    read.sort_by(|a, b| area(b.0).cmp(&area(a.0)).then_with(|| a.1.cmp(&b.1)));
+    read.into_iter().map(|(root, _, p)| (root, p)).collect()
 }
 
-/// `None` for an A1-shaped regular file, which is a cell, or an unreadable kind. A degraded symlink
-/// lands in the ref-file arm.
+fn area(root: Rect) -> u64 {
+    u64::from(root.max_col - root.min_col + 1) * u64::from(root.max_row - root.min_row + 1)
+}
+
+/// `None` for an A1-shaped regular file, which is a cell, for a presentation sidecar, or for an
+/// unreadable kind. A degraded symlink lands in the ref-file arm.
 fn read_name_entry(
     root: &Path,
     scope: NameScope,
@@ -973,7 +1016,7 @@ fn read_name_entry(
             },
         }));
     }
-    if ft.is_file() && !is_cell_filename(entry_name) {
+    if ft.is_file() && !is_cell_filename(entry_name) && presentation_stem(entry_name).is_none() {
         return Ok(Some(RawNameEntry {
             scope,
             entry_name: entry_name.to_string(),

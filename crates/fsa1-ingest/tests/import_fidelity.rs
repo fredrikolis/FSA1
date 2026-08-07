@@ -129,8 +129,8 @@ fn a_styled_ods_loses_its_look_and_the_report_vouches_for_no_category_it_never_r
     .expect("the block");
     assert_eq!(content, "Total\n42", "the values cross, the look does not");
     assert!(
-        !content.contains("@scope"),
-        "the .ods path reads no styling at all:\n{content}"
+        stylesheet(&dest, "Styled").is_none(),
+        "the .ods path reads no styling at all, so it writes no sidecar"
     );
     assert_eq!(
         report.inspected,
@@ -245,8 +245,8 @@ fn a_styled_xlsx_carries_its_appearance_and_names_every_loss() {
 
     let content = stylesheet(&dest, "Visual").expect("the tab states presentation");
     assert!(
-        content.starts_with("@scope (A1:B4) {"),
-        "one root, the sheet's used region: {content}"
+        content.starts_with("A1:B4\n"),
+        "one sidecar, named for the sheet's used region: {content}"
     );
     for declaration in [
         "background-color: #ffc000",
@@ -452,7 +452,7 @@ fn rows_inside_the_extent_that_no_block_covers_are_carried_by_the_root() {
         report.warnings
     );
     let css = stylesheet(&dest, "Sheet1").expect("the tab states its heights");
-    assert!(css.starts_with("@scope (A1:B3000) {"), "{}", &css[..40]);
+    assert!(css.starts_with("A1:B3000\n"), "{}", &css[..40]);
     assert_eq!(
         css.matches("height: 30pt").count(),
         1996,
@@ -507,14 +507,22 @@ fn column_b_valued(xml: String) -> String {
     )
 }
 
+/// A path's last segment as text — the entry NAME the classifier and the canonicaliser both read.
+fn base(path: &Path) -> String {
+    path.file_name()
+        .expect("a written entry names its last segment")
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// A name as the canonical `:` spelling, whatever separator this host wrote. The reader takes both,
 /// so a test that compared raw names would be asserting against the host rather than the format.
 fn canonical(name: &str) -> String {
     fsa1_model::canonical_range_name(name)
 }
 
-/// The RANGE files one tab was written, by name and in order — the blocks the cut produced. The
-/// tab's stylesheet is presentation rather than a block, and [`stylesheet`] is what reads it.
+/// The RANGE files one tab was written, by name and in order — the blocks the cut produced. A
+/// sidecar is presentation rather than a block, and [`stylesheet`] is what reads it.
 fn written(dest: &Path, tab: &str) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dest.join(tab))
         .expect("the tab is written")
@@ -524,17 +532,30 @@ fn written(dest: &Path, tab: &str) -> Vec<String> {
                 .to_string_lossy()
                 .into_owned()
         })
-        .filter(|name| name != fsa1_model::PRESENTATION_ENTRY)
+        .filter(|name| fsa1_model::presentation_stem(name).is_none())
         .map(|name| canonical(&name))
         .collect();
     names.sort();
     names
 }
 
-/// The tab's whole stylesheet. A tab that states no presentation writes none, so its absence is a
-/// fact a caller may assert rather than an empty string it has to tell apart from one.
+/// The rules the tab's ONE sidecar holds, prefixed by the root its NAME states so a caller reads the
+/// scope and the rules together. A tab that states no presentation writes no sidecar, so its absence
+/// is a fact a caller may assert rather than an empty string it has to tell apart from one.
 fn stylesheet(dest: &Path, tab: &str) -> Option<String> {
-    std::fs::read_to_string(dest.join(tab).join(fsa1_model::PRESENTATION_ENTRY)).ok()
+    let mut found: Vec<PathBuf> = std::fs::read_dir(dest.join(tab))
+        .expect("the tab is written")
+        .map(|e| e.expect("a readable entry").path())
+        .filter(|p| fsa1_model::presentation_stem(&base(p)).is_some())
+        .collect();
+    found.sort();
+    let one = found.first()?;
+    let name = canonical(&base(one));
+    let stem = fsa1_model::presentation_stem(&name).expect("a sidecar names its root");
+    Some(format!(
+        "{stem}\n{}",
+        std::fs::read_to_string(one).expect("a readable sidecar")
+    ))
 }
 
 /// A whole-column and a whole-row format, which neither states on any `<c>`: Excel and openpyxl write
@@ -553,7 +574,7 @@ fn a_column_and_a_row_default_style_reach_the_cells_that_state_none() {
     let report = import_file(&column, &dest, false).expect("the unpack completes");
     assert_eq!(
         stylesheet(&dest, "Sheet1").as_deref(),
-        Some("@scope (A1:B3) {\n  td:last-child { font-weight: bold }\n}\n"),
+        Some("A1:B3\n  td:last-child { font-weight: bold }\n"),
         "no `<c>` of column B states a style, and the whole column is bold anyway",
     );
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
@@ -567,7 +588,7 @@ fn a_column_and_a_row_default_style_reach_the_cells_that_state_none() {
     let row_report = import_file(&row, &row_dest, false).expect("the unpack completes");
     assert_eq!(
         stylesheet(&row_dest, "Sheet1").as_deref(),
-        Some("@scope (A1:B3) {\n  tr:nth-child(2) td { font-weight: bold }\n}\n"),
+        Some("A1:B3\n  tr:nth-child(2) td { font-weight: bold }\n"),
         "and neither does any `<c>` of row 2",
     );
     assert!(row_report.warnings.is_empty(), "{:?}", row_report.warnings);
@@ -757,7 +778,7 @@ fn a_width_on_a_column_no_block_covers_is_carried_by_the_sheets_root() {
         "one root over one used region, so the two cuts state the same presentation",
     );
     assert_eq!(
-        carried[0].1, "@scope (A1:E20) {\n  td:nth-child(3) { width: 14.5ch }\n}\n",
+        carried[0].1, "A1:E20\n  td:nth-child(3) { width: 14.5ch }\n",
         "column C is index 3 of the root A1:E20",
     );
 }

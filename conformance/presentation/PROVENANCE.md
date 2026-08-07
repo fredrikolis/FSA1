@@ -29,7 +29,7 @@ every fixture is a fresh LFS object even when nothing about it changed. Run the 
 > wrong — never edited to chase an FSA1 regression.**
 
 An `expected/<fixture>.expected` file states what `unpack` must write for that fixture: the range
-files, their contents, the tab's `@presentation.css`, and the SER3 warnings the run must report. It is
+files, their contents, the presentation sidecars, and the SER3 warnings the run must report. It is
 a **reading** of the fixture's own `xl/styles.xml`, `xl/worksheets/sheetN.xml` and `xl/theme/theme1.xml`
 against the encoder rules in plan 01 — not a transcript of FSA1 output. When FSA1 and an expectation
 disagree, the default verdict is an FSA1 defect. The sentence above is repeated in the assertion
@@ -43,10 +43,10 @@ One directive per line; `#` comments and blank lines are ignored.
     file: <tab>/<entry-name>
     |<a line of that entry's contents, verbatim>
 
-A `file:` entry is a range file or the tab's `@presentation.css`; the two are listed alike, in the
-`<tab>/<name>` order the grader sorts by, which puts `@presentation.css` ahead of every range name.
+A `file:` entry is a range file or a `<range>.css` sidecar; the two are listed alike, in the
+`<tab>/<name>` order the grader sorts by, which puts a range file directly ahead of its own sidecar.
 Every content line is `|`-prefixed, which is what makes an empty grid line distinguishable from
-nothing at all. A stylesheet ends in a newline, so its last content line is a bare `|`. A fixture with
+nothing at all. A sidecar ends in a newline, so its last content line is a bare `|`. A fixture with
 no `warning:` line must print `unpack fidelity: nothing lost`; a fixture with one must not. A fixture
 with no `file:` line must write no entry at all.
 
@@ -55,29 +55,27 @@ format whose readers open all seven categories the report tracks. A run that ins
 line naming what it did not look at instead, which is why an `.ods` cannot be graded by this format
 (see the blind spots).
 
-### The block's layout, and where it comes from
+### The sidecar's layout, and where it comes from
 
-A stylesheet is a sequence of `@scope (<range>) { … }` blocks. The **prelude** names the block's
-scoping root in the tab's own absolute A1 coordinates, and the encoder states one root per SHEET —
-its used region, the bounding box of its occupancy — so a tab cut into several blocks still carries
-one prelude, and the root is wider than any one range file whenever it was.
+A sidecar's **filename** names its scoping root in the tab's own absolute A1 coordinates, and the
+encoder states one root per SHEET — its used region, the bounding box of its occupancy — so a tab cut
+into several blocks still carries one sidecar, and the root is wider than any one range file whenever
+it was.
 
-The block's **content** — which rules, which selectors, which declarations, which values — is
+The sidecar's **content** — which rules, which selectors, which declarations, which values — is
 derived from the fixture's own bytes against plan 01 §D2/§D3/§D4 read over that root, and
 `fsa1-model`'s parser is what makes the selector spelling, the rule order and the alphabetical
 declaration order canonical rather than a matter of taste (it refuses every other spelling as
 `non-canonical-presentation`).
 
-The block's **whitespace** is fixed by no contract — the parser accepts a rule on one line or five. The
-corpus freezes the form the repo's own hand-written examples already use, so the expectation is not a
-transcript of the writer's formatting choice:
+The sidecar's **whitespace** is fixed by no contract — the parser accepts a rule on one line or five.
+The corpus freezes the form the repo's own hand-written examples already use, so the expectation is
+not a transcript of the writer's formatting choice:
 
-    @scope (<range>) {
       <selector> { <property>: <value>; <property>: <value> }
-    }
 
 Two-space indent, one rule per line, `; `-separated declarations, a space inside each brace, no
-trailing `;`, one space between `@scope` and its parenthesized root, and a newline after the block.
+trailing `;`, and a newline after the last rule.
 
 ## What grades it, and where each half runs
 
@@ -169,6 +167,14 @@ than mechanism:
 Every entry records a fixture ADDED, an expectation CORRECTED, or the whole corpus RE-DERIVED under a
 changed encoding, and why. No expectation here has been corrected: the corrections column stays empty
 until a reading is shown to have been wrong.
+
+- **All 15 scoped readings re-derived a second time** — the scoping root moved out of the file's body
+  into its NAME: the tab's one `@presentation.css` became one `<root>.css` sidecar, holding the same
+  rules with the `@scope (<root>) { … }` frame dropped (plan 09). This is not a correction: no reading
+  was wrong, and every one of the fifteen re-derivations is the identity on its rules — the root each
+  prelude stated is now the stem its filename states, character for character. What DID change in the
+  frozen text is the `file:` ordering: a sidecar sorts directly after the range file it shares a stem
+  with, where `@presentation.css` sorted ahead of every range name.
 
 - **All 15 scoped readings re-derived** — presentation moved out of the range file's tail into the
   tab's `@presentation.css`, addressed in absolute A1 (plan 08). This is not a correction: no reading

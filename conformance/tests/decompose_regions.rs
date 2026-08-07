@@ -150,8 +150,8 @@ fn read_blocks(what: &str, root: &Path, sheet: &str) -> Result<Vec<String>, Stri
         .map_err(|e| format!("the tab {sheet:?} is unreadable: {e}"))?
         .map(|e| e.expect("a readable entry").path())
         .filter(|p| p.is_file())
-        // The tab's stylesheet is not a block, and `anchor` panics on a name that is not a range.
-        .filter(|p| base(p) != fsa1_model::PRESENTATION_ENTRY)
+        // A presentation sidecar is not a block, and `anchor` panics on a name that is not a range.
+        .filter(|p| fsa1_model::presentation_stem(&base(p)).is_none())
         // A frozen `block:` line names a REGION, which has one canonical spelling.
         .map(|p| canonical(&base(&p)))
         .collect();

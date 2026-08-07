@@ -229,8 +229,8 @@ fn materialize(
                     format!("cannot write {:?}: {e}", full.display()),
                 )
             })?;
-            // The tab's stylesheet is presentation, not a block the cut produced, so it is not one of the RANGE files this count reports.
-            if filename != fsa1_model::PRESENTATION_ENTRY {
+            // A sidecar is presentation, not a block the cut produced, so it is not one of the RANGE files this count reports.
+            if fsa1_model::presentation_stem(&filename).is_none() {
                 files += 1;
             }
         }

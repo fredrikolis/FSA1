@@ -28,8 +28,8 @@ fn stem(path: &Path) -> String {
         .into_owned()
 }
 
-/// Every range file under a workbook dir, keyed `"<tab>/<name>"`. `BTreeMap` so the comparison and
-/// the diff are both in one order.
+/// Every entry under a workbook dir — range files and presentation sidecars alike — keyed
+/// `"<tab>/<name>"`. `BTreeMap` so the comparison and the diff are both in one order.
 fn read_tree(root: &Path) -> BTreeMap<String, String> {
     let mut files = BTreeMap::new();
     let mut tabs: Vec<PathBuf> = std::fs::read_dir(root)
@@ -154,8 +154,8 @@ fn every_fixture_carries_a_frozen_expectation() {
 
 /// One `unpack` -> frozen-diff -> `check` -> `pack` -> `unpack` cycle over ONE fixture, its verdict
 /// returned rather than raised. The second unpack is what proves the styling SURVIVED the pack: an
-/// export that came out visually blank re-unpacks to a tree with no `@scope` block at all, whatever
-/// the first leg said.
+/// export that came out visually blank re-unpacks to a tree with no sidecar at all, whatever the
+/// first leg said.
 fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
     let stem = stem(fixture);
     let text = std::fs::read_to_string(expectation_of(fixture)).expect("a readable expectation");

@@ -38,13 +38,8 @@ fn no_font_family_byte_can_swallow_a_later_cells_rule() {
         let html = doc(&[
             ("A1", "x"),
             ("A2", "y"),
-            (
-                "@presentation.css",
-                &format!(
-                    "@scope (A1) {{\n  td {{ font-family: {hostile} }}\n}}\n\
-                     @scope (A2) {{\n  td {{ background-color: #ff0000 }}\n}}\n"
-                ),
-            ),
+            ("A1.css", &format!("  td {{ font-family: {hostile} }}\n")),
+            ("A2.css", "  td { background-color: #ff0000 }\n"),
         ]);
         assert_eq!(
             html.matches("</style>").count(),
@@ -84,10 +79,7 @@ fn an_embedded_newline_and_padding_survive_the_html_carrier() {
 fn an_axis_size_reaches_the_documents_css() {
     let html = doc(&[
         ("A1:B2", "1\t2\n3\t4"),
-        (
-            "@presentation.css",
-            "@scope (A1:B2) {\n  td { height: 22.5pt; width: 14.5ch }\n}\n",
-        ),
+        ("A1:B2.css", "  td { height: 22.5pt; width: 14.5ch }\n"),
     ]);
     assert!(
         html.contains(".c0 { height: 22.5pt; width: 14.5ch }"),
@@ -100,10 +92,7 @@ fn an_axis_size_reaches_the_documents_css() {
 fn two_cells_with_the_same_declarations_share_one_class_and_one_rule() {
     let html = doc(&[
         ("A1:B1", "1\t2"),
-        (
-            "@presentation.css",
-            "@scope (A1:B1) {\n  td { font-weight: bold }\n}\n",
-        ),
+        ("A1:B1.css", "  td { font-weight: bold }\n"),
     ]);
     assert_eq!(
         html.matches("<td class=\"c0\">").count(),

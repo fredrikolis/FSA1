@@ -17,8 +17,8 @@ FILENAMES — a closed A1 range, no ending
 
 FILE BODY — a TSV grid, one cell per coordinate
   The file is the grid, whole: no header/annotation line, line 1 is the first row, and no
-  trailing block — presentation is the tab's @presentation.css, and a grid ending in a
-  @scope block is a presentation-in-grid refusal.
+  trailing block — presentation is a <range>.css sidecar, and a grid ending in a @scope
+  block is a presentation-in-grid refusal.
   Rows = newlines, columns = tabs. An empty field = a blank cell.
   A field holds a tab/newline/backslash as \t \n \\ — only an UNESCAPED tab or newline
   delimits (so a cell can hold multi-line text); a stray backslash escape is a located error.
@@ -26,17 +26,17 @@ FILE BODY — a TSV grid, one cell per coordinate
   The grid must fill the declared range exactly (B2:D9 ⇒ 8×3 rows×cols, else dimension error).
   No drag-fill: write one explicit formula per cell (=B2*C2, =B3*C3, …).
 
-PRESENTATION — <tab>/@presentation.css, one stylesheet per tab
-  A sequence of @scope (<range>) { … } blocks. The prelude names a closed A1 range in the
-  tab's own absolute coordinates — A1:C9, or a bare A1 — and that root is what the selectors
-  inside count in: td · tr:first-child td · td:nth-child(k) · tr:nth-child(r) td:nth-child(c)
-  and the periodic An+B forms, all 1-based and relative to the root.
-  A root need cover no file at all: a block over a rectangle nothing fills is a style-only
-  region, which renders and packs.
-  Blocks may overlap; they apply in the order written, later over earlier, property by
-  property. check parses and validates the sheet and reports its faults; render --format html
-  carries it into the document's CSS, and pack carries it into the .xlsx as fonts, fills,
-  borders, alignment, column widths and row heights.
+PRESENTATION — <tab>/<range>.css, one sidecar per styled region
+  The FILENAME is the scoping root — A1:C9.css, or a bare A1.css — spelled exactly as a range
+  file is, and the file holds rules and nothing else. The root is what the selectors count in:
+  td · tr:first-child td · td:nth-child(k) · tr:nth-child(r) td:nth-child(c) and the periodic
+  An+B forms, all 1-based and relative to the root.
+  A sidecar needs no range file beside it: a .css over a rectangle nothing fills is a
+  style-only region, which renders and packs.
+  Sidecars may overlap; where two roots reach one coordinate the SMALLER area wins, property
+  by property, ties settled by filename. check parses and validates the sheet and reports its
+  faults; render --format html carries it into the document's CSS, and pack carries it into
+  the .xlsx as fonts, fills, borders, alignment, column widths and row heights.
 
 NAMES — a named cell/range/formula, by an identifier (not an A1 address)
   A name is an entry in its SCOPE folder: a tab folder = sheet-scoped, the workbook root = workbook-

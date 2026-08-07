@@ -36,10 +36,11 @@ pub use grid::{
     Cell, Grid, deserialize_tsv, encode_field, lex_literal, load_error_value, split_format_marker,
 };
 pub use names::{
-    Name, NameRepr, NameScope, NameTable, NameTarget, RawNameEntry, is_cell_filename, quote_sheet,
+    Name, NameRepr, NameScope, NameTable, NameTarget, PRESENTATION_SUFFIX, RawNameEntry,
+    is_cell_filename, presentation_stem, quote_sheet,
 };
 pub use overlap::{Rect, detect_overlaps};
-pub use presentation::{Presentation, Rule, Target, parse_stylesheet, spell_stylesheet};
+pub use presentation::{Presentation, Rule, Target, parse_rules, spell_rules};
 pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, combined_cell, display_value,
     parse_viewport, render, viewport_cell_count,
@@ -85,16 +86,32 @@ pub fn write_workbook_gitattributes(root: &std::path::Path) -> std::io::Result<(
     std::fs::write(path, WORKBOOK_GITATTRIBUTES)
 }
 
-/// The name a range file carries ON THIS HOST, given its canonical `:` spelling. One call, so a
-/// caller that has to name a file never has to know which separator this host writes.
+/// The name a range-addressed entry carries ON THIS HOST, given its canonical `:` spelling. One
+/// call, so a caller that has to name a file never has to know which separator this host writes.
 pub fn range_file_name(canonical: &str) -> String {
-    reseparate_range_name(canonical, RANGE_SEP).unwrap_or_else(|| canonical.to_string())
+    respell_range(canonical, RANGE_SEP)
 }
 
-/// The canonical `:` spelling of a range file's name, whatever this host wrote. The inverse of
-/// [`range_file_name`], so a reader comparing names never has to know which separator made them.
+/// The canonical `:` spelling of a range-addressed entry's name, whatever this host wrote. The
+/// inverse of [`range_file_name`], so a reader comparing names never has to know which separator
+/// made them.
 pub fn canonical_range_name(name: &str) -> String {
-    reseparate_range_name(name, RANGE_SEP_POSIX).unwrap_or_else(|| name.to_string())
+    respell_range(name, RANGE_SEP_POSIX)
+}
+
+/// The name a tab ENTRY takes where a range is spelled with `to`. A sidecar is addressed by its STEM,
+/// so this respells that and re-suffixes — one home for the host's separator across both entry kinds
+/// a range can name, so a convert cannot respell half a tab. `None` for a name addressing no range.
+pub fn reseparate_entry_name(name: &str, to: char) -> Option<String> {
+    let (addressed, suffix) = match presentation_stem(name) {
+        Some(stem) => (stem, PRESENTATION_SUFFIX),
+        None => (name, ""),
+    };
+    Some(format!("{}{suffix}", reseparate_range_name(addressed, to)?))
+}
+
+fn respell_range(name: &str, to: char) -> String {
+    reseparate_entry_name(name, to).unwrap_or_else(|| name.to_string())
 }
 
 /// [`range_file_name`] applied to the last component of a path, which is where a name becomes a
@@ -125,8 +142,8 @@ pub fn write_name_alias(target: &str, link: &std::path::Path) -> std::io::Result
 }
 
 /// The file content is its grid, whole — no header, annotation, or metadata line, the first line the
-/// first row, and no trailing block: presentation lives in the tab's [`PRESENTATION_ENTRY`], so a
-/// grid that still ends in one is a located refusal rather than a shorter grid.
+/// first row, and no trailing block: presentation lives in a sidecar named for the range it styles,
+/// so a grid that still ends in one is a located refusal rather than a shorter grid.
 pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Vec<Diagnostic>> {
     let declared = parse_filename(name).map_err(|d| vec![d])?;
     let declared_shape = declared.declared_shape;
@@ -145,10 +162,6 @@ pub fn parse_file(name: &str, contents: &str) -> Result<ParsedFile, Vec<Diagnost
         array_formula,
     })
 }
-
-/// The tree entry a tab's presentation is encoded as. One per tab folder, and content rather than
-/// tooling: it is what FS3's reserved set is NOT, since a coordinate's appearance is the workbook's.
-pub const PRESENTATION_ENTRY: &str = "@presentation.css";
 
 const OPEN: &str = "@scope {";
 const CLOSE: &str = "}";
@@ -189,16 +202,15 @@ fn match_open(lines: &[&str], close: usize) -> Option<usize> {
     None
 }
 
-/// The one wording for the retired in-grid block, so a range file's refusal and the workbook root's
-/// send an author to the same place.
+/// The wording a retired in-grid block earns, naming the sidecar an author should move it to.
 pub fn presentation_in_grid(loc: Loc) -> Diagnostic {
     Diagnostic::new(
         Code::PresentationInGrid,
         loc,
         format!(
-            "presentation is the tab's {PRESENTATION_ENTRY}, never a block in a grid: move the \
-             rules there under a `@scope (<range>) {{ ... }}` prelude naming the absolute range \
-             they styled"
+            "presentation is a `<range>{PRESENTATION_SUFFIX}` sidecar, never a block in a grid: \
+             move the rules into a file named for the absolute range they styled, dropping the \
+             `@scope {{ ... }}` frame"
         ),
     )
 }
@@ -310,7 +322,7 @@ mod tests {
     /// trailing block is ONE refusal naming where presentation now lives — never a shorter grid, and
     /// never a second fault about the rows that block's lines are no longer counted as.
     #[test]
-    fn a_range_file_ending_in_a_block_is_one_refusal_naming_the_tabs_stylesheet() {
+    fn a_range_file_ending_in_a_block_is_one_refusal_naming_the_sidecar() {
         for content in [
             "1\t2\t3\n@scope {\n  td { text-align: right }\n}",
             "1\t2\t3\n@scope {\n}",
@@ -325,7 +337,7 @@ mod tests {
                 d[0].loc
             );
             assert!(
-                d[0].message.contains(PRESENTATION_ENTRY),
+                d[0].message.contains(PRESENTATION_SUFFIX),
                 "{content:?} -> {}",
                 d[0].message
             );

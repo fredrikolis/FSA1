@@ -198,10 +198,7 @@ mod tests {
     fn a_sized_axis_reaches_its_col_and_its_row_verbatim() {
         let xml = sheet_xml(&[
             ("B2:C3", "1\t2\n3\t4"),
-            (
-                "@presentation.css",
-                "@scope (B2:C3) {\n  td { height: 22.5pt; width: 14.5ch }\n}\n",
-            ),
+            ("B2:C3.css", "  td { height: 22.5pt; width: 14.5ch }\n"),
         ]);
         assert!(
             xml.contains(
@@ -234,10 +231,10 @@ mod tests {
         let xml = sheet_xml(&[
             ("A1:B1", "1\t2"),
             ("C1:E1", "3\t4\t5"),
+            ("A1:B1.css", "  td { width: 10ch }\n"),
             (
-                "@presentation.css",
-                "@scope (A1:B1) {\n  td { width: 10ch }\n}\n\
-                 @scope (C1:E1) {\n  td { width: 10ch }\n  td:nth-child(2) { width: 4ch }\n}\n",
+                "C1:E1.css",
+                "  td { width: 10ch }\n  td:nth-child(2) { width: 4ch }\n",
             ),
         ]);
         assert!(
@@ -250,17 +247,14 @@ mod tests {
 
     /// The writer takes a style for every cell it sites, without a fallback: `source_at` and
     /// `cell_style` both answer for the covering file, so a value can never be written styleless and
-    /// can never be skipped for want of a style. A file declaring no `@scope` at all is the case that
+    /// can never be skipped for want of a style. A file with no sidecar beside it is the case that
     /// looks like an absent style and is not one — it is the EMPTY style.
     #[test]
     fn a_style_exists_wherever_a_cell_source_does() {
         let files: &[(&str, &str)] = &[
             ("A1:A2", "1\n2"),
             ("C1:C2", "3\n4"),
-            (
-                "@presentation.css",
-                "@scope (C1:C2) {\n  td { font-weight: bold }\n}\n",
-            ),
+            ("C1:C2.css", "  td { font-weight: bold }\n"),
         ];
         let wb = Workbook::from_tabs(&[("Sheet1", files)])
             .unwrap_or_else(|d| panic!("{files:?} should load: {:?}", d[0]));
@@ -287,10 +281,7 @@ mod tests {
     fn a_blank_wearing_a_look_is_written_as_a_c_carrying_only_its_style() {
         let xml = sheet_xml(&[
             ("A1:B2", "1\t\n\t2"),
-            (
-                "@presentation.css",
-                "@scope (A1:B2) {\n  td { background-color: #00ff00 }\n}\n",
-            ),
+            ("A1:B2.css", "  td { background-color: #00ff00 }\n"),
         ]);
         assert!(xml.contains(r#"<c r="B1" s="1"/>"#), "{xml}");
         assert!(xml.contains(r#"<c r="A2" s="1"/>"#), "{xml}");
@@ -305,13 +296,7 @@ mod tests {
     /// A height belongs to the ROW, not to the cells on it, so an all-blank row keeps it.
     #[test]
     fn a_sized_row_holding_no_cell_survives_as_an_empty_row() {
-        let xml = sheet_xml(&[
-            ("A1:A2", "1\n\n"),
-            (
-                "@presentation.css",
-                "@scope (A1:A2) {\n  td { height: 20pt }\n}\n",
-            ),
-        ]);
+        let xml = sheet_xml(&[("A1:A2", "1\n\n"), ("A1:A2.css", "  td { height: 20pt }\n")]);
         assert!(
             xml.contains(r#"<row r="2" ht="20" customHeight="1"/>"#),
             "{xml}"

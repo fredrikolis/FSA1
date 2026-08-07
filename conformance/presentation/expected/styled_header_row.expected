@@ -1,12 +1,10 @@
 # styled_header_row.xlsx -- FROZEN EXPECTATION.
 # A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
 # Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
-file: Report/@presentation.css
-|@scope (A1:C3) {
-|  tr:first-child td { background-color: #d9e1f2; font-weight: bold; text-align: center }
-|}
-|
 file: Report/A1:C3
 |Region	Units	Revenue
 |North	12	3400
 |South	9	2750
+file: Report/A1:C3.css
+|  tr:first-child td { background-color: #d9e1f2; font-weight: bold; text-align: center }
+|

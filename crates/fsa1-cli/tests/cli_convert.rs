@@ -419,13 +419,18 @@ fn unpack_of_a_styled_ods_never_claims_nothing_lost_and_names_what_it_did_not_in
         err.contains("not inspected on this source, so not vouched for"),
         "{err}"
     );
-    // No styling reader ran, so the tab states no presentation at all — not an empty stylesheet.
-    assert!(
-        !Path::new(&at(&fx, "wb"))
-            .join("Styled")
-            .join(fsa1_model::PRESENTATION_ENTRY)
-            .exists()
-    );
+    // No styling reader ran, so the tab states no presentation at all — not an empty sidecar.
+    let styled: Vec<String> = std::fs::read_dir(Path::new(&at(&fx, "wb")).join("Styled"))
+        .expect("the tab is readable")
+        .map(|e| {
+            e.expect("a readable entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|n| fsa1_model::presentation_stem(n).is_some())
+        .collect();
+    assert!(styled.is_empty(), "{styled:?}");
 }
 
 #[test]

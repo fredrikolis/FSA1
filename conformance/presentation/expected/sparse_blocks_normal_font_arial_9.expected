@@ -24,17 +24,15 @@
 #    whole root, as ONE `td` rule. dk1 is `windowText`/000000, so the text colour IS the default and
 #    earns no declaration. The 50 empty rows the cut opened are inside the root and wear the same one
 #    rule, which is why relocating presentation costs this fixture a rule rather than duplicating one.
-file: Gaps/@presentation.css
-|@scope (A1:E60) {
-|  td { font-family: Arial; font-size: 9pt }
-|}
-|
 file: Gaps/A1:E5
 |1				
 |				
 |				
 |				
 |				2
+file: Gaps/A1:E60.css
+|  td { font-family: Arial; font-size: 9pt }
+|
 file: Gaps/A56:E60
 |3				
 |				

@@ -1,10 +1,10 @@
-// Concern: spells a sheet's blocks as grid files and its presentation as one stylesheet | Non-concern: choosing the blocks, reading the source, writing to disk | IO: (sheet, blocks) -> [(name, body)]
+// Concern: spells a sheet's blocks as grid files and its presentation as a sidecar | Non-concern: choosing the blocks, reading the source, writing to disk | IO: (sheet, blocks) -> [(name, body)]
 
 use fsa1_ast::a1::format_cell;
 use fsa1_ast::{ErrKind, Value};
 use fsa1_model::format::lex_formatted_number;
 use fsa1_model::{
-    Format, PRESENTATION_ENTRY, Rect, display_value, encode_field, lex_literal, spell_stylesheet,
+    Format, PRESENTATION_SUFFIX, Rect, display_value, encode_field, lex_literal, spell_rules,
 };
 
 use crate::decompose::Block;
@@ -14,9 +14,9 @@ use crate::source::{MergedRegion, SheetSource, SourceValue};
 use crate::translate::{strip_lead, translate_formula_ctx};
 use crate::warnings::UnpackWarning;
 
-/// One grid file per block, in the canonical file order `r0, c0, r1, c1`, then the tab's stylesheet.
-/// A sheet with no occupancy has no block and so writes nothing at all; one whose look and geometry
-/// are both the format's own default writes its grids and no stylesheet.
+/// One grid file per block, in the canonical file order `r0, c0, r1, c1`, then the sidecar named for
+/// the root its presentation is stated over. A sheet with no occupancy has no block and so writes
+/// nothing at all; one whose look and geometry are both the format's own default writes no sidecar.
 pub fn sheet_files(
     sheet: &SheetSource,
     blocks: &[Block],
@@ -43,8 +43,8 @@ pub fn sheet_files(
         && let Some(presentation) = scope_block::encode(sheet, root, &geometry)
     {
         files.push((
-            PRESENTATION_ENTRY.to_string(),
-            spell_stylesheet(&[(root_rect(root), presentation)]),
+            format!("{}{PRESENTATION_SUFFIX}", block_name(root)),
+            spell_rules(root_rect(root), &presentation),
         ));
     }
     files
@@ -975,9 +975,8 @@ mod tests {
             vec![
                 ("A1:C3".to_string(), "0\t1\t2\n3\t4\t5\n6\t7\t8".to_string()),
                 (
-                    "@presentation.css".to_string(),
-                    "@scope (A1:C3) {\n  td { font-family: Times New Roman; font-size: 14pt }\n}\n"
-                        .to_string()
+                    "A1:C3.css".to_string(),
+                    "  td { font-family: Times New Roman; font-size: 14pt }\n".to_string()
                 ),
             ],
             "one td rule, one declaration per property"
@@ -1006,8 +1005,8 @@ mod tests {
         assert_eq!(
             written[1],
             (
-                "@presentation.css".to_string(),
-                "@scope (A1:D20) {\n  td:first-child { width: 14.5ch }\n}\n".to_string()
+                "A1:D20.css".to_string(),
+                "  td:first-child { width: 14.5ch }\n".to_string()
             ),
         );
         accepted(&written);
@@ -1031,9 +1030,8 @@ mod tests {
             vec![
                 ("A1:A2".to_string(), "1\nx".to_string()),
                 (
-                    "@presentation.css".to_string(),
-                    "@scope (A1:A2) {\n  td { width: 9ch }\n  tr:last-child td { height: 20pt }\n}\n"
-                        .to_string()
+                    "A1:A2.css".to_string(),
+                    "  td { width: 9ch }\n  tr:last-child td { height: 20pt }\n".to_string()
                 ),
             ],
         );

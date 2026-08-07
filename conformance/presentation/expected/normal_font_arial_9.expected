@@ -8,11 +8,9 @@
 # Arial 9 is not the format's own default (Calibri 11), which is what a writer restores for an
 # undeclared cell, so both halves must be DECLARED -- one `td` rule, the whole block wearing them.
 # dk1 is `windowText`/000000, so the text colour IS the default and earns no declaration.
-file: Arial/@presentation.css
-|@scope (A1:B2) {
-|  td { font-family: Arial; font-size: 9pt }
-|}
-|
 file: Arial/A1:B2
 |A1	B1
 |A2	B2
+file: Arial/A1:B2.css
+|  td { font-family: Arial; font-size: 9pt }
+|

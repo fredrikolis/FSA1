@@ -89,14 +89,14 @@ fn runs<T: Copy>(lo: u32, hi: u32, base: Option<T>, overrides: &[(u32, T)]) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_stylesheet;
+    use crate::{parse_filename, parse_rules};
 
     fn widths(root: &str, rules: &str) -> Vec<AxisRun<Chars>> {
-        let sheet = format!("@scope ({root}) {{\n{rules}\n}}\n");
-        let mut blocks = parse_stylesheet("@presentation.css", &sheet)
-            .unwrap_or_else(|d| panic!("{sheet:?} should parse: {:?}", d[0]));
-        let (root, presentation) = blocks.remove(0);
-        declared_widths(root, &presentation)
+        let region = parse_filename(root).expect("a root names a range").region;
+        let presentation =
+            parse_rules(&format!("Sheet1/{root}.css"), region, &format!("{rules}\n"))
+                .unwrap_or_else(|d| panic!("{rules:?} should parse: {:?}", d[0]));
+        declared_widths(region, &presentation)
     }
 
     /// A bare `td` sizes every column the root spans, and a column selector overrides that one; the

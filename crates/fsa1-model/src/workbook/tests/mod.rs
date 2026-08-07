@@ -27,6 +27,19 @@ fn load_one_tab(tab: &str, files: &[(&str, &str)]) -> Workbook {
         .unwrap_or_else(|d| panic!("workbook should load clean: {d:?}"))
 }
 
+/// The refusals a tab earns, for the cases where the refusal IS the assertion.
+fn load_one_tab_err(tab: &str, files: &[(&str, &str)]) -> Vec<crate::Diagnostic> {
+    let owned: Vec<(String, String)> = files
+        .iter()
+        .map(|(n, b)| ((*n).to_string(), file(b)))
+        .collect();
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(n, c)| (n.as_str(), c.as_str()))
+        .collect();
+    Workbook::from_tabs(&[(tab, &refs)]).expect_err("this tab must refuse")
+}
+
 #[test]
 fn chain_a_to_b_to_c_pulls_through_the_model() {
     let wb = load_one_tab("Sheet1", &[("A1", "1"), ("B1", "=A1+1"), ("C1", "=B1*10")]);
@@ -918,16 +931,13 @@ fn a_region_whose_input_is_a_formula_chain_computes_once_and_correctly() {
 }
 
 #[test]
-fn a_styled_tab_loads_and_its_stylesheet_contributes_no_cell() {
+fn a_styled_tab_loads_and_its_sidecar_contributes_no_cell() {
     let wb = load_one_tab(
         "Sheet1",
         &[
             ("A1:A2", "3\n4"),
             ("C1", "=SUM(A1:A2)"),
-            (
-                "@presentation.css",
-                "@scope (A1:A2) {\n  td { text-align: right }\n}\n",
-            ),
+            ("A1:A2.css", "  td { text-align: right }\n"),
         ],
     );
     assert_eq!(wb.value_at(0, 2, 0), Value::Number(7.0));
@@ -939,16 +949,10 @@ fn a_styled_tab_loads_and_its_stylesheet_contributes_no_cell() {
 }
 
 #[test]
-fn a_refused_stylesheet_refuses_its_workbook_with_every_fault_at_once() {
+fn a_refused_sidecar_refuses_its_workbook_with_every_fault_at_once() {
     let err = Workbook::from_tabs(&[(
         "Sheet1",
-        &[
-            ("A1:A2", "3\n4"),
-            (
-                "@presentation.css",
-                "@scope (A1:A2) {\n  th { color: red }\n}\n",
-            ),
-        ],
+        &[("A1:A2", "3\n4"), ("A1:A2.css", "  th { color: red }\n")],
     )])
     .unwrap_err();
     let codes: Vec<Code> = err.iter().map(|d| d.code).collect();
@@ -959,21 +963,80 @@ fn a_refused_stylesheet_refuses_its_workbook_with_every_fault_at_once() {
     );
 }
 
-/// The cascade the filesystem no longer arbitrates: two roots over one coordinate LAYER, later over
-/// earlier property by property, and neither the overlap nor the disagreement is a fault.
+/// A sidecar's NAME is its root, so every root form a range file refuses it refuses too, located on
+/// the sidecar. The filename grammar has one reader and this is the boundary that says so.
 #[test]
-fn two_blocks_over_one_cell_layer_later_over_earlier() {
-    let wb = load_one_tab(
-        "Sheet1",
-        &[
-            ("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9"),
-            (
-                "@presentation.css",
-                "@scope (A1:C3) {\n  td { color: #3f0421; font-weight: bold }\n}\n\
-                 @scope (B2) {\n  td { color: #ffffff }\n}\n",
-            ),
-        ],
-    );
+fn a_sidecar_name_is_refused_for_every_root_a_range_file_would_refuse() {
+    for (name, want) in [
+        ("A:A.css", Code::WholeColumnRowReserved),
+        ("3:3.css", Code::WholeColumnRowReserved),
+        ("A1:A1.css", Code::DegenerateRange),
+        ("a1:c3.css", Code::LowercaseColumn),
+        ("C3:A1.css", Code::NonCanonicalRange),
+        ("A01.css", Code::LeadingZeroRow),
+    ] {
+        let diags = load_one_tab_err(
+            "Sheet1",
+            &[
+                ("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9"),
+                (name, "  td { color: #3f0421 }\n"),
+            ],
+        );
+        assert!(
+            diags.iter().any(|d| d.code == want),
+            "{name} should earn {want:?}: {diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.loc.to_string().contains(name)),
+            "{name}'s refusal must be located on it: {diags:?}"
+        );
+    }
+}
+
+/// Equal areas cannot be separated by size, so the LATER filename wins — CSS's own rule that a later
+/// sheet overrides an earlier one. Arbitrary, but total and deterministic, which is the whole promise.
+#[test]
+fn two_overlapping_roots_of_equal_area_are_settled_by_the_later_filename() {
+    let red = crate::Rgb {
+        r: 0xff,
+        g: 0x00,
+        b: 0x00,
+    };
+    let blue = crate::Rgb {
+        r: 0x00,
+        g: 0x00,
+        b: 0xff,
+    };
+    // Both roots are two cells wide and both cover B1, so only the name can separate them.
+    let first = ("A1:B1.css", "  td { color: #ff0000 }\n");
+    let last = ("B1:C1.css", "  td { color: #0000ff }\n");
+    for entries in [[first, last], [last, first]] {
+        let mut files = vec![("A1:C1", "1\t2\t3")];
+        files.extend(entries);
+        let wb = load_one_tab("Sheet1", &files);
+        assert_eq!(
+            wb.cell_style(0, 0, 0).unwrap().color,
+            Some(red),
+            "A1 is only in the first"
+        );
+        assert_eq!(
+            wb.cell_style(0, 2, 0).unwrap().color,
+            Some(blue),
+            "C1 is only in the last"
+        );
+        assert_eq!(
+            wb.cell_style(0, 1, 0).unwrap().color,
+            Some(blue),
+            "B1 is in both at equal area, so the later name wins, whatever order the tree lists them"
+        );
+    }
+}
+
+/// The contention the filesystem no longer arbitrates: two roots over one coordinate LAYER property by
+/// property, the SMALLER area last and so winning, and neither the overlap nor the disagreement is a
+/// fault. The tree order is reversed here because the cascade is the areas', never the reader's.
+#[test]
+fn overlapping_sidecars_layer_the_smaller_root_last() {
     let plum = crate::Rgb {
         r: 0x3f,
         g: 0x04,
@@ -984,29 +1047,33 @@ fn two_blocks_over_one_cell_layer_later_over_earlier() {
         g: 0xff,
         b: 0xff,
     };
-    let b2 = wb.cell_style(0, 1, 1).expect("B2 is covered");
-    assert_eq!(b2.color, Some(white), "the later block wins the property");
-    assert_eq!(
-        b2.font_weight,
-        Some(crate::FontWeight::Bold),
-        "and takes back none it does not declare",
-    );
-    assert_eq!(wb.cell_style(0, 0, 0).expect("A1").color, Some(plum));
+    let table = ("A1:C3.css", "  td { color: #3f0421; font-weight: bold }\n");
+    let inner = ("B2.css", "  td { color: #ffffff }\n");
+    for entries in [[table, inner], [inner, table]] {
+        let mut files = vec![("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9")];
+        files.extend(entries);
+        let wb = load_one_tab("Sheet1", &files);
+        let b2 = wb.cell_style(0, 1, 1).expect("B2 is covered");
+        assert_eq!(b2.color, Some(white), "the narrower root wins the property");
+        assert_eq!(
+            b2.font_weight,
+            Some(crate::FontWeight::Bold),
+            "and takes back none it does not declare",
+        );
+        assert_eq!(wb.cell_style(0, 0, 0).expect("A1").color, Some(plum));
+    }
 }
 
-/// Two blocks sizing one sheet column differently is the cascade's question and not the filesystem's,
-/// so the tab loads clean and the LAST declaration stands.
+/// Two sidecars sizing one sheet column differently is the cascade's question and not the
+/// filesystem's, so the tab loads clean and column A renders ONE width.
 #[test]
-fn two_blocks_sizing_one_column_differently_are_no_fault_at_all() {
+fn two_sidecars_sizing_one_column_differently_are_no_fault_at_all() {
     let wb = load_one_tab(
         "Sheet1",
         &[
             ("A1:A4", "1\n2\n3\n4"),
-            (
-                "@presentation.css",
-                "@scope (A1:A2) {\n  td { width: 10ch }\n}\n\
-                 @scope (A3:A4) {\n  td { width: 12ch }\n}\n",
-            ),
+            ("A1:A2.css", "  td { width: 10ch }\n"),
+            ("A3:A4.css", "  td { width: 12ch }\n"),
         ],
     );
     assert!(wb.lint().is_empty(), "{:?}", wb.lint());
@@ -1028,10 +1095,7 @@ fn a_style_only_region_is_used_and_styled_without_any_file() {
         "Sheet1",
         &[
             ("A1", "1"),
-            (
-                "@presentation.css",
-                "@scope (E1:G5) {\n  td { background-color: #00ffff }\n}\n",
-            ),
+            ("E1:G5.css", "  td { background-color: #00ffff }\n"),
         ],
     );
     assert_eq!(
@@ -1060,32 +1124,28 @@ fn a_style_only_region_is_used_and_styled_without_any_file() {
     assert!(wb.cell_style(0, 3, 0).is_none(), "D1 is stated by nothing");
 }
 
-/// A stylesheet at the workbook ROOT names no tab, so it styles no coordinate and is a refusal rather
-/// than a defined name silently swallowing it.
+/// A sidecar is read from DISK by the same classifier the in-memory loader uses, ahead of both the
+/// cell arm — whose parser refuses `A1:C3.css` as a malformed range — and the defined-name arm.
 #[test]
-fn a_stylesheet_outside_a_tab_is_a_located_refusal() {
-    let dir = tempdir("root-stylesheet");
+fn a_sidecar_on_disk_is_classified_before_the_cell_and_name_arms() {
+    let dir = std::env::temp_dir().join(format!("fsa1-wb-{}-sidecar", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("Sheet1")).expect("a tab");
     std::fs::write(dir.join("Sheet1").join("A1"), "1").expect("a cell");
     std::fs::write(
-        dir.join("@presentation.css"),
-        "@scope (A1) {\n  td { font-weight: bold }\n}\n",
+        dir.join("Sheet1").join("A1.css"),
+        "  td { font-weight: bold }\n",
     )
-    .expect("a stylesheet");
-    let err = Workbook::load_dir(&dir)
+    .expect("a sidecar");
+    let wb = Workbook::load_dir(&dir)
         .expect("the tree is readable")
-        .expect_err("a root stylesheet is refused");
+        .unwrap_or_else(|d| panic!("a sidecar tree loads clean: {d:?}"));
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(err.len(), 1, "{err:?}");
-    assert_eq!(err[0].code, Code::PresentationInGrid);
-    assert_eq!(err[0].loc, Loc::file("@presentation.css"));
-}
-
-fn tempdir(what: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("fsa1-wb-{}-{what}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch dir");
-    dir
+    assert_eq!(
+        wb.cell_style(0, 0, 0).expect("A1 is styled").font_weight,
+        Some(crate::FontWeight::Bold),
+    );
+    assert!(wb.name_table().names().is_empty(), "and declares no name");
 }
 
 #[test]

@@ -240,14 +240,12 @@ pub fn resolve(presentation: &Presentation, row: u32, col: u32) -> CellStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_stylesheet;
+    use crate::{parse_filename, parse_rules};
 
     fn presentation_over(root: &str, rules: &str) -> Presentation {
-        let sheet = format!("@scope ({root}) {{\n{rules}\n}}\n");
-        parse_stylesheet("Sheet1/@presentation.css", &sheet)
-            .unwrap_or_else(|d| panic!("{sheet:?} should parse: {:?}", d[0]))
-            .remove(0)
-            .1
+        let region = parse_filename(root).expect("a root names a range").region;
+        parse_rules(&format!("Sheet1/{root}.css"), region, &format!("{rules}\n"))
+            .unwrap_or_else(|d| panic!("{rules:?} should parse: {:?}", d[0]))
     }
 
     /// Four rows, so `2n` reaches TWO of them and stays periodic rather than folding to a literal.
@@ -307,7 +305,7 @@ mod tests {
         }
     }
 
-    /// The path a stylesheet consumer walks — a block read to rules, resolved, spelled back — over
+    /// The path a presentation consumer walks — a sidecar read to rules, resolved, spelled back — over
     /// every property at once. The on-disk syntax IS CSS, so what an emitter writes is the text the
     /// author wrote, in the order the format canonicalizes.
     #[test]

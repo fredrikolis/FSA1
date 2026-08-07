@@ -31,6 +31,7 @@ pub enum Code {
     NameRefusal,
     ForgeRefusal,
     PresentationInGrid,
+    DuplicateSidecarRoot,
     PresentationSyntax,
     PresentationSelector,
     PresentationProperty,
@@ -58,6 +59,7 @@ impl Code {
         Code::NameRefusal,
         Code::ForgeRefusal,
         Code::PresentationInGrid,
+        Code::DuplicateSidecarRoot,
         Code::PresentationSyntax,
         Code::PresentationSelector,
         Code::PresentationProperty,
@@ -85,6 +87,7 @@ impl Code {
             Code::NameRefusal => "name-refusal",
             Code::ForgeRefusal => "forge-refusal",
             Code::PresentationInGrid => "presentation-in-grid",
+            Code::DuplicateSidecarRoot => "duplicate-sidecar-root",
             Code::PresentationSyntax => "presentation-syntax",
             Code::PresentationSelector => "presentation-selector",
             Code::PresentationProperty => "presentation-property",
@@ -96,6 +99,7 @@ impl Code {
     /// The rule this code enforces.
     pub fn summary(self) -> &'static str {
         match self {
+            Code::DuplicateSidecarRoot => "one root's presentation is stated by one sidecar",
             Code::MalformedFilename => "filename is not a well-formed A1 closed range",
             Code::LowercaseColumn => "column letters must be uppercase",
             Code::LeadingZeroRow => "row numbers must not have a leading zero",
@@ -120,10 +124,10 @@ impl Code {
                 "a reference-forging call (INDIRECT/OFFSET) must resolve to a static reference: its arguments must not themselves forge, must not cycle back to it, and must name an on-grid target"
             }
             Code::PresentationInGrid => {
-                "presentation lives in the tab's stylesheet, never in a range file's grid"
+                "presentation lives in a range-named sidecar, never in a range file's grid"
             }
             Code::PresentationSyntax => {
-                "a presentation block is `@scope {` ... `}` holding `<selector> { <property>: <value>; ... }` rules"
+                "a presentation sidecar holds `<selector> { <property>: <value>; ... }` rules and nothing else"
             }
             Code::PresentationSelector => {
                 "a presentation selector must be one of the eight region-relative forms, each index within the region"
@@ -135,7 +139,7 @@ impl Code {
                 "a presentation value must match its property's value grammar"
             }
             Code::NonCanonicalPresentation => {
-                "a presentation block has one spelling per appearance"
+                "a presentation sidecar has one spelling per appearance"
             }
         }
     }
@@ -144,6 +148,9 @@ impl Code {
     /// its `message`.
     pub fn help(self) -> &'static str {
         match self {
+            Code::DuplicateSidecarRoot => {
+                "two sidecars name one root, so neither can be said to come later -- delete one, or merge its rules into the other"
+            }
             Code::MalformedFilename => {
                 "rename the file to a well-formed A1 closed range: a single cell `A1`, or a rectangle written top-left:bottom-right like `B2:D9`"
             }
@@ -196,7 +203,7 @@ impl Code {
                 "rewrite the INDIRECT/OFFSET call so its target is static: avoid nesting a forging call inside another's arguments, avoid an argument that depends on the call's own cell, and keep the computed reference on the grid"
             }
             Code::PresentationInGrid => {
-                "move the trailing `@scope { ... }` block into the tab's `@presentation.css`, wrapping its rules in a `@scope (<range>) { ... }` prelude that names the absolute A1 range the range file declared"
+                "move the trailing `@scope { ... }` block's rules into a sidecar beside the range file, named `<range>.css` for the absolute A1 range they styled, and drop the `@scope { ... }` frame"
             }
             Code::PresentationSyntax => {
                 "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, give each selector one rule and each property one declaration, and drop `!important` and any at-rule"
@@ -389,7 +396,7 @@ mod tests {
     fn registry_is_self_consistent() {
         assert_eq!(
             Code::ALL.len(),
-            23,
+            24,
             "every Code variant must be listed in ALL"
         );
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();

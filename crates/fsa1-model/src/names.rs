@@ -1,4 +1,4 @@
-// Concern: the defined-name layer, from an on-disk entry to the A1 the engine sees | Non-concern: finding the entries on disk, evaluating the result | IO: (entries) -> NameTable; (tsv, sheet) -> tsv
+// Concern: what an entry's NAME means — a range, a sidecar or a defined name — and what a name resolves to | Non-concern: finding the entries on disk, evaluating the result | IO: (entries) -> NameTable
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use fsa1_ast::a1::parse_a1;
@@ -124,6 +124,17 @@ fn split_corner(entry_name: &str) -> (String, Option<Corner>) {
 /// Lenient, so `a1` and `$A$1` count: a name must never collide with a cell's filename.
 fn ident_is_a1(ident: &str) -> bool {
     parse_a1(ident).is_ok()
+}
+
+/// The suffix that makes a range-named entry presentation rather than a grid.
+pub const PRESENTATION_SUFFIX: &str = ".css";
+
+/// The scoping root a presentation sidecar is named for, or `None` for any other entry. Asked BEFORE
+/// [`is_cell_filename`], which claims every name holding a range separator; the stem still goes
+/// through the filename parser, which may reject its spelling.
+pub fn presentation_stem(name: &str) -> Option<&str> {
+    let stem = name.strip_suffix(PRESENTATION_SUFFIX)?;
+    is_cell_filename(stem).then_some(stem)
 }
 
 /// The routing predicate both loader paths share. A range separator cannot occur in a name, so `:`

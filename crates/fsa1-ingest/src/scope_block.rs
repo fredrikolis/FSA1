@@ -84,7 +84,7 @@ fn holds(anchor: u32, extent: u32, axis: u32) -> bool {
 }
 
 /// The rules the root's cells and its axes earn. `None` where they earn none: a sheet with nothing to
-/// state writes no block, and a tab with no block writes no stylesheet.
+/// state writes no block, and a tab with no block writes no sidecar.
 pub fn encode(sheet: &SheetSource, block: Block, geometry: &BlockGeometry) -> Option<Presentation> {
     let ctx = Ctx::of(&sheet.styles);
     let restored = fsa1_model::default_style().declarations();
@@ -839,10 +839,10 @@ mod tests {
         )
     }
 
-    /// The stylesheet ONE root's presentation is written as — prelude included, since the root is
-    /// what the selectors below it are counted in and an assertion that hid it could not say so.
+    /// The sidecar body ONE root's presentation is written as. The root is what the selectors are
+    /// counted in, and it reaches the reader through the FILENAME rather than through this text.
     fn spell(root: Block, presentation: &Presentation) -> String {
-        fsa1_model::spell_stylesheet(&[(root_rect(root), presentation.clone())])
+        fsa1_model::spell_rules(root_rect(root), presentation)
     }
 
     fn root_rect(block: Block) -> fsa1_model::Rect {
@@ -872,7 +872,7 @@ mod tests {
                 3,
                 &[14.0, 11.0, 11.0, 14.0, 11.0, 11.0, 14.0, 11.0, 11.0]
             ),
-            "@scope (A1:C3) {\n  td:first-child { font-size: 14pt }\n}\n",
+            "  td:first-child { font-size: 14pt }\n",
             "a uniform column against a modal that is the default costs ONE rule",
         );
         assert_eq!(
@@ -881,8 +881,8 @@ mod tests {
                 3,
                 &[14.0, 14.0, 14.0, 11.0, 11.0, 11.0, 12.0, 12.0, 12.0]
             ),
-            "@scope (A1:C3) {\n  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n  \
-             tr:last-child td { font-size: 12pt }\n}\n",
+            "  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n  \
+             tr:last-child td { font-size: 12pt }\n",
             "the modal takes the tie by first appearance, and row 1 is already correct",
         );
         assert_eq!(
@@ -891,9 +891,9 @@ mod tests {
                 3,
                 &[14.0, 14.0, 14.0, 11.0, 11.0, 20.0, 11.0, 11.0, 20.0]
             ),
-            "@scope (A1:C3) {\n  tr:first-child td { font-size: 14pt }\n  \
+            "  tr:first-child td { font-size: 14pt }\n  \
              tr:nth-child(2) td:last-child { font-size: 20pt }\n  \
-             tr:last-child td:last-child { font-size: 20pt }\n}\n",
+             tr:last-child td:last-child { font-size: 20pt }\n",
             "a uniform row, then a cell rule for each coordinate the cascade still leaves wrong",
         );
     }
@@ -917,7 +917,7 @@ mod tests {
             .expect("a Normal font unlike the format's default earns a rule");
         assert_eq!(
             spell(CELL, &presentation),
-            "@scope (A1) {\n  td { font-family: Arial; font-size: 9pt }\n}\n",
+            "  td { font-family: Arial; font-size: 9pt }\n",
             "the cell states no style of its own, so the Normal font is all it can be wearing",
         );
 
@@ -1081,7 +1081,7 @@ mod tests {
     fn a_banded_column_run_collapses_to_one_periodic_rule() {
         assert_eq!(
             block_of(1, 6, &[14.0, 11.0, 14.0, 11.0, 14.0, 11.0]),
-            "@scope (A1:F1) {\n  td { font-size: 14pt }\n  td:nth-child(2n) { font-size: 11pt }\n}\n",
+            "  td { font-size: 14pt }\n  td:nth-child(2n) { font-size: 11pt }\n",
         );
     }
 
@@ -1091,8 +1091,8 @@ mod tests {
     fn two_alike_lines_stay_literal() {
         assert_eq!(
             block_of(1, 4, &[14.0, 11.0, 14.0, 11.0]),
-            "@scope (A1:D1) {\n  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n  \
-             td:last-child { font-size: 11pt }\n}\n",
+            "  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n  \
+             td:last-child { font-size: 11pt }\n",
         );
     }
 
@@ -1126,18 +1126,15 @@ mod tests {
     /// every partition reaches in the limit — can only ever spell `td`.
     #[test]
     fn a_block_of_extent_one_spells_only_a_bare_td() {
-        assert_eq!(
-            block_of(1, 1, &[14.0]),
-            "@scope (A1) {\n  td { font-size: 14pt }\n}\n",
-        );
+        assert_eq!(block_of(1, 1, &[14.0]), "  td { font-size: 14pt }\n",);
         assert_eq!(
             block_of(1, 3, &[14.0, 11.0, 14.0]),
-            "@scope (A1:C1) {\n  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n}\n",
+            "  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n",
             "one row spells columns, never cells",
         );
         assert_eq!(
             block_of(3, 1, &[14.0, 11.0, 14.0]),
-            "@scope (A1:A3) {\n  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n}\n",
+            "  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n",
             "one column spells rows, never cells",
         );
     }
@@ -1159,14 +1156,14 @@ mod tests {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5)), (3, Chars(12.5))],
                 heights: vec![(1, Points(20.0)), (2, Points(20.0))],
             }),
-            "@scope (A1:C2) {\n  td { height: 20pt; width: 12.5ch }\n}\n",
+            "  td { height: 20pt; width: 12.5ch }\n",
         );
         assert_eq!(
             spelled(&BlockGeometry {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5))],
                 heights: Vec::new(),
             }),
-            "@scope (A1:C2) {\n  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n}\n",
+            "  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n",
             "column 3 is unsized, so no td may claim a width",
         );
         assert_eq!(
@@ -1174,8 +1171,8 @@ mod tests {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5)), (3, Chars(9.0))],
                 heights: Vec::new(),
             }),
-            "@scope (A1:C2) {\n  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n  \
-             td:last-child { width: 9ch }\n}\n",
+            "  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n  \
+             td:last-child { width: 9ch }\n",
             "the three do not agree, so none of them is modal",
         );
     }
@@ -1249,23 +1246,22 @@ mod tests {
         names
     }
 
-    /// The whole class B2 named, not its one instance: `check` must accept every stylesheet the write
-    /// leg can emit — its PRELUDE included — whatever the source states. Both directions read one
-    /// vocabulary, so this is the assertion that fails the moment a second copy of a range or a
-    /// spelling appears.
+    /// The whole class B2 named, not its one instance: `check` must accept every sidecar the write
+    /// leg can emit, whatever the source states. Both directions read one vocabulary, so this is the
+    /// assertion that fails the moment a second copy of a spelling appears.
     #[test]
-    fn every_stylesheet_the_encoder_can_emit_reparses_to_the_one_it_emitted() {
+    fn every_sidecar_the_encoder_can_emit_reparses_to_the_one_it_emitted() {
         let reparses = |sheet: &SheetSource, geometry: &BlockGeometry, what: &str| {
             let Some(presentation) = encode(sheet, CELL, geometry) else {
                 return;
             };
             let text = spell(CELL, &presentation);
-            let parsed = fsa1_model::parse_stylesheet("S/@presentation.css", &text)
+            let root = root_rect(CELL);
+            let parsed = fsa1_model::parse_rules("S/A1.css", root, &text)
                 .unwrap_or_else(|d| panic!("{what}: check refuses `{text}`: {d:?}"));
             assert_eq!(
-                parsed,
-                vec![(root_rect(CELL), presentation)],
-                "{what}: `{text}` re-reads as a different stylesheet",
+                parsed, presentation,
+                "{what}: `{text}` re-reads as different rules",
             );
         };
         for &n in ADVERSARIAL {

@@ -1,13 +1,9 @@
-// Concern: the tab's stylesheet — its @scope blocks, their roots, selectors and rule order | Non-concern: what a declaration means, applying a style | IO: (stylesheet) <-> [(Rect, Presentation)]
+// Concern: a sidecar's rules — their selectors, declarations and order, counted in its root | Non-concern: what a declaration means, applying a style, naming the file | IO: (root, text) <-> Presentation
 
 use crate::declaration::{Declaration, parse_declaration, syntax};
 use crate::diagnostic::{Code, Diagnostic, Loc};
-use crate::filename::parse_filename;
 use crate::overlap::Rect;
 use fsa1_ast::Shape;
-
-const CLOSE: &str = "}";
-const PRELUDE: &str = "@scope (";
 
 /// The set of cells a rule selects, region-relative. SIX variants, not the ten selector forms: a
 /// LITERAL index's pseudo-class follows from the region's extent, so it is a spelling ([`spell`]),
@@ -34,125 +30,46 @@ pub struct Presentation {
     pub rules: Vec<Rule>,
 }
 
-/// A stylesheet is a sequence of `@scope (<absolute A1 range>) { … }` blocks. Each prelude's root
-/// supplies the `Shape` its selectors are region-relative to, so which index is `:last-child` — and
-/// whether an axis carries a selector of its own at all — follows from the root rather than from any
-/// file. Roots may overlap and repeat; the blocks come back in the order written, which IS the cascade.
-pub fn parse_stylesheet(
-    file: &str,
-    content: &str,
-) -> Result<Vec<(Rect, Presentation)>, Vec<Diagnostic>> {
+/// A sidecar holds rules and nothing else: its FILENAME is the root, and that root supplies the
+/// `Shape` the selectors are region-relative to, so which index is `:last-child` — and whether an
+/// axis carries a selector of its own at all — follows from the name.
+pub fn parse_rules(file: &str, root: Rect, content: &str) -> Result<Presentation, Vec<Diagnostic>> {
+    let shape = shape_of(root);
     let mut cur = Cursor::new(content, 1);
-    let mut blocks: Vec<(Rect, Presentation)> = Vec::new();
     let mut diags: Vec<Diagnostic> = Vec::new();
-
-    loop {
-        cur.skip_ws();
-        if cur.peek().is_none() {
-            break;
-        }
-        let (line, col) = (cur.line, cur.col);
-        let Some(root) = parse_prelude(file, &mut cur, &mut diags) else {
-            break;
-        };
-        let shape = shape_of(root);
-        let (placed, closed) = parse_rules(file, &mut cur, shape, &mut diags);
-        check_rule_order(file, &placed, shape, &mut diags);
-        if placed.is_empty() && diags.is_empty() {
-            diags.push(located(
-                file,
-                line,
-                col,
-                Code::PresentationSyntax,
-                "an empty presentation block is not written; delete it".to_string(),
-            ));
-        }
-        blocks.push((
-            root,
-            Presentation {
-                rules: placed.into_iter().map(|(_, _, r)| r).collect(),
-            },
+    let placed = read_rules(file, &mut cur, shape, &mut diags);
+    check_rule_order(file, &placed, shape, &mut diags);
+    if placed.is_empty() && diags.is_empty() {
+        diags.push(located(
+            file,
+            1,
+            1,
+            Code::PresentationSyntax,
+            "a sidecar declaring nothing is not written; delete it".to_string(),
         ));
-        if !closed {
-            break;
-        }
     }
-
     if diags.is_empty() {
-        Ok(blocks)
+        Ok(Presentation {
+            rules: placed.into_iter().map(|(_, _, r)| r).collect(),
+        })
     } else {
         Err(diags)
     }
 }
 
-/// The root the `@scope (<range>) {` line opens the block over. `None` once it has earned a refusal,
-/// which ends the whole read: a prelude nobody could parse leaves no way to know what the block below
-/// it means, and reading its rules against a guessed shape would mint refusals the author never earned.
-fn parse_prelude(file: &str, cur: &mut Cursor<'_>, diags: &mut Vec<Diagnostic>) -> Option<Rect> {
-    let (line, col) = (cur.line, cur.col);
-    let head = cur.take_until(&['{', '}', ';']).trim_end();
-    let mut refuse = |code, message| {
-        diags.push(located(file, line, col, code, message));
-        None::<Rect>
-    };
-    if cur.peek() != Some('{') {
-        return refuse(
-            Code::PresentationSyntax,
-            format!("a stylesheet holds `@scope (<range>) {{ ... }}` blocks; found {head:?}"),
-        );
-    }
-    cur.bump();
-    let Some(range) = head.strip_prefix(PRELUDE).and_then(|r| r.strip_suffix(')')) else {
-        return refuse(
-            Code::PresentationSyntax,
-            format!("a block opens `@scope (<range>) {{`; found {head:?}"),
-        );
-    };
-    // The A1 reader a FILENAME goes through, so a root and a range file are read by one grammar: `A:A` and a degenerate `A1:A1` are refused here for the reasons they are refused there.
-    let root = match parse_filename(range) {
-        Ok(parsed) => parsed.region,
-        Err(d) => return refuse(d.code, d.message),
-    };
-    if range != root.label() {
-        return refuse(
-            Code::NonCanonicalPresentation,
-            format!(
-                "non-canonical scoping root {range:?}: write `{}`",
-                root.label()
-            ),
-        );
-    }
-    Some(root)
-}
-
-/// The rules between a prelude and its closing `}`, and whether that `}` was reached. Recovery is per
-/// rule while the block's shape still holds; a rule that is not `<selector> { … }` ends the read,
-/// since nothing after it can be located against a block whose extent is no longer known.
-fn parse_rules(
+/// Every rule the sidecar holds. Recovery is per rule; one that is not `<selector> { … }` ends the
+/// read, since nothing after it can be located against a text whose framing is no longer known.
+fn read_rules(
     file: &str,
     cur: &mut Cursor<'_>,
     shape: Shape,
     diags: &mut Vec<Diagnostic>,
-) -> (Vec<(u32, u32, Rule)>, bool) {
+) -> Vec<(u32, u32, Rule)> {
     let mut placed: Vec<(u32, u32, Rule)> = Vec::new();
     loop {
         cur.skip_ws();
-        match cur.peek() {
-            None => {
-                diags.push(located(
-                    file,
-                    cur.line,
-                    cur.col,
-                    Code::PresentationSyntax,
-                    "the block is never closed; a block ends with `}`".to_string(),
-                ));
-                return (placed, false);
-            }
-            Some('}') => {
-                cur.bump();
-                return (placed, true);
-            }
-            _ => {}
+        if cur.peek().is_none() {
+            return placed;
         }
         let (line, col) = (cur.line, cur.col);
         let selector = cur.take_until(&['{', '}', ';']).trim_end();
@@ -164,7 +81,7 @@ fn parse_rules(
                 Code::PresentationSyntax,
                 format!("a rule is `<selector> {{ <declarations> }}`; found {selector:?}"),
             ));
-            return (placed, false);
+            return placed;
         }
         cur.bump();
         let target = resolve_target(file, selector, line, col, shape, diags);
@@ -195,17 +112,10 @@ fn parse_rules(
     }
 }
 
-/// [`parse_stylesheet`] read backward. Each block's rules must already ascend by [`Target`] with each
-/// rule's declarations alphabetical, the one order this parses back from; a root holding no rule
-/// writes NO block, and a tab with no block writes no stylesheet at all.
-pub fn spell_stylesheet(blocks: &[(Rect, Presentation)]) -> String {
-    blocks
-        .iter()
-        .map(|(root, presentation)| spell_block(*root, presentation))
-        .collect()
-}
-
-fn spell_block(root: Rect, presentation: &Presentation) -> String {
+/// [`parse_rules`] read backward. The rules must already ascend by [`Target`] with each rule's
+/// declarations alphabetical, the one order this parses back from; a root holding no rule writes NO
+/// sidecar. `root` supplies the extent an index is spelled against, exactly as the filename does.
+pub fn spell_rules(root: Rect, presentation: &Presentation) -> String {
     let shape = shape_of(root);
     let rules: Vec<String> = presentation
         .rules
@@ -235,11 +145,7 @@ fn spell_block(root: Rect, presentation: &Presentation) -> String {
                 .all(|w| w[0].target < w[1].target),
         "a written presentation holds rules, ascending by target",
     );
-    format!(
-        "{PRELUDE}{}) {{\n{}\n{CLOSE}\n",
-        root.label(),
-        rules.join("\n")
-    )
+    format!("{}\n", rules.join("\n"))
 }
 
 /// The extent a root's selectors count in: its own, the filename no longer supplying one.
@@ -500,7 +406,7 @@ fn pseudo(index: u32, extent: u32) -> String {
 fn parse_selector(text: &str, shape: Shape) -> Result<Target, (Code, String)> {
     if text.starts_with('@') {
         return Err(syntax(&format!(
-            "an at-rule has no place inside a presentation block: {text:?}"
+            "an at-rule has no place inside a sidecar: {text:?}"
         )));
     }
     let parts: Vec<&str> = text.split_whitespace().collect();
@@ -737,9 +643,8 @@ mod tests {
     };
 
     const REGION: Shape = Shape { rows: 4, cols: 3 };
-    const SHEET: &str = "Sheet1/@presentation.css";
 
-    /// The root a `shape` spells when it is anchored at A1 — the one a test's block is read under.
+    /// The root a `shape` spells when it is anchored at A1 — the one a test's rules are read under.
     fn root_of(shape: Shape) -> Rect {
         Rect {
             min_col: 0,
@@ -749,19 +654,28 @@ mod tests {
         }
     }
 
-    /// The stylesheet a test's block text is read as. A case below states the block's BODY under the
-    /// bare open the format retired, plus the shape it is read at; which root spells that shape is
-    /// mechanical, so the prelude is substituted here rather than restated in every literal. Anything
-    /// before the open is dropped: a stylesheet holds blocks and no grid.
-    fn stylesheet(content: &str, shape: Shape) -> String {
-        let block = &content[content
-            .find(OPEN)
-            .expect("a case opens its block `@scope {`")..];
-        block.replacen(OPEN, &format!("{PRELUDE}{}) {{", root_of(shape).label()), 1) + "\n"
+    /// The sidecar path a `shape`'s rules are located against.
+    fn sidecar(shape: Shape) -> String {
+        format!("Sheet1/{}.css", root_of(shape).label())
+    }
+
+    /// The rules a test's case states. A case frames them in the open and close the format retired,
+    /// plus the shape they are read at; the frame is stripped here rather than dropped from every
+    /// literal. Anything before the open goes with it: a sidecar holds rules and no grid.
+    fn body(content: &str) -> String {
+        let inner = content
+            .split_once(OPEN)
+            .expect("a case frames its rules with `@scope {`")
+            .1;
+        let inner = inner
+            .rsplit_once('}')
+            .expect("a case closes its frame with `}`")
+            .0;
+        format!("{}\n", inner.trim_matches('\n'))
     }
 
     fn parse(content: &str, shape: Shape) -> Result<Presentation, Vec<Diagnostic>> {
-        parse_stylesheet(SHEET, &stylesheet(content, shape)).map(|mut blocks| blocks.remove(0).1)
+        parse_rules(&sidecar(shape), root_of(shape), &body(content))
     }
 
     fn rules(content: &str) -> Vec<Rule> {
@@ -1334,10 +1248,10 @@ mod tests {
         }
     }
 
-    /// The two directions over one text: what [`spell_stylesheet`] writes is what [`parse_stylesheet`]
-    /// reads, prelude included, and including which axis of extent 1 carries no selector.
+    /// The two directions over one text: what [`spell_rules`] writes is what [`parse_rules`] reads,
+    /// including which axis of extent 1 carries no selector.
     #[test]
-    fn every_canonical_stylesheet_spells_back_to_the_text_it_was_read_from() {
+    fn every_canonical_sidecar_spells_back_to_the_text_it_was_read_from() {
         for (shape, content) in [
             (REGION, "@scope {\n  td { font-size: 11pt }\n}"),
             (
@@ -1357,96 +1271,33 @@ mod tests {
                 "@scope {\n  td { border-bottom: 1px solid #3f0421; height: 15pt; width: 9ch }\n}",
             ),
         ] {
-            let text = stylesheet(content, shape);
-            let parsed =
-                parse_stylesheet(SHEET, &text).unwrap_or_else(|d| panic!("{text:?}: {:?}", d[0]));
+            let text = body(content);
+            let root = root_of(shape);
+            let parsed = parse_rules(&sidecar(shape), root, &text)
+                .unwrap_or_else(|d| panic!("{text:?}: {:?}", d[0]));
             assert_eq!(
-                spell_stylesheet(&parsed),
+                spell_rules(root, &parsed),
                 text,
                 "{text:?} did not spell back to itself",
             );
         }
     }
 
-    /// A stylesheet is a SEQUENCE, and every root form is a legal prelude: the two spellings a closed
-    /// range takes, a rectangle no file need cover, and two blocks over one coordinate.
+    /// The FILENAME's root is what the selectors count in, and a sidecar states no extent of its own.
     #[test]
-    fn a_stylesheet_reads_every_block_it_holds_in_the_order_written() {
-        let text = "@scope (A1) {\n  td { font-weight: bold }\n}\n\
-                    @scope (E1:G5) {\n  td { background-color: #00ffff }\n}\n\
-                    @scope (A1:C3) {\n  td { color: #3f0421 }\n}\n";
-        let blocks = parse_stylesheet(SHEET, text).expect("three blocks");
-        assert_eq!(
-            blocks.iter().map(|(r, _)| r.label()).collect::<Vec<_>>(),
-            vec!["A1", "E1:G5", "A1:C3"],
-        );
-        assert_eq!(blocks[1].1.rules.len(), 1);
-        assert_eq!(spell_stylesheet(&blocks), text, "and it spells back whole");
-    }
-
-    /// The root is read by the FILENAME grammar, so a root and a range file are refused for the same
-    /// reasons — and each refusal lands on the prelude's own line rather than on some file.
-    #[test]
-    fn a_prelude_is_refused_located_for_every_root_a_range_file_would_be() {
-        for (text, code) in [
-            (
-                "@scope (A:A) {\n  td { color: #3f0421 }\n}\n",
-                Code::WholeColumnRowReserved,
-            ),
-            (
-                "@scope (3:3) {\n  td { color: #3f0421 }\n}\n",
-                Code::WholeColumnRowReserved,
-            ),
-            (
-                "@scope (A1:A1) {\n  td { color: #3f0421 }\n}\n",
-                Code::DegenerateRange,
-            ),
-            (
-                "@scope (a1:c3) {\n  td { color: #3f0421 }\n}\n",
-                Code::LowercaseColumn,
-            ),
-            (
-                "@scope (C3:A1) {\n  td { color: #3f0421 }\n}\n",
-                Code::NonCanonicalRange,
-            ),
-            (
-                "@scope (A1.css) {\n  td { color: #3f0421 }\n}\n",
-                Code::MalformedFilename,
-            ),
-            // The one spelling: `-` is a FILENAME's separator, and a prelude is content.
-            (
-                "@scope (A1-C3) {\n  td { color: #3f0421 }\n}\n",
-                Code::NonCanonicalPresentation,
-            ),
-            (
-                "@scope A1:C3 {\n  td { color: #3f0421 }\n}\n",
-                Code::PresentationSyntax,
-            ),
-            (
-                "@scope(A1:C3) {\n  td { color: #3f0421 }\n}\n",
-                Code::PresentationSyntax,
-            ),
-            ("@scope (A1:C3)\n", Code::PresentationSyntax),
-            ("td { color: #3f0421 }\n", Code::PresentationSyntax),
-        ] {
-            let d = parse_stylesheet(SHEET, text).expect_err(text).remove(0);
-            assert_eq!(d.code, code, "{text:?} -> {}", d.message);
-            assert!(
-                matches!(d.loc, Loc::Body { line: 1, .. }),
-                "{text:?}: {:?}",
-                d.loc
-            );
-        }
-    }
-
-    /// A root's own extent is what the selectors below it count in, the filename supplying none.
-    #[test]
-    fn a_selector_index_is_bounded_by_the_root_and_nothing_else() {
-        let ok = "@scope (C5:D9) {\n  tr:last-child td { height: 20pt }\n  td:last-child { width: 9ch }\n}\n";
-        assert!(parse_stylesheet(SHEET, ok).is_ok());
-        let d = parse_stylesheet(
-            SHEET,
-            "@scope (C5:D9) {\n  td:nth-child(3) { width: 9ch }\n}\n",
+    fn a_selector_index_is_bounded_by_the_root_the_filename_names() {
+        let root = Rect {
+            min_col: 2,
+            min_row: 4,
+            max_col: 3,
+            max_row: 8,
+        };
+        let ok = "  tr:last-child td { height: 20pt }\n  td:last-child { width: 9ch }\n";
+        assert!(parse_rules("Sheet1/C5:D9.css", root, ok).is_ok());
+        let d = parse_rules(
+            "Sheet1/C5:D9.css",
+            root,
+            "  td:nth-child(3) { width: 9ch }\n",
         )
         .expect_err("column 3 is outside a two-column root")
         .remove(0);
@@ -1454,15 +1305,19 @@ mod tests {
         assert!(d.message.contains("column 3 is outside"), "{}", d.message);
     }
 
-    /// A block that never closes ends the read rather than running the next prelude's rules against
-    /// its shape, and it says so at the point the text ran out.
+    /// The retired prelude is not silently re-admitted: inside a sidecar it is an at-rule like any
+    /// other, refused where it stands rather than read as a second scoping root.
     #[test]
-    fn an_unclosed_block_is_refused_where_it_ran_out() {
-        let d = parse_stylesheet(SHEET, "@scope (A1:C3) {\n  td { color: #3f0421 }\n")
-            .expect_err("never closed")
-            .remove(0);
+    fn a_retired_prelude_inside_a_sidecar_is_refused_as_the_at_rule_it_is() {
+        let d = parse_rules(
+            &sidecar(REGION),
+            root_of(REGION),
+            "@scope (A1:C3) {\n  td { color: #3f0421 }\n}\n",
+        )
+        .expect_err("a prelude has no place in a sidecar")
+        .remove(0);
         assert_eq!(d.code, Code::PresentationSyntax);
-        assert!(d.message.contains("never closed"), "{}", d.message);
+        assert!(d.message.contains("at-rule"), "{}", d.message);
     }
 
     #[test]
@@ -1626,7 +1481,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_rule_or_block_is_refused() {
+    fn an_empty_rule_or_sidecar_is_refused() {
         for block in [
             "@scope {\n}",
             "@scope {\n  td { }\n}",
@@ -1638,7 +1493,7 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_block_is_refused_rather_than_partly_accepted() {
+    fn a_malformed_rule_is_refused_rather_than_partly_accepted() {
         for block in [
             "@scope {\n  td { color #3f0421 }\n}",
             "@scope {\n  color: #3f0421;\n}",
@@ -1748,7 +1603,7 @@ mod tests {
             matches!(
                 d.loc,
                 Loc::Body {
-                    line: 3,
+                    line: 2,
                     col: 3,
                     ..
                 }
@@ -1759,28 +1614,22 @@ mod tests {
     }
 
     #[test]
-    fn hostile_stylesheets_never_panic() {
+    fn hostile_sidecars_never_panic() {
         for text in [
             "",
             "{{{{\n",
             "}}}}\n",
             "@scope\n",
             "@scope (\n",
-            "@scope () {\n}\n",
-            "@scope (A1:C4) {\n  td { color: #\n",
-            "@scope (\u{1F600}) {\n  td { color: #3f0421 }\n}\n",
-            "@scope (A1:C4) {\n  \u{1F600} { color: #3f0421 }\n}\n",
-            "@scope (A99999999999) {\n  td { color: #3f0421 }\n}\n",
-            "@scope (A1:C4) {\n  td:nth-child(99999999999) { color: #3f0421 }\n}\n",
-            "@scope (A1:C4) {\n  td:nth-child(-1) { color: #3f0421 }\n}\n",
-            "@scope (A1:C4) {\n  td { font-family: \u{4e2d}\u{6587} }\n}\n",
-            &format!(
-                "@scope (A1:C4) {{\n  td {{ font-family: {} }}\n}}\n",
-                "x".repeat(500)
-            ),
-            &"@scope (A1:C4) {\n  td { color: #3f0421 }\n}\n".repeat(200),
+            "  td { color: #\n",
+            "  \u{1F600} { color: #3f0421 }\n",
+            "  td:nth-child(99999999999) { color: #3f0421 }\n",
+            "  td:nth-child(-1) { color: #3f0421 }\n",
+            "  td { font-family: \u{4e2d}\u{6587} }\n",
+            &format!("  td {{ font-family: {} }}\n", "x".repeat(500)),
+            &"  td { color: #3f0421 }\n".repeat(200),
         ] {
-            let _ = parse_stylesheet(SHEET, text);
+            let _ = parse_rules(&sidecar(REGION), root_of(REGION), text);
         }
     }
 }

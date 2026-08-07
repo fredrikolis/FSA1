@@ -446,7 +446,7 @@ fn cmd_convert(rest: &[String]) -> u8 {
                 Err(e) => return fail(ErrorCode::Io, &read_err(&tab_path, e)),
             };
             let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(new_name) = fsa1_model::reseparate_range_name(&name, target) else {
+            let Some(new_name) = fsa1_model::reseparate_entry_name(&name, target) else {
                 continue;
             };
             let to_path = tab_path.join(&new_name);
@@ -804,7 +804,7 @@ COMMANDS:
            differ only in the output form. Default mode is COMBINED: a literal shows its value; a
            formula shows `<value> ← =<formula>` (value AND source in one glance). Narrow with --mode
            values (computed only) or --mode functions (authored source only). --format html carries the
-           SAME cells as one standalone HTML document on stdout, styled by the tab's stylesheet.
+           SAME cells as one standalone HTML document on stdout, styled by the tab's sidecars.
   check    Lint the workbook — overlap, dimension-mismatch, and cycle diagnostics — as an ASCII table
            pointing at the offending file(s). Exits non-zero if any error-severity diagnostic. Name a
            tab/region IN THE PATH (wb/Tab or wb/Tab/A1:B2) to report ONLY the diagnostics inside that
@@ -1161,7 +1161,7 @@ DESCRIPTION:
   extension — into an FSA1 workbook the format-blind engine renders and evaluates. Each sheet becomes
   a tab folder; each rectangular block the decomposition cuts becomes ONE grid file named by the closed
   A1 range it fills (a sheet with no content makes no file), and the appearance of its cells rides along
-  in the tab's @presentation.css. Cell values map to FSA1's value model (a date-typed cell becomes
+  in a <range>.css sidecar beside it. Cell values map to FSA1's value model (a date-typed cell becomes
   its Excel serial); formulas are translated to FSA1's Excel-A1 grammar (an xlsx formula is already
   Excel-A1), and a formula FSA1 cannot parse is preserved verbatim and flagged as a located error at
   load (check reports it), not aborted. Refuses to overwrite a non-empty destination (never clobbers);

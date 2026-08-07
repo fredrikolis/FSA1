@@ -707,10 +707,8 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
 <span class="p">$</span> fsa1-cli unpack Q3.xlsx
 <span class="p">$</span> cat Q3/Orders/D5
 <span class="fx">=FUNCTION</span><span class="fmt">~NUMBER-FORMAT</span>
-<span class="p">$</span> cat Q3/Orders/@presentation.css
-<span class="css">@scope (RANGE) {
-  <span class="decl">CSS-STYLING</span>
-}</span></div>
+<span class="p">$</span> cat Q3/Orders/RANGE.css
+<span class="css"><span class="decl">CSS-STYLING</span></span></div>
       </div>
 
       <div class="frame">
@@ -718,10 +716,8 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
 <span class="p">$</span> fsa1-cli unpack Q3.xlsx
 <span class="p">$</span> cat Q3/Orders/D5
 <span class="fx">=SUM(D2:D4)</span><span class="fmt">~$#,##0</span>
-<span class="p">$</span> cat Q3/Orders/@presentation.css
-<span class="css">@scope (D5) {
-  <span class="decl">td { border-top: 2px solid #1b6b58 }</span>
-}</span></div>
+<span class="p">$</span> cat Q3/Orders/D5.css
+<span class="css"><span class="decl">td { border-top: 2px solid #1b6b58 }</span></span></div>
       </div>
 
     </div></div>

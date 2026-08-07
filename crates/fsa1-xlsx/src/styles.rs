@@ -401,10 +401,10 @@ mod tests {
     }
 
     fn styled(rule: &str) -> CellStyle {
-        let sheet = format!("@scope (A1:B2) {{\n  {rule}\n}}\n");
-        let blocks = fsa1_model::parse_stylesheet("S/@presentation.css", &sheet)
+        let root = fsa1_model::parse_filename("A1:B2").expect("a root").region;
+        let presentation = fsa1_model::parse_rules("S/A1:B2.css", root, &format!("  {rule}\n"))
             .unwrap_or_else(|d| panic!("{rule:?} should parse: {:?}", d[0]));
-        fsa1_model::style::resolve(&blocks[0].1, 1, 1)
+        fsa1_model::style::resolve(&presentation, 1, 1)
     }
 
     #[test]
@@ -613,10 +613,7 @@ mod tests {
             "Sheet1",
             &[
                 ("A1:A2", "Total\n12.50%"),
-                (
-                    "@presentation.css",
-                    "@scope (A1:A2) {\n  tr:first-child td { font-weight: bold }\n}\n",
-                ),
+                ("A1:A2.css", "  tr:first-child td { font-weight: bold }\n"),
             ],
         )]);
         let wb = wb.unwrap_or_else(|d| panic!("the workbook loads: {:?}", d[0]));
