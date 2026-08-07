@@ -27,12 +27,9 @@ and the repo carries ONE plugin which is the repo root (`"source": "./"`). If th
 says `Run /reload-plugins to activate.`, run that.
 
 A version bump in `.claude-plugin/plugin.json` is what offers users an update — pushing commits
-without bumping it leaves `/plugin update` reporting they are already current.
-
-`v0.1.0` published this marketplace as `fsa1`, so anyone who added it then holds `fsa1@fsa1`. A
-marketplace has no `renames` migration the way a plugin does, so that coordinate cannot be forwarded:
-they remove the old marketplace and add it again. The plugin name `fsa1` has NOT changed and never
-will — a published plugin name cannot be renamed without breaking every install of it.
+without bumping it leaves `/plugin update` reporting they are already current. The `name` beside it
+is the one field that can never change: a published plugin name is the slug every install holds, and
+renaming it breaks all of them. Relabel with `displayName` instead.
 
 `bin/` = the capability (any file here is callable as a bare command while the plugin is enabled).
 `skills/` = the instructions (PATH alone doesn't teach Claude *when* to run it).

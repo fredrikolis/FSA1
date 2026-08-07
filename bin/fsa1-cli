@@ -48,16 +48,6 @@ BIN="fsa1-cli${EXT}"
 ASSET="fsa1-cli-${SLUG}${EXT}"       # release asset name (matches .github/workflows/plugin-release.yml)
 CACHE="${DATA}/bin/${BIN}"
 
-# Cargo target triple, for the build-from-source fallback.
-case "${SLUG}" in
-  linux-x86_64)    TRIPLE="x86_64-unknown-linux-gnu" ;;
-  linux-aarch64)   TRIPLE="aarch64-unknown-linux-gnu" ;;
-  macos-x86_64)    TRIPLE="x86_64-apple-darwin" ;;
-  macos-aarch64)   TRIPLE="aarch64-apple-darwin" ;;
-  windows-x86_64)  TRIPLE="x86_64-pc-windows-msvc" ;;
-  *)               TRIPLE="" ;;
-esac
-
 log() { echo "fsa1-cli launcher: $*" >&2; }   # never pollute stdout — that is the tool's output
 
 # --- 1. explicit override --------------------------------------------------------------------------
