@@ -1,6 +1,6 @@
 {
   "name": "fredrikolis",
-  "description": "Tools from fredrikolis. FSA1 turns Excel (.xlsx) and OpenDocument (.ods) spreadsheets into file trees an agent can grep, diff and edit.",
+  "description": "Tools from fredrikolis. FSA1 stores a spreadsheet as a file tree, so an Excel (.xlsx) or OpenDocument (.ods) workbook becomes greppable, diffable and editable with ordinary file tools.",
   "owner": {
     "name": "Fredrik",
     "url": "https://github.com/fredrikolis"
