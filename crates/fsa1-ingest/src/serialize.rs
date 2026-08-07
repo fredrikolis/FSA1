@@ -1,4 +1,4 @@
-// Concern: spells a sheet's blocks as grid files and its presentation as a sidecar | Non-concern: choosing the blocks, reading the source, writing to disk | IO: (sheet, blocks) -> [(name, body)]
+// Concern: spells a sheet's blocks and its geometry as named bodies | Non-concern: choosing the blocks, reading the source, writing to disk (lib.rs) | IO: (sheet, blocks) -> [(name, body)]
 
 use fsa1_ast::a1::format_cell;
 use fsa1_ast::{ErrKind, Value};
@@ -37,32 +37,66 @@ pub fn sheet_files(
         .iter()
         .map(|block| (block_name(*block), block_grid(sheet, *block, res, warnings)))
         .collect();
-    let root = used_region(&blocks);
-    let geometry = scope_block::geometry(sheet, root, warnings);
-    if let Some(root) = root
-        && let Some(presentation) = scope_block::encode(sheet, root, &geometry)
+    // Cut like the content is, so a block's own rows and columns are the ones its rules index and a uniform region is ONE rule. Sheet axis geometry is no block's to state and goes to the tab layer.
+    let no_geometry = scope_block::BlockGeometry::default();
+    for block in &blocks {
+        if let Some(presentation) = scope_block::encode(sheet, *block, &no_geometry) {
+            files.push((
+                format!("{}{PRESENTATION_SUFFIX}", block_name(*block)),
+                spell_rules(root_rect(*block), &presentation),
+            ));
+        }
+    }
+    // The tab layer counts its indices in the tab's CONTENT, which is what the reader unions back out of the range filenames — so writer and reader spell one root, never two.
+    let geometry = scope_block::geometry(sheet, warnings);
+    // A tab states its own extent: an EMPTY range file marks the corner where no block reaches it, and that is what the tab layer counts its indices in.
+    if let Some(marker) = extent_marker(&blocks, &geometry) {
+        files.push((block_name(marker), blank_grid(marker)));
+        blocks.push(marker);
+        blocks.sort_by_key(scope_block::key);
+    }
+    if let Some(root) = content_rect(&blocks)
+        && let Some(layer) = scope_block::tab_layer(root, &geometry, &sheet.name, warnings)
     {
-        files.push((
-            format!("{}{PRESENTATION_SUFFIX}", block_name(root)),
-            spell_rules(root_rect(root), &presentation),
-        ));
+        files.push((PRESENTATION_SUFFIX.to_string(), spell_rules(root, &layer)));
     }
     files
 }
 
-/// The sheet's whole occupancy as one rectangle — the root its presentation is stated over. Wider
-/// than any styled rect on purpose: a column may carry content and no style and still have an
-/// authored width, and only a root spanning it can say so.
-fn used_region(blocks: &[Block]) -> Option<Block> {
-    blocks.iter().copied().reduce(|acc, b| {
-        let (col, row) = (acc.col.min(b.col), acc.row.min(b.row));
-        Block {
-            col,
-            row,
-            cols: (acc.col + acc.cols).max(b.col + b.cols) - col,
-            rows: (acc.row + acc.rows).max(b.row + b.rows) - row,
-        }
+/// A1 to the furthest axis the geometry states, for a tab whose cells state NOTHING — the one case
+/// where presentation would otherwise have no range file to be rooted in. Where blocks exist they
+/// are the extent already, and a marker beside them would take a coordinate a block covers (FS6).
+fn extent_marker(blocks: &[Block], geometry: &scope_block::BlockGeometry) -> Option<Block> {
+    if !blocks.is_empty() {
+        return None;
+    }
+    let cols = geometry.widths.iter().map(|&(a, _)| a).max()?;
+    let rows = geometry.heights.iter().map(|&(a, _)| a).max().unwrap_or(1);
+    Some(Block {
+        col: 1,
+        row: 1,
+        cols,
+        rows,
     })
+}
+
+/// The marker's body: the range it names, filled with blanks, so it fills its own range exactly as
+/// every other grid file does.
+fn blank_grid(block: Block) -> String {
+    let row = "\t".repeat(block.cols as usize - 1);
+    (0..block.rows)
+        .map(|_| row.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// How far the sheet's content reaches, as one rectangle: the union of every block, which is exactly
+/// what a reader gets by unioning the range filenames this same pass writes.
+fn content_rect(blocks: &[Block]) -> Option<Rect> {
+    blocks
+        .iter()
+        .map(|b| root_rect(*b))
+        .fold(None, |acc, r| Rect::union(acc, Some(r)))
 }
 
 /// A block's 1-based anchor and extent as the 0-based closed rectangle a scoping root is spelled from.
@@ -1004,47 +1038,48 @@ mod tests {
 
         let written = files(&sheet, &mut Vec::new());
         assert_eq!(written.len(), 2, "{written:?}");
-        assert_eq!(written[0].0, "A1:D20");
+        assert_eq!(
+            written[0].0, "A1:D20",
+            "the title and the table are ONE block"
+        );
         assert_eq!(
             written[1],
             (
-                "A1:D20.css".to_string(),
+                ".css".to_string(),
                 "  td:first-child { width: 14.5ch }\n".to_string()
             ),
+            "the column's width is the SHEET's, so the tab layer carries it",
         );
         accepted(&written);
     }
 
-    /// A one-column file can spell no column selector at all, so `td` is the only way it sizes its
-    /// own column — and the same for a one-row file's height.
+    /// A tab whose cells state nothing still states how far it REACHES: the empty range file is
+    /// that marker, and it is what roots the geometry that would otherwise have no file to sit on.
     #[test]
-    fn a_single_axis_block_sizes_itself_through_a_bare_td() {
-        let mut sheet = styled(
-            2,
-            1,
-            vec![(SourceValue::Number(1.0), None), (text("x"), None)],
-            Vec::new(),
-        );
-        sheet.col_widths.insert(0, 9.0);
-        sheet.row_heights.insert(1, 20.0);
-        let written = files(&sheet, &mut Vec::new());
+    fn a_tab_with_no_cells_marks_its_extent_so_its_geometry_crosses() {
+        let mut sheet = styled(0, 0, Vec::new(), Vec::new());
+        sheet.col_widths.insert(1, 20.0);
+        sheet.row_heights.insert(2, 30.0);
+        let mut warnings = Vec::new();
+        let written = files(&sheet, &mut warnings);
         assert_eq!(
             written,
             vec![
-                ("A1:A2".to_string(), "1\nx".to_string()),
+                ("A1:B3".to_string(), "\t\n\t\n\t".to_string()),
                 (
-                    "A1:A2.css".to_string(),
-                    "  td { width: 9ch }\n  tr:last-child td { height: 20pt }\n".to_string()
+                    ".css".to_string(),
+                    "  tr:last-child td { height: 30pt }\n  td:last-child { width: 20ch }\n"
+                        .to_string()
                 ),
             ],
         );
+        assert!(warnings.is_empty(), "nothing is dropped now: {warnings:?}");
         accepted(&written);
     }
 
-    /// Reachable only for an axis lying entirely outside the sheet's occupancy: no file's own range
-    /// contains it, and every eligible file is the empty set.
+    /// An axis the content never reaches is still one no selector can name — dropped and NAMED.
     #[test]
-    fn an_axis_no_file_contains_is_dropped_and_named() {
+    fn an_axis_the_content_never_reaches_is_dropped_and_named() {
         let mut sheet = styled(1, 1, vec![(SourceValue::Number(1.0), None)], Vec::new());
         sheet.col_widths.insert(4, 20.0);
         sheet.row_heights.insert(6, 30.0);

@@ -220,12 +220,8 @@ fn read_sheet(
                     None => SourceValue::Blank,
                 },
             };
-            // The .xlsx cascade — the cell's own `s=`, else its row's default, else its column's.
-            let default = by_row.get(&row).or_else(|| by_column.get(&col)).copied();
-            let style = style_at
-                .get(&(col, row))
-                .copied()
-                .or_else(|| default.filter(|&index| stated_on(&value, &styles, index)));
+            // The cell's OWN statement: the axis runs stay runs, and `style_index` reads the cascade over them.
+            let style = style_at.get(&(col, row)).copied();
             cells.push(SourceCell { value, style });
         }
     }
@@ -243,6 +239,8 @@ fn read_sheet(
         cols,
         cells,
         styles,
+        col_styles: by_column,
+        row_styles: by_row,
         col_widths,
         row_heights,
         merges: visuals.map(|v| v.merges.clone()).unwrap_or_default(),
@@ -272,14 +270,6 @@ fn within(
     }
     warnings.extend(unowned(axis, sheet, &beyond));
     inside
-}
-
-/// Whether an axis's default reaches THIS cell. A valued cell wears it whatever it says; on the blanks
-/// the axis also dresses the answer is the occupancy question itself, since a look that needs a glyph
-/// shows on none of them and taking it there gives a blank a look `pack` drops — which is exactly how
-/// the two legs come to disagree about what a blank is.
-fn stated_on(value: &SourceValue, styles: &StyleTable, index: u32) -> bool {
-    *value != SourceValue::Blank || crate::scope_block::paints_blank(styles, index)
 }
 
 /// The default style each axis states, resolved INSIDE the extent and nowhere else: the statement

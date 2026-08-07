@@ -428,7 +428,7 @@ fn unpack_of_a_styled_ods_never_claims_nothing_lost_and_names_what_it_did_not_in
                 .to_string_lossy()
                 .into_owned()
         })
-        .filter(|n| fsa1_model::presentation_stem(n).is_some())
+        .filter(|n| fsa1_model::is_presentation_entry(n))
         .collect();
     assert!(styled.is_empty(), "{styled:?}");
 }

@@ -1,4 +1,4 @@
-// Concern: what an entry's NAME means — a range, a sidecar or a defined name — and what a name resolves to | Non-concern: finding the entries on disk, evaluating the result | IO: (entries) -> NameTable
+// Concern: what an entry's NAME means — a range, a rooted or tab-level sidecar, a name — and what it resolves to | Non-concern: finding the entries on disk, evaluating | IO: (entries) -> NameTable
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use fsa1_ast::a1::parse_a1;
@@ -135,6 +135,17 @@ pub const PRESENTATION_SUFFIX: &str = ".css";
 pub fn presentation_stem(name: &str) -> Option<&str> {
     let stem = name.strip_suffix(PRESENTATION_SUFFIX)?;
     is_cell_filename(stem).then_some(stem)
+}
+
+/// The tab's OWN layer: the suffix alone, so no stem and no region — a different kind from a rooted
+/// sidecar rather than a degenerate one, which is why it is asked for separately.
+pub fn is_tab_layer(name: &str) -> bool {
+    name == PRESENTATION_SUFFIX
+}
+
+/// Either kind — what a loader asks when it wants every entry that states presentation.
+pub fn is_presentation_entry(name: &str) -> bool {
+    is_tab_layer(name) || presentation_stem(name).is_some()
 }
 
 /// The routing predicate both loader paths share. A range separator cannot occur in a name, so `:`

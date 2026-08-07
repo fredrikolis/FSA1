@@ -1,0 +1,17 @@
+# column_run_default_style.xlsx -- FROZEN EXPECTATION.
+# A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4 and plan 11.
+# Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+file: Run/.css
+|  td:nth-child(2) { width: 13ch }
+|  td:nth-child(3) { width: 13ch }
+|  td:last-child { width: 13ch }
+|
+file: Run/A1:D4
+|A1	B1	C1	D1
+|A2	B2	C2	D2
+|A3	B3	C3	D3
+|A4	B4	C4	D4
+file: Run/A1:D4.css
+|  td { font-weight: bold }
+|  td:first-child { font-weight: normal }
+|

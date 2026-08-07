@@ -197,6 +197,24 @@ def make_column_and_row_default_style():
     _save(wb, "column_and_row_default_style.xlsx")
 
 
+def make_column_run_default_style():
+    """A `<col style=>` run spanning SEVERAL columns, which `column_and_row_default_style` does not:
+    its run is one column wide, so a reader that expands a run into per-cell styles and a reader that
+    keeps it a run spell that fixture identically. Three columns cannot be told apart that way — the
+    run either crosses as a column rule or it comes back as one rule per cell.
+
+    The body is four rows so the per-cell spelling would be twelve rules against three, and the
+    columns carry no cell-level style at all, so nothing but the axis statement can put the look
+    back."""
+    wb, s = _wb("Run")
+    for row in range(1, 5):
+        for col in "ABCD":
+            s[f"{col}{row}"] = f"{col}{row}"
+    for col in "BCD":
+        s.column_dimensions[col].font = Font(name="Calibri", size=11, bold=True)
+    _save(wb, "column_run_default_style.xlsx")
+
+
 def make_theme1_color_noop():
     """Every cell carries `theme=1, tint=0` — the document's own default text colour. A visual no-op
     that must produce NO `color` declaration, while the bold beside it still crosses."""
@@ -347,6 +365,7 @@ def main():
     make_normal_font_arial_9()
     make_sparse_blocks_normal_font_arial_9()
     make_column_and_row_default_style()
+    make_column_run_default_style()
     make_theme1_color_noop()
     make_axis_width_and_height()
     make_title_over_table()

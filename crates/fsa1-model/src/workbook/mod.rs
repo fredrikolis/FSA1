@@ -24,7 +24,7 @@ use fsa1_ast::{
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::grid::{Cell as GridCell, Grid};
 use crate::names::{
-    NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename, presentation_stem,
+    NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename, is_presentation_entry,
 };
 use crate::overlap::{Rect, detect_overlaps};
 use crate::{ParsedFile, parse_file, presentation_in_grid};
@@ -311,7 +311,7 @@ impl Workbook {
                     files,
                 });
                 raw_names.extend(names);
-            } else if presentation_stem(&entry_name).is_some() {
+            } else if is_presentation_entry(&entry_name) {
                 // A sidecar styles COORDINATES, and a coordinate is a tab's; at the root it names none.
                 root_faults.push(presentation_in_grid(Loc::file(&entry_name)));
             } else if let Some(name) = read_name_entry(
@@ -340,7 +340,7 @@ impl Workbook {
             let mut cells = Vec::new();
             for (fname, contents) in files {
                 // A sidecar is classified FIRST, exactly as on disk: its stem holds a range separator, so the cell arm would otherwise take it and its name would die as malformed.
-                if presentation_stem(&fname).is_some() {
+                if is_presentation_entry(&fname) {
                     continue;
                 }
                 if is_cell_filename(&fname) {
@@ -824,7 +824,7 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
         if Workbook::is_reserved_entry(&name) {
             continue;
         }
-        if ft.is_file() && presentation_stem(&name).is_some() {
+        if ft.is_file() && is_presentation_entry(&name) {
             continue;
         }
         if ft.is_file() && is_cell_filename(&name) {
@@ -864,7 +864,7 @@ fn read_name_entry(
             },
         }));
     }
-    if ft.is_file() && !is_cell_filename(entry_name) && presentation_stem(entry_name).is_none() {
+    if ft.is_file() && !is_cell_filename(entry_name) && !is_presentation_entry(entry_name) {
         return Ok(Some(RawNameEntry {
             scope,
             entry_name: entry_name.to_string(),

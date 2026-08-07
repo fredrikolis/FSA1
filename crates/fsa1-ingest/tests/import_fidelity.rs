@@ -260,11 +260,12 @@ fn a_styled_xlsx_carries_its_appearance_and_names_every_loss() {
         "text-decoration: underline",
         "vertical-align: top",
         "white-space: normal",
-        "height: 22.5pt",
         "background-color: #00b0f0",
     ] {
         assert!(content.contains(declaration), "{declaration}:\n{content}");
     }
+    let layer = tab_layer(&dest, "Visual").expect("the tab layer states the sheet's geometry");
+    assert!(layer.contains("height: 22.5pt"), "{layer}");
     let wb = fsa1_model::Workbook::load_dir(&dest)
         .expect("filesystem read ok")
         .expect("the styled workbook must load clean");
@@ -451,8 +452,7 @@ fn rows_inside_the_extent_that_no_block_covers_are_carried_by_the_root() {
         "the rows lie inside the root, so none of them is unowned: {:?}",
         report.warnings
     );
-    let css = stylesheet(&dest, "Sheet1").expect("the tab states its heights");
-    assert!(css.starts_with("A1:B3000\n"), "{}", &css[..40]);
+    let css = tab_layer(&dest, "Sheet1").expect("the tab layer states its heights");
     assert_eq!(
         css.matches("height: 30pt").count(),
         1996,
@@ -532,16 +532,21 @@ fn written(dest: &Path, tab: &str) -> Vec<String> {
                 .to_string_lossy()
                 .into_owned()
         })
-        .filter(|name| fsa1_model::presentation_stem(name).is_none())
+        .filter(|name| !fsa1_model::is_presentation_entry(name))
         .map(|name| canonical(&name))
         .collect();
     names.sort();
     names
 }
 
-/// The rules the tab's ONE sidecar holds, prefixed by the root its NAME states so a caller reads the
-/// scope and the rules together. A tab that states no presentation writes no sidecar, so its absence
-/// is a fact a caller may assert rather than an empty string it has to tell apart from one.
+/// The tab's OWN layer, or `None` where it states none — its absence is a fact a caller may assert
+/// rather than an empty string it has to tell apart from one.
+fn tab_layer(dest: &Path, tab: &str) -> Option<String> {
+    std::fs::read_to_string(dest.join(tab).join(fsa1_model::PRESENTATION_SUFFIX)).ok()
+}
+
+/// The rules the tab's FIRST rooted sidecar holds, prefixed by the root its NAME states so a caller
+/// reads the scope and the rules together. A tab that states no presentation writes no sidecar.
 fn stylesheet(dest: &Path, tab: &str) -> Option<String> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(dest.join(tab))
         .expect("the tab is written")
@@ -763,7 +768,7 @@ fn a_width_on_a_column_no_block_covers_is_carried_by_the_sheets_root() {
         );
         carried.push((
             written(&dest, "Gapped"),
-            stylesheet(&dest, "Gapped").expect("the tab states a width"),
+            tab_layer(&dest, "Gapped").expect("the tab layer states a width"),
         ));
         std::fs::remove_dir_all(&dest).ok();
     }
@@ -775,11 +780,11 @@ fn a_width_on_a_column_no_block_covers_is_carried_by_the_sheets_root() {
     assert_eq!(carried[1].0, vec!["A1:E20".to_string()]);
     assert_eq!(
         carried[0].1, carried[1].1,
-        "one root over one used region, so the two cuts state the same presentation",
+        "the width is the SHEET's, so no cut can change what states it",
     );
     assert_eq!(
-        carried[0].1, "A1:E20\n  td:nth-child(3) { width: 14.5ch }\n",
-        "column C is index 3 of the root A1:E20",
+        carried[0].1, "  td:nth-child(3) { width: 14.5ch }\n",
+        "the tab layer anchors at A1, so column C is index 3 whatever the blocks are",
     );
 }
 

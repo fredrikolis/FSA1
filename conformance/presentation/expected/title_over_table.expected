@@ -1,6 +1,9 @@
 # title_over_table.xlsx -- FROZEN EXPECTATION.
 # A reading of the openpyxl-authored fixture against plan 01 D2/D3/D4.
 # Corrected ONLY when that reading was wrong -- never edited to chase an FSA1 regression.
+file: Sheet1/.css
+|  td:first-child { width: 18.5ch }
+|
 file: Sheet1/A1:D20
 |Quarterly Report			
 |FY2026			
@@ -22,6 +25,3 @@ file: Sheet1/A1:D20
 |Item 14	14	42	588
 |Item 15	15	45	675
 |Item 16	16	48	768
-file: Sheet1/A1:D20.css
-|  td:first-child { width: 18.5ch }
-|

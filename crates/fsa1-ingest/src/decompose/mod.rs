@@ -1,6 +1,7 @@
 // Concern: what a block is and the algorithms that cut them, one file per policy | Non-concern: which policy runs (partition.rs), spelling a block (serialize.rs) | IO: (a sheet's cells) -> Vec<Block>
 
 pub(crate) mod appearance;
+pub(crate) mod cell;
 pub(crate) mod occupancy;
 
 /// One cell a sheet hands the decomposition: its 1-based `(col, row)` and the appearance the source

@@ -1,4 +1,4 @@
-// Concern: a sidecar's rules — their selectors, declarations and order, counted in its root | Non-concern: what a declaration means, applying a style, naming the file | IO: (root, text) <-> Presentation
+// Concern: a sidecar's rules — their selectors, declarations and order, counted in its root | Non-concern: what a declaration means, applying a style, naming the file | IO: (root?, text) <-> Rules
 
 use crate::declaration::{Declaration, parse_declaration, syntax};
 use crate::diagnostic::{Code, Diagnostic, Loc};

@@ -38,7 +38,7 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 
 ## FS — the workbook on disk
 
-- **FS1 · the filesystem is the workbook.** A workbook's content is exactly what its file tree holds — a tab per folder, per file the A1 range it fills, the name it declares, or the presentation it states over that range, and nothing besides — and enters only by an author writing that tree: fsa1-cli reads an existing workbook, derives a new file only where none exists, and never takes cell content from its own invocation.
+- **FS1 · the filesystem is the workbook.** A workbook's content is exactly what its file tree holds — a tab per folder, per file the A1 range it fills, the name it declares, or the presentation it states over that range or, naming no range, over the tab, and nothing besides — and enters only by an author writing that tree: fsa1-cli reads an existing workbook, derives a new file only where none exists, and never takes cell content from its own invocation.
 - **FS3 · tooling coexists with content.** A workbook reserves a named set of tree entries for tooling, and no cell's value derives from any of them.
 - **FS5 · every value exists at a coordinate some file declares.** (would violate FS1)
 - **FS6 · every coordinate takes its content from at most one file.** (would violate FS1)
@@ -64,11 +64,13 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 - **Filename grammar** — the closed A1 range in canonical spelling (uppercase column, no leading-zero
   row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, no whole-column `A:A`), the
   defined-name entry form, and the presentation sidecar's `<range>.css`, whose stem is that same
-  range grammar and whose host separator is a range file's.
+  range grammar and whose host separator is a range file's — or the suffix alone, naming no range.
 - **Cell encoding** — TSV; the file is its grid with no header or metadata line; first line is
   the first row; one field per coordinate; an empty field is Blank; the `\t` / `\n` / `\\` escapes.
 - **Presentation** — a `<range>.css` sidecar, its FILENAME naming the closed A1 range in absolute
-  coordinates that is its scoping root, from which both a selector index's region-relative basis and
+  coordinates that is its scoping root, or a stem-less `.css` naming no root: the tab's own
+  layer, rooted at everything its range files reach, beneath every rooted sidecar and in no
+  contention with one, from which both a selector index's region-relative basis and
   the extent of a bare `td` follow; the file holds rules directly and no prelude, and needs no range
   file beside it. Those selectors, the properties, their one canonical spelling, and the contention
   between sidecars — where two roots reach one coordinate the smaller area wins, property by

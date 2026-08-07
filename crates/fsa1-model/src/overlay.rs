@@ -1,4 +1,4 @@
-// Concern: holds the sidecars as blocks per tab and answers what a coordinate or axis wears | Non-concern: a rule's grammar (presentation.rs), one block's resolve (style.rs) | IO: dir -> Overlay
+// Concern: holds a tab's default layer and its blocks, and answers what a coordinate or axis wears | Non-concern: a rule's grammar (presentation.rs), one block's resolve (style.rs) | IO: dir -> Overlay
 //! Presentation is off the engine's load path: a [`crate::Workbook`] cannot reach a sidecar, so a
 //! value derives from content and references alone (VAL1) as a SHAPE rather than an assertion. The
 //! resolvers take the workbook because the gap rule is the grid's: a coordinate no block reaches but
@@ -11,7 +11,7 @@ use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::filename::parse_filename;
 use crate::geometry::{AxisRun, declared_heights, declared_widths};
-use crate::names::presentation_stem;
+use crate::names::{is_presentation_entry, is_tab_layer, presentation_stem};
 use crate::overlap::Rect;
 use crate::presentation::{Presentation, parse_rules};
 use crate::style::{CellStyle, resolve};
@@ -21,7 +21,18 @@ use crate::workbook::Workbook;
 /// tabs by one sheet index; every lookup spends a [`Workbook`] to spell the index it was handed.
 #[derive(Clone, Debug, Default)]
 pub struct Overlay {
-    tabs: BTreeMap<String, Vec<(Rect, Presentation)>>,
+    tabs: BTreeMap<String, TabOverlay>,
+}
+
+/// `default` is the tab's own `.css` — no stem, so no region, anchored at A1 and unbounded. It is
+/// beneath every block and in no area comparison with one.
+#[derive(Clone, Debug, Default)]
+struct TabOverlay {
+    default: Option<Presentation>,
+    /// The tab's CONTENT rect, unioned from its range filenames — the root the default layer's
+    /// indices count in, so every selector resolves against what the tab actually reaches.
+    root: Option<Rect>,
+    blocks: Vec<(Rect, Presentation)>,
 }
 
 impl Overlay {
@@ -31,29 +42,33 @@ impl Overlay {
         let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
         // Filename order is the order `Workbook::load_dir` gives its tabs, so a sheet index means the same on both sides without either holding the other.
         entries.sort_by_key(|e| e.file_name());
-        let mut tabs: Vec<(String, Vec<(String, String)>)> = Vec::new();
+        let mut tabs: Vec<TabInput> = Vec::new();
         for entry in entries {
             let name = entry.file_name().to_string_lossy().into_owned();
             if Workbook::is_reserved_entry(&name) || !entry.file_type()?.is_dir() {
                 continue;
             }
-            tabs.push((name, read_sidecar_dir(&entry.path())?));
+            let (sidecars, content) = read_sidecar_dir(&entry.path())?;
+            tabs.push((name, sidecars, content));
         }
         Ok(build(tabs))
     }
 
-    /// `tabs` is a [`Workbook::from_tabs`] tree verbatim; the entries that are not sidecars are the
-    /// range files, and they are skipped here as the sidecars are there.
+    /// `tabs` is a [`Workbook::from_tabs`] tree verbatim: the entries that are not sidecars are the
+    /// range files, which are not read here but DO say how far the tab's content reaches.
     pub fn from_tabs(tabs: &[(&str, &[(&str, &str)])]) -> Result<Overlay, Vec<Diagnostic>> {
         let owned = tabs
             .iter()
             .map(|(tab, files)| {
-                let sidecars = files
-                    .iter()
-                    .filter(|(name, _)| presentation_stem(name).is_some())
-                    .map(|(name, text)| ((*name).to_string(), (*text).to_string()))
-                    .collect();
-                ((*tab).to_string(), sidecars)
+                let mut sidecars = Vec::new();
+                let mut content = None;
+                for (name, text) in *files {
+                    match is_presentation_entry(name) {
+                        true => sidecars.push(((*name).to_string(), (*text).to_string())),
+                        false => content = Rect::union(content, range_of(name)),
+                    }
+                }
+                ((*tab).to_string(), sidecars, content)
             })
             .collect();
         build(owned)
@@ -61,9 +76,11 @@ impl Overlay {
 
     /// Empty for a tab with no sidecar and for a sheet index the workbook does not name.
     fn blocks(&self, wb: &Workbook, sheet: u32) -> &[(Rect, Presentation)] {
-        wb.sheet_name(sheet)
-            .and_then(|tab| self.tabs.get(tab))
-            .map_or(&[], Vec::as_slice)
+        self.tab(wb, sheet).map_or(&[], |t| t.blocks.as_slice())
+    }
+
+    fn tab(&self, wb: &Workbook, sheet: u32) -> Option<&TabOverlay> {
+        self.tabs.get(wb.sheet_name(sheet)?)
     }
 
     /// How far the tab reaches, over BOTH halves: the coordinates its files fill, and the block
@@ -89,10 +106,20 @@ impl Overlay {
                 style.get_or_insert_default().layer(&matched);
             }
         }
+        // Settled BEFORE the tab layer: the layer is a DEFAULT, so it may not be what makes a coordinate stated.
         let mut style = match style {
             Some(style) => style,
             None => wb.covers(sheet, col, row).then(CellStyle::default)?,
         };
+        if let Some((default, root)) = self
+            .tab(wb, sheet)
+            .and_then(|t| Some((t.default.as_ref()?, t.root?)))
+            .filter(|(_, root)| root.contains(col, row))
+        {
+            let mut under = resolve(default, row - root.min_row + 1, col - root.min_col + 1);
+            under.layer(&style);
+            style = under;
+        }
         // An axis size belongs to the AXIS: resolved per coordinate, one column renders two widths.
         style.width = axis_size(&self.column_widths(wb, sheet), col);
         style.height = axis_size(&self.row_heights(wb, sheet), row);
@@ -122,6 +149,15 @@ impl Overlay {
         declared: fn(Rect, &Presentation) -> Vec<AxisRun<T>>,
     ) -> Vec<AxisRun<T>> {
         let mut sized: BTreeMap<u32, T> = BTreeMap::new();
+        // The tab layer first, so any block sizing the same axis is layered over it.
+        let tab = self.tab(wb, sheet);
+        if let Some((presentation, root)) = tab.and_then(|t| Some((t.default.as_ref()?, t.root?))) {
+            for run in declared(root, presentation) {
+                for axis in run.start..=run.end {
+                    sized.insert(axis, run.size);
+                }
+            }
+        }
         for (root, presentation) in self.blocks(wb, sheet) {
             for run in declared(*root, presentation) {
                 for axis in run.start..=run.end {
@@ -150,12 +186,47 @@ fn axis_size<T: Copy>(runs: &[AxisRun<T>], index: u32) -> Option<T> {
         .map(|r| r.size)
 }
 
-fn build(tabs: Vec<(String, Vec<(String, String)>)>) -> Result<Overlay, Vec<Diagnostic>> {
+/// A tab's presentation entries, and how far its range files reach.
+type TabInput = (String, Vec<(String, String)>, Option<Rect>);
+
+/// What one tab directory yields: its presentation entries, and its content rect.
+type TabEntries = (Vec<(String, String)>, Option<Rect>);
+
+fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
     let mut diags: Vec<Diagnostic> = Vec::new();
     let mut out = BTreeMap::new();
-    for (tab, sidecars) in tabs {
+    for (tab, entries, content) in tabs {
+        let (layer, sidecars): (Vec<_>, Vec<_>) = entries
+            .into_iter()
+            .partition(|(name, _)| is_tab_layer(name));
+        let default = layer.into_iter().next().and_then(|(name, text)| {
+            let located = format!("{tab}/{name}");
+            let Some(root) = content else {
+                diags.push(Diagnostic::new(
+                    Code::PresentationSelector,
+                    Loc::file(&located),
+                    "a tab's own stylesheet counts its indices in the tab's content, and this tab                      states none; name the region on the file instead: <range>.css"
+                        .to_string(),
+                ));
+                return None;
+            };
+            match parse_rules(&located, root, &text) {
+                Ok(presentation) => Some(presentation),
+                Err(d) => {
+                    diags.extend(d);
+                    None
+                }
+            }
+        });
         let blocks = read_sidecars(&tab, sidecars, &mut diags);
-        out.insert(tab, blocks);
+        out.insert(
+            tab,
+            TabOverlay {
+                default,
+                root: content,
+                blocks,
+            },
+        );
     }
     if diags.is_empty() {
         Ok(Overlay { tabs: out })
@@ -165,17 +236,31 @@ fn build(tabs: Vec<(String, Vec<(String, String)>)>) -> Result<Overlay, Vec<Diag
 }
 
 /// Sorted, so two sidecars of equal area are cascaded in one order whatever the directory yields.
-fn read_sidecar_dir(dir: &Path) -> std::io::Result<Vec<(String, String)>> {
+fn read_sidecar_dir(dir: &Path) -> std::io::Result<TabEntries> {
     let mut out = Vec::new();
+    let mut content = None;
     let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if entry.file_type()?.is_file() && presentation_stem(&name).is_some() {
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        if is_presentation_entry(&name) {
             out.push((name, std::fs::read_to_string(entry.path())?));
+        } else {
+            content = Rect::union(content, range_of(&name));
         }
     }
-    Ok(out)
+    Ok((out, content))
+}
+
+/// How far a tab's CONTENT reaches, read off the range filenames alone. A name the parser rejects
+/// contributes nothing: the workbook load is what refuses it, and this pass must not refuse it twice.
+fn range_of(name: &str) -> Option<Rect> {
+    parse_filename(&crate::canonical_range_name(name))
+        .ok()
+        .map(|parsed| parsed.region)
 }
 
 /// The tab's sidecars, read against the root each is NAMED for, then laid in cascade order: widest

@@ -3,24 +3,31 @@
 use std::str::FromStr;
 
 use crate::decompose::appearance::appearance_blocks;
+use crate::decompose::cell::cell_blocks;
 use crate::decompose::occupancy::occupancy_blocks;
 use crate::decompose::{Block, StyledCell};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decomposition {
+    Cell,
     Occupancy,
     Appearance,
 }
 
 impl Decomposition {
     /// Every decomposition there is, in help-text order.
-    pub const ALL: [Decomposition; 2] = [Decomposition::Occupancy, Decomposition::Appearance];
+    pub const ALL: [Decomposition; 3] = [
+        Decomposition::Cell,
+        Decomposition::Occupancy,
+        Decomposition::Appearance,
+    ];
 
     /// The single source of each variant's spelling, which [`Decomposition::from_str`] reads
     /// backward.
     pub fn name(self) -> &'static str {
         match self {
             Decomposition::Occupancy => "occupancy",
+            Decomposition::Cell => "cell",
             Decomposition::Appearance => "appearance",
         }
     }
@@ -33,6 +40,7 @@ impl Decomposition {
                     cells.iter().map(|&(col, row, _)| (col, row)).collect();
                 occupancy_blocks(&coords)
             }
+            Decomposition::Cell => cell_blocks(cells),
             Decomposition::Appearance => appearance_blocks(cells),
         }
     }
@@ -63,7 +71,7 @@ mod tests {
         let mut seen: Vec<Decomposition> = Vec::new();
         for decomposition in Decomposition::ALL {
             match decomposition {
-                Decomposition::Occupancy | Decomposition::Appearance => {}
+                Decomposition::Cell | Decomposition::Occupancy | Decomposition::Appearance => {}
             }
             assert!(
                 !seen.contains(&decomposition),
@@ -71,7 +79,7 @@ mod tests {
             );
             seen.push(decomposition);
         }
-        assert_eq!(seen.len(), 2);
+        assert_eq!(seen.len(), 3);
     }
 
     #[test]

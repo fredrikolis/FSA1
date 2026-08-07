@@ -1177,7 +1177,8 @@ DESCRIPTION:
   a sheet's widest fully-empty rows and columns, reading no appearance at all, and writes ONE block per
   sheet-sized region of occupancy — the shape unpack wrote before this flag existed. appearance grows
   and joins rectangles over runs of one cell appearance, and so writes MORE, SMALLER range files than
-  occupancy. What it buys is that a structure an author expressed is addressable as ONE file more often
+  occupancy. cell writes one file per occupied coordinate and joins nothing: the identity cut, which
+  the other two are graded against and which no tree of any size should be written with. What it buys is that a structure an author expressed is addressable as ONE file more often
   than under occupancy; no block either policy cuts is a semantic unit. WITHOUT the flag the policy is
   ALWAYS occupancy, whatever the source, so an unflagged unpack writes the shape it always wrote; the
   policy in force is named on the success line. --decompose appearance on a source whose format has

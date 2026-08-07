@@ -1,4 +1,4 @@
-// Concern: encodes what a sheet's styles and axis sizes cross as, and names what they cannot | Non-concern: cutting the blocks | IO: (sheet, root) -> geometry, rules, warnings
+// Concern: encodes what a sheet's styles and axis sizes cross as, and names what they cannot | Non-concern: cutting the blocks, naming a body (serialize.rs) | IO: (sheet, block) -> rules + warnings
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -33,54 +33,90 @@ pub struct BlockGeometry {
     pub heights: Vec<(u32, Points)>,
 }
 
-/// Spells each authored width and height as a declaration the root can carry, and names the two ways
-/// one fails to cross: a number no `width` or `height` can state, and an axis the root does not span.
-/// The unowned axes go to [`unowned`] whole, a height over a row range the root never reaches being
-/// ONE authored fact rather than one a row.
-pub fn geometry(
-    sheet: &SheetSource,
-    root: Option<Block>,
-    warnings: &mut Vec<UnpackWarning>,
-) -> BlockGeometry {
+/// Every authored width and height, indexed from A1 — the tab layer's anchor, which spans the sheet,
+/// so the only way one fails to cross is a number no `width` or `height` can state. An axis owned by
+/// no file was the other way, and the tab owning every axis is what retires it.
+pub fn geometry(sheet: &SheetSource, warnings: &mut Vec<UnpackWarning>) -> BlockGeometry {
     let mut out = BlockGeometry::default();
-    let mut unowned_columns = Vec::new();
     for (&col, &width) in &sheet.col_widths {
-        let Some(size) = Chars::column_width(width) else {
-            warnings.push(UnpackWarning::ColumnWidthUnspellable {
+        match Chars::column_width(width) {
+            Some(size) => out.widths.push((col + 1, size)),
+            None => warnings.push(UnpackWarning::ColumnWidthUnspellable {
                 sheet: sheet.name.clone(),
                 column: format_column(col),
                 width: width.to_string(),
-            });
-            continue;
-        };
-        match root.filter(|r| holds(r.col, r.cols, col)) {
-            Some(root) => out.widths.push((col + 2 - root.col, size)),
-            None => unowned_columns.push((col, col)),
+            }),
         }
     }
-    warnings.extend(unowned(Axis::Column, &sheet.name, &unowned_columns));
-    let mut unowned_rows = Vec::new();
     for (&row, &height) in &sheet.row_heights {
-        let Some(size) = Points::row_height(height) else {
-            warnings.push(UnpackWarning::RowHeightUnspellable {
+        match Points::row_height(height) {
+            Some(size) => out.heights.push((row + 1, size)),
+            None => warnings.push(UnpackWarning::RowHeightUnspellable {
                 sheet: sheet.name.clone(),
                 row: row + 1,
                 height: height.to_string(),
-            });
-            continue;
-        };
-        match root.filter(|r| holds(r.row, r.rows, row)) {
-            Some(root) => out.heights.push((row + 2 - root.row, size)),
-            None => unowned_rows.push((row, row)),
+            }),
         }
     }
-    warnings.extend(unowned(Axis::Row, &sheet.name, &unowned_rows));
     out
 }
 
-/// The 0-based sheet axis `axis` against a root's 1-based anchor and extent.
-fn holds(anchor: u32, extent: u32, axis: u32) -> bool {
-    (anchor..anchor + extent).contains(&(axis + 1))
+/// The tab's own layer: its axis geometry, each axis named inside the tab's content root. Never a
+/// bare `td { width }` — a modal size would fabricate one for every column of the root, including
+/// the ones carrying no authored size, and no finer rule can take that back.
+pub fn tab_layer(
+    root: fsa1_model::Rect,
+    geometry: &BlockGeometry,
+    sheet: &str,
+    warnings: &mut Vec<UnpackWarning>,
+) -> Option<Presentation> {
+    let mut rules: BTreeMap<Target, Vec<Declaration>> = BTreeMap::new();
+    let (widths, past_cols) = inside(&geometry.widths, root.min_col, root.max_col);
+    let (heights, past_rows) = inside(&geometry.heights, root.min_row, root.max_row);
+    warnings.extend(unowned(Axis::Column, sheet, &past_cols));
+    warnings.extend(unowned(Axis::Row, sheet, &past_rows));
+    match modal_size(root.max_col - root.min_col + 1, &widths) {
+        Some(size) => place(&mut rules, Target::All, Declaration::Width(size)),
+        None => {
+            for &(index, size) in &widths {
+                place(&mut rules, Target::Col(index), Declaration::Width(size));
+            }
+        }
+    }
+    match modal_size(root.max_row - root.min_row + 1, &heights) {
+        Some(size) => place(&mut rules, Target::All, Declaration::Height(size)),
+        None => {
+            for &(index, size) in &heights {
+                place(&mut rules, Target::Row(index), Declaration::Height(size));
+            }
+        }
+    }
+    spell(rules)
+}
+
+/// The sizes a root reaches, re-indexed inside it, and the axes it never reaches as runs.
+type Crossing<T> = (Vec<(u32, T)>, Vec<(u32, u32)>);
+
+/// The sizes the root reaches, re-indexed inside it. An axis outside the tab's own content is one
+/// no selector of this root can name, so it does not cross.
+fn inside<T: Copy>(sizes: &[(u32, T)], first: u32, last: u32) -> Crossing<T> {
+    let mut crossed = Vec::new();
+    let mut past = Vec::new();
+    for &(axis, size) in sizes {
+        match index_in(axis, first, last) {
+            Some(index) => crossed.push((index, size)),
+            None => past.push((axis - 1, axis - 1)),
+        }
+    }
+    (crossed, past)
+}
+
+/// `axis` is 1-based and absolute, as [`geometry`] states it; `first` and `last` are the root's
+/// 0-based bounds. `None` where the root never reaches the axis — one outside the tab's own content,
+/// which no selector of this root can name.
+fn index_in(axis: u32, first: u32, last: u32) -> Option<u32> {
+    let zero = axis.checked_sub(1)?;
+    (zero >= first && zero <= last).then(|| zero - first + 1)
 }
 
 /// The rules the root's cells and its axes earn. `None` where they earn none: a sheet with nothing to
@@ -116,6 +152,11 @@ pub fn encode(sheet: &SheetSource, block: Block, geometry: &BlockGeometry) -> Op
             }
         }
     }
+    spell(rules)
+}
+
+/// `None` where the rules are empty: a block stating nothing writes no sidecar.
+fn spell(rules: BTreeMap<Target, Vec<Declaration>>) -> Option<Presentation> {
     if rules.is_empty() {
         return None;
     }
@@ -1052,29 +1093,6 @@ mod tests {
         );
     }
 
-    /// One root per sheet, so an axis it spans is sized by it and an axis outside it by nothing:
-    /// the contest two containing blocks used to have has no second party left.
-    #[test]
-    fn the_root_sizes_every_axis_it_spans_and_no_axis_it_does_not() {
-        let (mut sheet, _) = sizes(10, 1, &[11.0; 10]);
-        sheet.col_widths.insert(0, 12.0);
-        sheet.row_heights.insert(4, 20.0);
-        let root = Block {
-            col: 1,
-            row: 1,
-            cols: 1,
-            rows: 3,
-        };
-        let mut warnings = Vec::new();
-        let owned = geometry(&sheet, Some(root), &mut warnings);
-        assert_eq!(owned.widths, vec![(1, Chars(12.0))], "column A is spanned");
-        assert!(owned.heights.is_empty(), "row 5 is outside A1:A3");
-        assert_eq!(
-            warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            vec!["row height for 5 on sheet S dropped: no range file covers row 5".to_string()],
-        );
-    }
-
     /// The collapse runs on BOTH axes off one function, so the column leg earns the same reading as
     /// the row leg the corpus freezes.
     #[test]
@@ -1268,7 +1286,7 @@ mod tests {
             let (mut sheet, _) = sizes(1, 1, &[n]);
             sheet.col_widths.insert(0, n);
             sheet.row_heights.insert(0, n);
-            let geometry = geometry(&sheet, Some(CELL), &mut Vec::new());
+            let geometry = geometry(&sheet, &mut Vec::new());
             reparses(&sheet, &geometry, &format!("{n} on every measure"));
         }
         for name in adversarial_families() {
@@ -1280,15 +1298,15 @@ mod tests {
         }
     }
 
-    /// The OTHER way a size fails to cross. An axis no file covers is already named; a number no width
-    /// or height can state was dropped in silence, right beside it.
+    /// The one way a size fails to cross now the tab layer spans every axis: a number no `width` or
+    /// `height` can state, which was dropped in silence before it was named.
     #[test]
     fn a_size_outside_what_the_format_can_state_is_named_not_dropped_in_silence() {
         let (mut sheet, _) = sizes(1, 1, &[11.0]);
         sheet.col_widths.insert(0, 300.0);
         sheet.row_heights.insert(0, 900.0);
         let mut warnings = Vec::new();
-        let geometry = geometry(&sheet, Some(CELL), &mut warnings);
+        let geometry = geometry(&sheet, &mut warnings);
         assert_eq!(
             warnings,
             vec![

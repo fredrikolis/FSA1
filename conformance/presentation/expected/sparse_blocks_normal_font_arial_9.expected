@@ -30,7 +30,7 @@ file: Gaps/A1:E5
 |				
 |				
 |				2
-file: Gaps/A1:E60.css
+file: Gaps/A1:E5.css
 |  td { font-family: Arial; font-size: 9pt }
 |
 file: Gaps/A56:E60
@@ -39,3 +39,6 @@ file: Gaps/A56:E60
 |				
 |				
 |				4
+file: Gaps/A56:E60.css
+|  td { font-family: Arial; font-size: 9pt }
+|

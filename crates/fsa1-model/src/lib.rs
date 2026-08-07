@@ -38,7 +38,7 @@ pub use grid::{
 };
 pub use names::{
     Name, NameRepr, NameScope, NameTable, NameTarget, PRESENTATION_SUFFIX, RawNameEntry,
-    is_cell_filename, presentation_stem, quote_sheet,
+    is_cell_filename, is_presentation_entry, is_tab_layer, presentation_stem, quote_sheet,
 };
 pub use overlap::{Rect, detect_overlaps};
 pub use overlay::Overlay;

@@ -1,4 +1,4 @@
-// Concern: the reader->serializer intermediate — a sheet's cells, styles, widths, heights and merges | Non-concern: reading a concrete format, spelling a cell to TSV | IO: none
+// Concern: the reader->serializer intermediate, and what the .xlsx cascade makes one coordinate wear | Non-concern: parsing a source format, spelling a cell to TSV | IO: (coord) -> its style index
 
 use std::collections::BTreeMap;
 
@@ -57,6 +57,11 @@ pub struct SheetSource {
     pub cells: Vec<SourceCell>,
     /// The workbook's whole style set — the closed set [`SourceCell::style`] indexes.
     pub styles: StyleTable,
+    /// 0-based column -> the style the source states for that whole column, and the same on the row
+    /// axis. Kept as the RUNS the source wrote rather than spent into `cells`, so an encoder can see
+    /// that a column's look is one statement and spell it as one.
+    pub col_styles: BTreeMap<u32, u32>,
+    pub row_styles: BTreeMap<u32, u32>,
     /// 0-based column -> its width in characters, verbatim as the source states it.
     pub col_widths: BTreeMap<u32, f64>,
     /// 0-based row -> its height in points, verbatim as the source states it.
@@ -69,10 +74,25 @@ impl SheetSource {
         (col < self.cols && row < self.rows).then(|| &self.cells[(row * self.cols + col) as usize])
     }
 
+    /// The .xlsx cascade, read rather than materialized: the cell's own `s=`, else its row's
+    /// statement, else its column's. An axis statement reaches a cell only where it would SHOW —
+    /// on a blank that is a style the source paints blanks with, and nothing else.
+    pub fn style_index(&self, col: u32, row: u32) -> Option<u32> {
+        let cell = self.cell(col, row)?;
+        if let Some(own) = cell.style {
+            return Some(own);
+        }
+        let axis = *self
+            .row_styles
+            .get(&row)
+            .or_else(|| self.col_styles.get(&col))?;
+        let shows = cell.value != SourceValue::Blank
+            || crate::scope_block::paints_blank(&self.styles, axis);
+        shows.then_some(axis)
+    }
+
     pub fn style_at(&self, col: u32, row: u32) -> Option<&XlsxStyle> {
-        self.cell(col, row)?
-            .style
-            .and_then(|index| self.styles.get(index))
+        self.styles.get(self.style_index(col, row)?)
     }
 
     /// A coordinate is occupied when it holds a value OR a style whose look a RULE can put back on a
@@ -82,8 +102,8 @@ impl SheetSource {
             return false;
         };
         cell.value != SourceValue::Blank
-            || cell
-                .style
+            || self
+                .style_index(col, row)
                 .is_some_and(|index| crate::scope_block::paints_blank(&self.styles, index))
     }
 }

@@ -230,7 +230,7 @@ fn materialize(
                 )
             })?;
             // A sidecar is presentation, not a block the cut produced, so it is not one of the RANGE files this count reports.
-            if fsa1_model::presentation_stem(&filename).is_none() {
+            if !fsa1_model::is_presentation_entry(&filename) {
                 files += 1;
             }
         }
@@ -281,7 +281,7 @@ fn occupancy(sheet: &SheetSource) -> Vec<StyledCell> {
     for row in 0..sheet.rows {
         for col in 0..sheet.cols {
             if sheet.is_occupied(col, row) {
-                out.push((col + 1, row + 1, sheet.cell(col, row).and_then(|c| c.style)));
+                out.push((col + 1, row + 1, sheet.style_index(col, row)));
             }
         }
     }
