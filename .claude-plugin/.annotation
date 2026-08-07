@@ -1,1 +1,1 @@
-Concern: declares what a plugin host reads out of this repo | Non-concern: what the plugin runs, the release that ships its binary | IO: none
+Concern: declares the catalog a marketplace add resolves | Non-concern: the plugin it lists, which declares itself under plugin/ | IO: none

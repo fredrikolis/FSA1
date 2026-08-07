@@ -8,10 +8,11 @@ skill — what it is and when to reach for it.
 ## What ships
 
 ```
-.claude-plugin/plugin.json           # manifest (name = "fsa1", version, description)
-.claude-plugin/marketplace.json      # the catalog entry users add; the plugin is the repo root
-bin/fsa1-cli                         # cross-platform launcher (bash) -> execs the native binary
-skills/fsa1/SKILL.md                 # tells Claude what fsa1-cli does and when to use it
+.claude-plugin/marketplace.json      # the catalog users add, at the repo root where it must live
+plugin/                              # the plugin itself, and everything a host fetches
+plugin/.claude-plugin/plugin.json    # its manifest
+plugin/bin/fsa1-cli                  # cross-platform launcher (bash) -> execs the native binary
+plugin/skills/fsa1/SKILL.md          # tells Claude what fsa1-cli does and when to use it
 .github/workflows/plugin-release.yml # cross-builds native binaries -> GitHub Release
 ```
 
@@ -26,19 +27,19 @@ The coordinate is `<plugin>@<marketplace>`: the plugin is `fsa1`, the marketplac
 and the repo carries ONE plugin which is the repo root (`"source": "./"`). If the install summary
 says `Run /reload-plugins to activate.`, run that.
 
-A version bump in `.claude-plugin/plugin.json` is what offers users an update — pushing commits
+A version bump in `plugin/.claude-plugin/plugin.json` is what offers users an update — pushing commits
 without bumping it leaves `/plugin update` reporting they are already current. The `name` beside it
 is the one field that can never change: a published plugin name is the slug every install holds, and
 renaming it breaks all of them. Relabel with `displayName` instead.
 
-`bin/` = the capability (any file here is callable as a bare command while the plugin is enabled).
-`skills/` = the instructions (PATH alone doesn't teach Claude *when* to run it).
+`plugin/bin/` = the capability (any file here is callable as a bare command while the plugin is enabled).
+`plugin/skills/` = the instructions (PATH alone doesn't teach Claude *when* to run it).
 
-## Why `bin/fsa1-cli` is a launcher, not the binary
+## Why `plugin/bin/fsa1-cli` is a launcher, not the binary
 
 A plugin's `bin/` is shared across every host the plugin runs on: **Cowork's Linux cloud sandbox**
 and **Claude Code on the user's own macOS / Windows / Linux desktop**. A compiled Rust binary is
-per-(os, arch), so `bin/fsa1-cli` is a small bash script that resolves the matching binary and caches
+per-(os, arch), so `plugin/bin/fsa1-cli` is a small bash script that resolves the matching binary and caches
 it under `${CLAUDE_PLUGIN_DATA}` (persistent across plugin updates — `${CLAUDE_PLUGIN_ROOT}` changes
 every update, so nothing is cached there). Resolution order, all overridable:
 

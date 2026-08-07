@@ -1,0 +1,1 @@
+Concern: everything a plugin host fetches and runs | Non-concern: the crates it drives, the release that ships its binary | IO: none

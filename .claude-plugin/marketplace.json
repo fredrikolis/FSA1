@@ -9,10 +9,7 @@
     {
       "name": "fsa1",
       "displayName": "FSA1",
-      "source": {
-        "source": "github",
-        "repo": "fredrikolis/FSA1"
-      },
+      "source": "./plugin",
       "description": "Give Claude spreadsheets it can read and edit as files: tabs become folders, cells become files, so a range is something to grep, diff and edit with ordinary file tools rather than a whole workbook to load. Unpack .xlsx or .ods, render, lint, evaluate and trace it, then pack it back to Excel."
     }
   ]
