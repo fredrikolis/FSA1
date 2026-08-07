@@ -66,13 +66,16 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 - **Tree layout** — the workbook directory, a tab per folder, a file per range, a `.css` sidecar per
   styled region, and what nesting means.
 - **Filename grammar** — the closed A1 range in canonical spelling (uppercase column, no leading-zero
-  row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, no whole-column `A:A`), the
+  row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, and no whole-column `A:A`, which a
+  RANGE file may not name because a grid fills its range exactly), the
   defined-name entry form, and the presentation sidecar's `<range>.css`, whose stem is that same
-  range grammar and whose host separator is a range file's — or the suffix alone, naming no range.
+  range grammar EXTENDED by the open forms a sidecar alone may name (`A:A`, `A:C`, `1:1`, `2:5`),
+  whose host separator is a range file's — or the suffix alone, naming no range.
 - **Cell encoding** — TSV; the file is its grid with no header or metadata line; first line is
   the first row; one field per coordinate; an empty field is Blank; the `\t` / `\n` / `\\` escapes.
-- **Presentation** — a `<range>.css` sidecar, its FILENAME naming the closed A1 range in absolute
-  coordinates that is its scoping root, or a stem-less `.css` naming no root: the tab's own
+- **Presentation** — a `<range>.css` sidecar, its FILENAME naming the A1 range in absolute
+  coordinates that is its scoping root — closed, or open on one axis and reaching as far as the
+  tab's content does — or a stem-less `.css` naming no root: the tab's own
   layer, rooted at everything its range files reach, beneath every rooted sidecar and in no
   contention with one, from which both a selector index's region-relative basis and
   the extent of a bare `td` follow; the file holds rules directly and no prelude, and needs no range

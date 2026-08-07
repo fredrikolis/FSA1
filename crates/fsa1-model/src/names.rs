@@ -156,14 +156,21 @@ pub fn is_cell_filename(name: &str) -> bool {
     if name.contains(crate::RANGE_SEP_POSIX) {
         return true;
     }
-    // `-` is a range only when it joins two A1 corners; a bare `-` in some other file is not.
+    // `-` is a range only where it joins two A1 corners, or two ends of ONE axis.
     if let Some((left, right)) = name.split_once(crate::RANGE_SEP_WINDOWS)
-        && parse_a1(left).is_ok()
-        && parse_a1(right).is_ok()
+        && ((parse_a1(left).is_ok() && parse_a1(right).is_ok()) || one_axis(left, right))
     {
         return true;
     }
     parse_a1(name).is_ok()
+}
+
+/// Both ends of ONE axis: all letters, or all digits. The open range's shape, wherever a name is
+/// classified before it is parsed.
+pub fn one_axis(left: &str, right: &str) -> bool {
+    let alpha = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphabetic());
+    let digit = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (alpha(left) && alpha(right)) || (digit(left) && digit(right))
 }
 
 /// Validates the WHOLE ref, not just the address after the last `!`, so an EXPRESSION that merely

@@ -27,10 +27,12 @@ FILE BODY — a TSV grid, one cell per coordinate
   No drag-fill: write one explicit formula per cell (=B2*C2, =B3*C3, …).
 
 PRESENTATION — <tab>/<range>.css, one sidecar per styled region
-  The FILENAME is the scoping root — A1:C9.css, or a bare A1.css — spelled exactly as a range
-  file is, and the file holds rules and nothing else. The root is what the selectors count in:
-  td · tr:first-child td · td:nth-child(k) · tr:nth-child(r) td:nth-child(c) and the periodic
-  An+B forms, all 1-based and relative to the root.
+  The FILENAME is the scoping root — A1:C9.css, a bare A1.css, or an OPEN range A:A.css /
+  1:1.css whose open axis reaches as far as the tab's own content. The file holds rules and
+  nothing else. The root is what the selectors count in: td · tr:first-child td ·
+  td:nth-child(k) · tr:nth-child(k) td and the periodic An+B forms, all 1-based and relative
+  to the root. NO selector names one cell — give that cell its own root, F9.css.
+  A stem-less .css is the tab's own default layer, beneath every rooted sidecar.
   A sidecar needs no range file beside it: a .css over a rectangle nothing fills is a
   style-only region, which renders and packs.
   Sidecars may overlap; where two roots reach one coordinate the SMALLER area wins, property
@@ -63,7 +65,9 @@ COMMANDS  (the tab and A1 cell/range are PART OF THE PATH: <wb>[/<tab>[/<A1>]])
   fsa1-cli render <path> [--mode combined|values|functions] [--format ascii|html]
                                           <path>=<wb>[/<tab>[/<A1>]]; default COMBINED: a formula shows
                                           `<value> ← =<formula>`. render wb/Tab/A1:D9 draws that region.
-                                          --format html writes one standalone styled document to stdout
+                                          --format html writes one standalone styled document to stdout,
+                                          always VALUES with each formula in its formula bar, and so
+                                          takes no --mode
   fsa1-cli check  <path>               lint; non-zero on error. A tab/region in the path (wb/Tab or
                                           wb/Tab/A1:B2) checks ONLY the cells you authored
   fsa1-cli eval   <wb>[/<tab>] --formula '=SUM(A1:A5)'   evaluate a formula against the workbook

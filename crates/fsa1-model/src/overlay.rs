@@ -281,9 +281,8 @@ fn read_sidecars(
             Ok(root) => match root.resolve(content) {
                 None => continue,
                 Some(region) => match parse_rules(&located, region, &text) {
-                    Ok(presentation) => {
-                        read.push((region, crate::canonical_range_name(&name), presentation))
-                    }
+                    // Keyed by the RESOLVED region: contention is settled there, so two names reaching one region are what cannot be ordered.
+                    Ok(presentation) => read.push((region, region.label(), presentation)),
                     Err(d) => diags.extend(d),
                 },
             },
@@ -396,6 +395,43 @@ mod tests {
                 "{name}'s refusal must be located on it: {diags:?}"
             );
         }
+    }
+
+    /// An open root is spelled two ways on two hosts and reaches one region either way, and its
+    /// canonical spelling is enforced exactly as a closed one's is — otherwise four names state one
+    /// root and the cascade is handed a contest it cannot settle.
+    #[test]
+    fn an_open_root_is_one_root_however_it_is_spelled() {
+        let (wb, overlay) = over(&[
+            ("A1:B2", "1\t2\n3\t4"),
+            ("A-A.css", "  td { color: #3f0421 }\n"),
+        ]);
+        assert!(
+            overlay
+                .cell_style(&wb, 0, 0, 0)
+                .and_then(|s| s.color)
+                .is_some(),
+            "the portable `-` spelling is the same root as `:`",
+        );
+        for (name, want) in [
+            ("a:a.css", Code::LowercaseColumn),
+            ("01:01.css", Code::LeadingZeroRow),
+        ] {
+            let diags = refusals(&[("A1:B2", "1\t2\n3\t4"), (name, "  td { color: #3f0421 }\n")]);
+            assert!(
+                diags.iter().any(|d| d.code == want),
+                "{name} should earn {want:?}: {diags:?}",
+            );
+        }
+        let diags = refusals(&[
+            ("A1:B2", "1\t2\n3\t4"),
+            ("A:A.css", "  td { color: #3f0421 }\n"),
+            ("A1:A2.css", "  td { font-weight: bold }\n"),
+        ]);
+        assert!(
+            diags.iter().any(|d| d.code == Code::DuplicateSidecarRoot),
+            "`A:A` over a two-row tab IS `A1:A2`, and one region is stated once: {diags:?}",
+        );
     }
 
     /// The open forms, which a RANGE file still refuses: the filename grammar parts from the

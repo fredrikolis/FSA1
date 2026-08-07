@@ -117,3 +117,25 @@ fn two_cells_with_the_same_declarations_share_one_class_and_one_rule() {
     );
     assert!(!html.contains(".c1"), "no second class:\n{html}");
 }
+
+/// `table-layout: fixed` stops an unwidened column sizing to its content, so a document reaching no
+/// authored width must not carry it — the layout would move while every byte of text stayed put.
+#[test]
+fn a_document_stating_no_width_keeps_the_browsers_own_layout() {
+    let styled = doc(&[
+        ("A1:B2", "1\t2\n3\t4"),
+        ("A1:B2.css", "  td { font-weight: bold }\n"),
+    ]);
+    assert!(
+        !styled.contains("table-layout"),
+        "styled but unwidened is still auto:\n{styled}"
+    );
+    let widened = doc(&[
+        ("A1:B2", "1\t2\n3\t4"),
+        ("A:A.css", "  td { width: 30ch }\n"),
+    ]);
+    assert!(
+        widened.contains("table-layout: fixed") && widened.contains(r#"<col style="width: 30ch">"#),
+        "one authored width turns it on:\n{widened}"
+    );
+}

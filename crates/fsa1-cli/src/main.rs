@@ -902,7 +902,7 @@ ARGUMENTS:
   <path>            (required) <wb>[/<tab>[/<A1>]] (tabs = sub-folders; the A1 selector is logical).
   --mode <m>        (optional) One of: combined (default), values (computed only), functions (authored
                     source only: a formula shows its =… text, a literal shows its value).
-  --format <f>      (optional) The CARRIER, orthogonal to --mode: ascii (default) or html. --mode picks
+  --format <f>      (optional) The CARRIER: ascii (default) or html, which takes no --mode. --mode picks
                     what a cell says; --format picks what it is carried in.
 
 EXAMPLES:

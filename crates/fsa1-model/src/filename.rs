@@ -36,6 +36,20 @@ pub enum Root {
 }
 
 impl Root {
+    /// The ONE spelling of this root, which is what a duplicate is detected by: two names that
+    /// resolve alike must key alike, or the cascade is asked to order what it cannot.
+    pub fn label(self) -> String {
+        match self {
+            Root::Closed(region) => region.label(),
+            Root::Columns { first, last } => format!(
+                "{}{RANGE_SEP_POSIX}{}",
+                fsa1_ast::a1::format_column(first),
+                fsa1_ast::a1::format_column(last)
+            ),
+            Root::Rows { first, last } => format!("{}{RANGE_SEP_POSIX}{}", first + 1, last + 1),
+        }
+    }
+
     /// `None` where the tab states no content: an open range is clamped to it by construction, so it
     /// can never be what makes a coordinate stated.
     pub fn resolve(self, content: Option<Rect>) -> Option<Rect> {
@@ -88,12 +102,26 @@ fn open_dash_split(name: &str) -> Option<(&str, &str)> {
 }
 
 fn column_of(name: &str, letters: &str) -> Result<u32, Diagnostic> {
+    if letters.bytes().any(|b| b.is_ascii_lowercase()) {
+        return Err(Diagnostic::new(
+            Code::LowercaseColumn,
+            Loc::file(name),
+            format!("a column is spelled in upper case: {name:?}"),
+        ));
+    }
     parse_a1(&format!("{letters}1"))
         .map(|a| a.col)
         .map_err(|e| a1_diag(name, 0, letters.len(), e))
 }
 
 fn row_of(name: &str, digits: &str) -> Result<u32, Diagnostic> {
+    if digits.len() > 1 && digits.starts_with('0') {
+        return Err(Diagnostic::new(
+            Code::LeadingZeroRow,
+            Loc::file(name),
+            format!("a row number carries no leading zero: {name:?}"),
+        ));
+    }
     let n: u32 = digits.parse().map_err(|_| {
         Diagnostic::new(
             Code::MalformedFilename,
@@ -148,6 +176,15 @@ fn dash_range_split(name: &str) -> Option<(&str, &str)> {
 /// separator first. Returns `None` for a single cell, a defined name, a malformed range, or a name
 /// already spelled with `to` — i.e. exactly the names the `convert` command should leave untouched.
 pub fn reseparate_range_name(name: &str, to: char) -> Option<String> {
+    // An open range is spelled from its two ends, which no A1 address parse reaches.
+    if let Some((left, right)) = name
+        .split_once(RANGE_SEP_POSIX)
+        .or_else(|| name.split_once(RANGE_SEP_WINDOWS))
+        && crate::names::one_axis(left, right)
+    {
+        let spelled = format!("{left}{to}{right}");
+        return (spelled != name).then_some(spelled);
+    }
     let parsed = parse_filename(name).ok()?;
     if parsed.declared_shape.rows == 1 && parsed.declared_shape.cols == 1 {
         return None; // a single cell has no separator to convert

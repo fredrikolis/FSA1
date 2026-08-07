@@ -20,10 +20,8 @@ pub fn document(workbook: &Workbook, overlay: &Overlay, view: &View<'_>) -> Stri
         .iter()
         .map(|sheet| table::sheet(workbook, overlay, sheet, &mut classes))
         .collect();
-    let any_width = view
-        .sheets
-        .iter()
-        .any(|sheet| !overlay.column_widths(workbook, sheet.sheet).is_empty());
+    // Keyed off what the tables EMIT: `fixed` also stops an unwidened column sizing to its content.
+    let any_width = tables.iter().any(|t| t.contains("<col style="));
     let names: Vec<&str> = view.sheets.iter().map(|sheet| sheet.name).collect();
     format!(
         r#"<!doctype html>
