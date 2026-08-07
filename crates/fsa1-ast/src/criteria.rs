@@ -131,7 +131,22 @@ impl Criterion {
     }
 
     /// A text pattern selects TEXT cells only — a number/bool is never coerced to its text form.
+    /// The exception is a pattern that IS an error literal: `"#REF!"` is how a criterion names an
+    /// error cell, and without this the only way to count broken cells answers zero.
     fn match_text(&self, cell: &Value, pattern: &str) -> bool {
+        // Upper-cased: the lexer reads uppercase-only source, but every criterion here folds case.
+        let upper = pattern.to_ascii_uppercase();
+        if let Value::Error(k) = cell
+            && let Some((lit, len)) = crate::lexer::match_error_literal(&upper)
+            && len == upper.len()
+        {
+            return match self.op {
+                Op::Eq => *k == lit,
+                Op::Ne => *k != lit,
+                // An error has no ordering, so a relational criterion selects nothing.
+                _ => false,
+            };
+        }
         let Value::Text(s) = cell else {
             return self.op == Op::Ne && matches!(cell, Value::Number(_) | Value::Bool(_));
         };
@@ -245,6 +260,34 @@ mod tests {
     }
     fn text(s: &str) -> Value {
         Value::Text(s.into())
+    }
+
+    /// An error literal names an error CELL. Without it the only criterion an author would reach for
+    /// to census broken cells selects none of them and answers a confident zero.
+    #[test]
+    fn an_error_literal_criterion_selects_that_error_kind() {
+        let c = crit(text("#REF!"));
+        assert!(c.matches(&Value::Error(ErrKind::Ref)));
+        assert!(!c.matches(&Value::Error(ErrKind::Div0)));
+        assert!(!c.matches(&Value::Number(1.0)));
+        assert!(!c.matches(&text("other")));
+    }
+
+    #[test]
+    fn a_negated_error_literal_selects_everything_else() {
+        let c = crit(text("<>#REF!"));
+        assert!(!c.matches(&Value::Error(ErrKind::Ref)));
+        assert!(c.matches(&Value::Error(ErrKind::Div0)));
+        assert!(c.matches(&Value::Number(1.0)));
+    }
+
+    /// The change is ADDITIVE: a text cell holding those characters still matches, and a pattern
+    /// that merely CONTAINS an error literal is not one.
+    #[test]
+    fn an_error_literal_still_matches_a_text_cell_spelling_it() {
+        assert!(crit(text("#REF!")).matches(&text("#REF!")));
+        assert!(!crit(text("#REF!x")).matches(&Value::Error(ErrKind::Ref)));
+        assert!(crit(text("#REF!x")).matches(&text("#REF!x")));
     }
 
     #[test]

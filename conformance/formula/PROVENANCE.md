@@ -103,7 +103,8 @@ The interesting behaviors the seed pins, all from Excel semantics:
   `fsa1-model` forge fitness pins + the whole-workbook xl-oracle track), not as ast-only value
   fixtures here — the ast grader evaluates a bare parse tree, where an un-rewritten forger is the located
   `#REF!` eval backstop, never the forged value.
-- **Information batch** (`info.fixtures`, the `ISBLANK ISNUMBER ISTEXT ISERROR NA TYPE` family — the
+- **Information batch** (`info.fixtures`, the `ISBLANK ISNUMBER ISTEXT ISERROR ISEVEN N NA TYPE`
+  family — the
   ONE error-TRANSPARENT group in the engine). The EXPECTED values were computed by a standalone python3
   oracle (`info_oracle.py`, pasted at the head of `info.fixtures`) that models the family FROM SCRATCH:
   each predicate INSPECTS its operand's kind and REPORTS on it — it does NOT route the operand through
@@ -116,8 +117,10 @@ The interesting behaviors the seed pins, all from Excel semantics:
   do not coerce (numeric-looking text `"42"` is not a number); **`NA`** the sole error-PRODUCING member,
   minting `#N/A` on demand (arity 0) — and the edge that `NA()+1` PROPAGATES `#N/A` because arithmetic,
   not an info fn, is reading it (contrast `ISERROR(NA())=TRUE`). The array operand is expressed as a
-  range `A1:B1` (v1 has no `{..}` array-constant node); `TYPE(A1:B1)=64` and the IS-predicates return
-  FALSE on it — inspected AS an array, never scalarized into a propagated `#VALUE!`.
+  range `A1:B1` (v1 has no `{..}` array-constant node), and it SPLITS the family: `TYPE(A1:B1)=64`
+  because an array has a type code of its own, while a predicate answers about each CELL and returns
+  an array of the same shape — which is what lets a reducer count the cells a predicate selects, the
+  reason to ask one over a range at all. Neither scalarizes into a propagated `#VALUE!`.
 
 - **Financial batch** (`finance.fixtures`, the `PMT NPV IRR` family). The EXPECTED values were computed
   by a standalone python3 hand-formula oracle (`finance_oracle.py`, its authoring print pasted at the

@@ -88,18 +88,19 @@ fn type_reports_the_code_and_is_error_and_array_transparent() {
         eval(&call("TYPE", vec![arr(1, 2, vec![n(1.0), n(2.0)])]), &g),
         n(64.0)
     );
+    // TYPE answers about the CONTAINER; a predicate beside it answers about each cell.
     assert_eq!(
         eval(&call("ISERROR", vec![arr(1, 2, vec![n(1.0), n(2.0)])]), &g),
-        Value::Bool(false)
+        arr_val(1, 2, vec![Value::Bool(false), Value::Bool(false)])
     );
     assert_eq!(
         eval(&call("ISNUMBER", vec![arr(1, 2, vec![n(1.0), n(2.0)])]), &g),
-        Value::Bool(false)
+        arr_val(1, 2, vec![Value::Bool(true), Value::Bool(true)])
     );
 }
 
 #[test]
-fn predicates_collapse_a_degenerate_1x1_array_to_its_cell() {
+fn a_predicate_reads_a_1x1_array_as_its_cell_and_a_range_cell_by_cell() {
     let g = Grid::new(1, vec![Value::Blank]);
     assert_eq!(
         eval(
@@ -164,6 +165,7 @@ fn predicates_collapse_a_degenerate_1x1_array_to_its_cell() {
         Value::Bool(true)
     );
 
+    // A MULTI-cell operand is answered cell by cell: counting broken cells is why one asks.
     assert_eq!(
         eval(
             &call(
@@ -172,11 +174,11 @@ fn predicates_collapse_a_degenerate_1x1_array_to_its_cell() {
             ),
             &g
         ),
-        Value::Bool(false)
+        arr_val(1, 2, vec![Value::Bool(true), Value::Bool(false)])
     );
     assert_eq!(
         eval(&call("ISNUMBER", vec![arr(2, 1, vec![n(1.0), n(2.0)])]), &g),
-        Value::Bool(false)
+        arr_val(2, 1, vec![Value::Bool(true), Value::Bool(true)])
     );
 }
 
@@ -252,7 +254,7 @@ fn islogical_and_isnontext_report_kind_transparently() {
             &call("ISNONTEXT", vec![arr(1, 2, vec![n(1.0), n(2.0)])]),
             &g
         ),
-        Value::Bool(true)
+        arr_val(1, 2, vec![Value::Bool(true), Value::Bool(true)])
     );
 }
 

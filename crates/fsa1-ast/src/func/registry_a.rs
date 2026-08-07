@@ -813,7 +813,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: isblank,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISNUMBER",
@@ -822,7 +822,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: isnumber,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISTEXT",
@@ -831,7 +831,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: istext,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISERROR",
@@ -840,7 +840,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         eval: iserror,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "NA",
@@ -851,6 +851,7 @@ pub(crate) const ROWS_A: &[FuncDef] = &[
         volatile: false,
         broadcast: &[],
     },
+    // Deliberately NOT broadcast: an array HAS a type code (64), so this one answers about the container.
     FuncDef {
         name: "TYPE",
         min_args: 1,

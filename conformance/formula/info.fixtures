@@ -1,4 +1,5 @@
-# Information batch v1: ISBLANK ISNUMBER ISTEXT ISERROR NA TYPE — the ONE error-TRANSPARENT family.
+# Information batch v1: the predicates that INSPECT a value rather than compute one — ISBLANK
+# ISNUMBER ISTEXT ISERROR ISEVEN N NA TYPE — the ONE error-TRANSPARENT family.
 # EXPECTED values are authored INDEPENDENTLY of FSA1 by a standalone python3 oracle that models
 # the family's semantics from scratch (it INSPECTS an operand's kind and reports on it; it never
 # propagates an error/blank/array through it). See PROVENANCE.md ("Information batch"). The oracle's
@@ -14,8 +15,10 @@
 # The defining contract this batch proves: an info predicate is error-TRANSPARENT — ISERROR(1/0) is
 # TRUE (the #DIV/0! is CAUGHT, not returned) and TYPE(NA()) is 16 (not #N/A). Contrast NA()+1, where
 # the same #N/A DOES propagate because arithmetic (not an info fn) is doing the reading. An ARRAY
-# operand is inspected AS an array: TYPE(A1:B1)=64, and the IS-predicates see "not a scalar of my
-# kind" -> FALSE, never a scalarize-into-#VALUE!. The parser has no {..} array-constant node in v1,
+# operand splits the family: TYPE answers about the CONTAINER (TYPE(A1:B1)=64, an array has a type
+# code of its own), while every IS-predicate answers about each CELL and returns an array of the
+# same shape, which is what lets a reducer count the cells a predicate selects.
+# The parser has no {..} array-constant node in v1,
 # so the array operand is expressed as a range reference A1:B1 (which evaluates to a 1x2 array).
 
 # --- ISBLANK: TRUE only for a genuinely empty cell; an empty STRING is not blank (the edge). ---
@@ -138,9 +141,53 @@ expect: 16
 
 [type-of-array-is-64]
 funcs: TYPE
+note: TYPE answers about the CONTAINER; a predicate beside it answers about each cell. That is the
+note: one distinction in this family, and the reason TYPE alone does not map over a range.
 note: a multi-cell range evaluates to an array operand -> code 64 (inspected AS an array, never
 note: scalarized to #VALUE!). Expressed as A1:B1 since v1 has no {..} array-constant node.
 cell A1: 1
 cell B1: 2
 formula: =TYPE(A1:B1)
 expect: 64
+
+# --- An IS-predicate over a RANGE answers per cell, so a reducer can count the cells it selects. ---
+
+[iserror-over-a-range-counts-the-broken-cells]
+funcs: ISERROR, SUMPRODUCT
+note: a predicate over a range answers per cell, so a reducer counts the cells it selected.
+cell A1: #DIV/0!
+cell A2: #DIV/0!
+cell A3: 5
+formula: =SUMPRODUCT(--ISERROR(A1:A3))
+expect: 2
+
+[isnumber-over-a-range-answers-per-cell]
+funcs: ISNUMBER, SUMPRODUCT
+cell A1: "x"
+cell A3: 3
+formula: =SUMPRODUCT(--ISNUMBER(A1:A3))
+expect: 1
+
+[isblank-over-a-range-answers-per-cell]
+funcs: ISBLANK, SUMPRODUCT
+cell A1: "x"
+cell A3: 3
+formula: =SUMPRODUCT(--ISBLANK(A1:A3))
+expect: 1
+
+[n-over-a-range-maps-rather-than-scalarizing]
+funcs: N, SUMPRODUCT
+note: N maps over a range rather than demanding one scalar, so text reads as 0 and numbers pass.
+cell A1: "x"
+cell A2: 2
+cell A3: 3
+formula: =SUMPRODUCT(N(A1:A3))
+expect: 5
+
+[iseven-over-a-range-maps-rather-than-scalarizing]
+funcs: ISEVEN, SUMPRODUCT
+cell A1: 2
+cell A2: 3
+cell A3: 4
+formula: =SUMPRODUCT(--ISEVEN(A1:A3))
+expect: 2

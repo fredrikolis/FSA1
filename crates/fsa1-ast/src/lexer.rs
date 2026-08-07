@@ -340,7 +340,7 @@ fn lex_word(src: &str, b: &[u8], i: usize) -> (TokenKind, usize) {
 }
 
 /// First match wins safely: no error literal is a prefix of another. Uppercase-only.
-fn match_error_literal(s: &str) -> Option<(ErrKind, usize)> {
+pub(crate) fn match_error_literal(s: &str) -> Option<(ErrKind, usize)> {
     const LITS: &[(&str, ErrKind)] = &[
         ("#DIV/0!", ErrKind::Div0),
         ("#VALUE!", ErrKind::Value),

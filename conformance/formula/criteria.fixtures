@@ -399,3 +399,29 @@ cell B3: 3
 cell B4: 4
 formula: =SUMIF(A1:A4,"a*",B1:B4)
 expect: 4
+
+# --- An error LITERAL as a criterion selects error cells by kind, so broken cells are countable. ---
+
+[countif-an-error-literal-selects-error-cells]
+funcs: COUNTIF
+note: an error literal names an error CELL, so a criterion can select cells by error kind.
+cell A1: #DIV/0!
+cell A2: #DIV/0!
+cell A3: 5
+formula: =COUNTIF(A1:A3,"#DIV/0!")
+expect: 2
+
+[countif-an-error-literal-is-matched-by-kind]
+funcs: COUNTIF
+cell A1: #DIV/0!
+cell A2: 5
+formula: =COUNTIF(A1:A2,"#REF!")
+expect: 0
+
+[countif-negated-error-literal-selects-the-rest]
+funcs: COUNTIF
+cell A1: #DIV/0!
+cell A2: #DIV/0!
+cell A3: 5
+formula: =COUNTIF(A1:A3,"<>#DIV/0!")
+expect: 1

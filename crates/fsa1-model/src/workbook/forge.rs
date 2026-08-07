@@ -69,6 +69,13 @@ impl ForgeStore {
     }
 }
 
+/// An EMPTY argument slot, which the parser spells `Expr::Lit(Value::Blank)` — `OFFSET(A1,0,0,,3)`.
+/// The grammar has no blank literal, so a blank arriving in an argument position can only be the
+/// parser's empty slot; a blank that arrives through a REFERENCE is a value and still coerces to 0.
+fn omitted(a: &Expr) -> bool {
+    matches!(a, Expr::Lit(Value::Blank))
+}
+
 impl Workbook {
     /// A fixpoint in dependency order: a forger whose argument cone still holds an unresolved forger
     /// waits a round, and when a round makes no progress the remainder are mutually blocked and become
@@ -235,7 +242,7 @@ impl Workbook {
     /// `INDIRECT(ref_text, [a1])`. Restricted v1 is A1 style only, so an explicit `a1=FALSE` (R1C1)
     /// is a located `#REF!`.
     fn forge_indirect(&self, args: &[Expr], home: u32, key: CellKey) -> Expr {
-        if let Some(a1_arg) = args.get(1) {
+        if let Some(a1_arg) = args.get(1).filter(|a| !omitted(a)) {
             // Coerced BEFORE the check, so `INDIRECT(text, 0)` is read as R1C1 rather than as A1.
             match coerce_logical(self.eval_root_expr(a1_arg, home, Some((key.2, key.1)))) {
                 Ok(false) => {
@@ -315,7 +322,7 @@ impl Workbook {
                 Ok(n) => n,
                 Err(k) => return Expr::Lit(Value::Error(k)),
             };
-        let height = match args.get(3) {
+        let height = match args.get(3).filter(|a| !omitted(a)) {
             Some(a) => {
                 match coerce_offset_int(self.eval_root_expr(a, home, Some((key.2, key.1)))) {
                     Ok(n) => n,
@@ -324,7 +331,7 @@ impl Workbook {
             }
             None => i64::from(base_h),
         };
-        let width = match args.get(4) {
+        let width = match args.get(4).filter(|a| !omitted(a)) {
             Some(a) => {
                 match coerce_offset_int(self.eval_root_expr(a, home, Some((key.2, key.1)))) {
                     Ok(n) => n,

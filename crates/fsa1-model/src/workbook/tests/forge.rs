@@ -203,6 +203,83 @@ fn a_forger_inside_another_forgers_forged_range_resolves() {
     );
 }
 
+/// A predicate over a range now answers with an ARRAY, and a cell holds one value — so the engine
+/// collapses it to the top-left, the way it collapses any array a cell computes. This is what an
+/// existing `=ISxxx(range)` in a workbook does after the lift, and it is the whole visible change
+/// for a reader who never wrote a reducer around it.
+#[test]
+fn a_lifted_predicate_written_straight_into_a_cell_collapses_to_its_top_left() {
+    let wb = load_one_tab(
+        "Sheet1",
+        &[
+            ("A1:A3", "1\n\n3"),
+            ("C1", "=ISNUMBER(A1:A3)"),
+            ("C2", "=ISBLANK(A1:A3)"),
+            ("C3", "=SUMPRODUCT(--ISBLANK(A1:A3))"),
+        ],
+    );
+    // A1 is a number, so the top-left of the result array is TRUE.
+    assert_eq!(wb.value_at(0, 2, 0), Value::Bool(true));
+    assert_eq!(wb.value_at(0, 2, 1), Value::Bool(false));
+    // The reducer sees the whole array, which is why the lift was wanted.
+    assert_eq!(wb.value_at(0, 2, 2), Value::Number(1.0));
+}
+
+/// An EMPTY slot is an omitted argument, so the same call spelled two legal ways agrees. It used to
+/// reach the forger as a blank VALUE, coerce to 0, and fail the `height <= 0` guard — which then
+/// raised an error-severity refusal telling the author to rewrite a formula that was already right.
+#[test]
+fn an_empty_offset_slot_takes_the_default_and_raises_nothing() {
+    // The base is A1, ONE cell, so an omitted extent defaults to 1x1 -- not to the filled grid.
+    for (formula, want) in [
+        ("=SUM(OFFSET(A1,0,0,2,))", 4.0), // A1:A2
+        ("=SUM(OFFSET(A1,0,0,,2))", 3.0), // A1:B1
+        ("=SUM(OFFSET(A1,0,0,,))", 1.0),  // A1
+        ("=SUM(OFFSET(A1,0,0))", 1.0),    // the same call with the slots absent
+    ] {
+        let wb = load_one_tab("Sheet1", &[("A1:B2", "1\t2\n3\t4"), ("D1", formula)]);
+        assert_eq!(
+            wb.value_at(0, 3, 0),
+            Value::Number(want),
+            "{formula} should be {want}"
+        );
+        let diags = wb.eval_diagnostics();
+        assert!(
+            !diags.iter().any(|d| d.code == Code::ForgeRefusal),
+            "{formula} is correct and must raise no refusal: {diags:?}"
+        );
+    }
+}
+
+/// The empty slot and an explicit zero are different arguments: only the empty one defaults.
+#[test]
+fn an_explicit_zero_extent_is_still_refused() {
+    let wb = load_one_tab(
+        "Sheet1",
+        &[("A1:B2", "1\t2\n3\t4"), ("D1", "=SUM(OFFSET(A1,0,0,0,0))")],
+    );
+    assert_eq!(wb.value_at(0, 3, 0), Value::Error(ErrKind::Ref));
+    assert!(
+        wb.eval_diagnostics()
+            .iter()
+            .any(|d| d.code == Code::ForgeRefusal),
+        "an explicitly zero extent is still a located refusal"
+    );
+}
+
+/// INDIRECT's style flag: empty takes the A1 default, an explicit 0 is still the R1C1 refusal.
+#[test]
+fn an_empty_indirect_style_slot_means_a1() {
+    let wb = load_one_tab("Sheet1", &[("A1", "5"), ("B1", "=INDIRECT(\"A1\",)")]);
+    assert_eq!(wb.value_at(0, 1, 0), Value::Number(5.0));
+    assert!(
+        !wb.eval_diagnostics()
+            .iter()
+            .any(|d| d.code == Code::ForgeRefusal),
+        "an omitted style flag is A1, not a refusal"
+    );
+}
+
 #[test]
 fn indirect_with_numeric_zero_a1_is_refused_as_r1c1() {
     // Excel coerces the flag to a LOGICAL, so a numeric 0 is FALSE and selects R1C1.

@@ -61,7 +61,12 @@ fn text(v: Value) -> String {
 /// A literal array argument of a given shape (row-major), sidestepping the whole-row test-Grid
 /// stub so a single column/row can be presented cleanly.
 fn arr(rows: u32, cols: u32, cells: Vec<Value>) -> Expr {
-    Expr::Lit(Value::Array(crate::value::Shape { rows, cols }, cells))
+    Expr::Lit(arr_val(rows, cols, cells))
+}
+
+/// The same array as a VALUE, for asserting what a lifted call answered rather than feeding it one.
+fn arr_val(rows: u32, cols: u32, cells: Vec<Value>) -> Value {
+    Value::Array(crate::value::Shape { rows, cols }, cells)
 }
 fn n(x: f64) -> Value {
     Value::Number(x)

@@ -210,7 +210,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: n_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISERR",
@@ -219,7 +219,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: iserr,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISNA",
@@ -228,7 +228,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: isna,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISLOGICAL",
@@ -237,7 +237,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: islogical,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISNONTEXT",
@@ -246,7 +246,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: isnontext,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISEVEN",
@@ -255,7 +255,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: iseven_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ISODD",
@@ -264,7 +264,7 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: isodd_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
     FuncDef {
         name: "ERROR.TYPE",
@@ -273,8 +273,9 @@ pub(crate) const ROWS_B: &[FuncDef] = &[
         eval: error_type_fn,
         validate: None,
         volatile: false,
-        broadcast: &[],
+        broadcast: &[0],
     },
+    // Deliberately NOT broadcast: it reads the UNEVALUATED Expr, which the broadcaster replaces with a literal.
     FuncDef {
         name: "ISFORMULA",
         min_args: 1,
