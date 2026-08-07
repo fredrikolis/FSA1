@@ -209,7 +209,7 @@ impl Code {
                 "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, give each selector one rule and each property one declaration, and drop `!important` and any at-rule"
             }
             Code::PresentationSelector => {
-                "use one of `td`, `tr:first-child td`, `tr:last-child td`, `tr:nth-child(k) td`, `td:first-child`, `td:last-child`, `td:nth-child(k)`, `tr:nth-child(r) td:nth-child(c)`; indices are 1-based and region-relative"
+                "use one of `td`, `tr:first-child td`, `tr:last-child td`, `tr:nth-child(k) td`, `td:first-child`, `td:last-child`, `td:nth-child(k)`; indices are 1-based and region-relative, and no selector names ONE cell -- give that cell its own <cell>.css"
             }
             Code::PresentationProperty => {
                 "use only color, background-color, font-weight, font-style, text-decoration, font-size, font-family, text-align, vertical-align, white-space, border-top/-bottom/-left/-right, and the two axis sizes: `width` on `td` or `td:nth-child(k)`, `height` on `td` or `tr:nth-child(k) td`"

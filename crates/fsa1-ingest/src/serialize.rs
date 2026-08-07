@@ -39,10 +39,21 @@ pub fn sheet_files(
         .collect();
     // Cut like the content is, so a block's own rows and columns are the ones its rules index and a uniform region is ONE rule. Sheet axis geometry is no block's to state and goes to the tab layer.
     for block in &blocks {
-        if let Some(presentation) = scope_block::encode(sheet, *block) {
+        let (presentation, alone) = scope_block::encode(sheet, *block);
+        if let Some(presentation) = presentation {
             files.push((
                 format!("{}{PRESENTATION_SUFFIX}", block_name(*block)),
                 spell_rules(root_rect(*block), &presentation),
+            ));
+        }
+        // A cell no structural selector reaches is its own ROOT: a selector states a region's shape, and one cell's shape says nothing about it.
+        for (at, one) in alone {
+            files.push((
+                format!(
+                    "{}{PRESENTATION_SUFFIX}",
+                    fsa1_model::range_file_name(&at.label())
+                ),
+                spell_rules(at, &one),
             ));
         }
     }

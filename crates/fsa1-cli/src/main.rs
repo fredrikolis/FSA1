@@ -115,7 +115,7 @@ fn cmd_view(rest: &[String], presenter: Presenter) -> u8 {
         Presenter::Tree => "tree",
     };
     let mut path: Option<String> = None;
-    let mut mode = RenderMode::Combined;
+    let mut mode: Option<RenderMode> = None;
     let mut format = OutputFormat::Ascii;
     let mut full = false;
 
@@ -125,7 +125,7 @@ fn cmd_view(rest: &[String], presenter: Presenter) -> u8 {
         match flag {
             "--mode" => match take_value(inline, &mut it) {
                 Some(v) => match parse_mode(&v) {
-                    Ok(m) => mode = m,
+                    Ok(m) => mode = Some(m),
                     Err(code) => return code,
                 },
                 None => return bad_arg(MODE_USAGE),

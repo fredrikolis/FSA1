@@ -162,13 +162,28 @@ fn resolve_target(
     file: &str,
     selector: &str,
     line: u32,
-    col: u32,
+    col_at: u32,
     shape: Shape,
     diags: &mut Vec<Diagnostic>,
 ) -> Option<Target> {
     match parse_selector(selector, shape) {
         Ok(target) => {
             let target = canonicalize(target, shape);
+            // PRES1, after canonicalisation: on a one-row or one-column root a cell selector folds to `Col`/`Row` and stays legal, so what is left truly addresses a coordinate.
+            if let Target::Cell { row, col } = target {
+                let at = crate::Rect::cell(col - 1, row - 1).label();
+                diags.push(located(
+                    file,
+                    line,
+                    col_at,
+                    Code::PresentationSelector,
+                    format!(
+                        "{selector:?} addresses a coordinate; a selector states a region's SHAPE. \
+                         State that cell in its own sidecar instead: the root's {at} as <cell>.css"
+                    ),
+                ));
+                return None;
+            }
             let canonical = spell(target, shape);
             // Compared VERBATIM, never whitespace-folded: a tab or a line break between two compounds is a second spelling of one appearance exactly as `#FFF` is.
             if selector == canonical {
@@ -177,14 +192,14 @@ fn resolve_target(
             diags.push(located(
                 file,
                 line,
-                col,
+                col_at,
                 Code::NonCanonicalPresentation,
                 format!("non-canonical selector {selector:?}: write `{canonical}`"),
             ));
             None
         }
         Err((code, message)) => {
-            diags.push(located(file, line, col, code, message));
+            diags.push(located(file, line, col_at, code, message));
             None
         }
     }
@@ -718,14 +733,7 @@ mod tests {
         assert_eq!(one_rule("td:first-child"), Target::Col(1));
         assert_eq!(one_rule("td:last-child"), Target::Col(3));
         assert_eq!(one_rule("td:nth-child(2)"), Target::Col(2));
-        assert_eq!(
-            one_rule("tr:nth-child(2) td:nth-child(2)"),
-            Target::Cell { row: 2, col: 2 }
-        );
-        assert_eq!(
-            one_rule("tr:first-child td:last-child"),
-            Target::Cell { row: 1, col: 3 }
-        );
+        // A cell selector reads to a coordinate and PRES1 refuses one; here only the shapes are read.
         assert_eq!(
             one_rule("tr:nth-child(2n) td"),
             Target::RowEvery { a: 2, b: 0 }
@@ -1006,12 +1014,12 @@ mod tests {
     fn a_size_is_refused_on_a_selector_that_names_no_such_axis() {
         for (block, want) in [
             (
-                "@scope {\n  tr:nth-child(2) td:nth-child(2) { width: 14.5ch }\n}",
-                "no column",
+                "@scope {\n  td:nth-child(2) { height: 22.5pt }\n}",
+                "no row",
             ),
             (
-                "@scope {\n  tr:nth-child(2) td:nth-child(2) { height: 22.5pt }\n}",
-                "no row",
+                "@scope {\n  tr:nth-child(2) td { width: 14.5ch }\n}",
+                "no column",
             ),
             (
                 "@scope {\n  tr:nth-child(2) td { width: 14.5ch }\n}",
@@ -1100,11 +1108,6 @@ mod tests {
                 "@scope {\n  tr:nth-child(4) td { color: #3f0421 }\n}",
                 "tr:last-child td",
                 "@scope {\n  tr:last-child td { color: #3f0421 }\n}",
-            ),
-            (
-                "@scope {\n  tr:nth-child(1) td:nth-child(1) { color: #3f0421 }\n}",
-                "tr:first-child td:first-child",
-                "@scope {\n  tr:first-child td:first-child { color: #3f0421 }\n}",
             ),
             (
                 "@scope {\n  tr:first-child\ttd { color: #3f0421 }\n}",
@@ -1257,10 +1260,12 @@ mod tests {
             (
                 REGION,
                 "@scope {\n  td { color: #3f0421; font-weight: bold }\n  \
-                 tr:first-child td { font-size: 14pt }\n  tr:nth-child(2) td { height: 22.5pt }\n  \
-                 tr:last-child td { font-style: italic }\n  td:first-child { width: 14.5ch }\n  \
-                 td:last-child { text-align: right }\n  \
-                 tr:nth-child(2) td:nth-child(2) { background-color: #ffe0b2 }\n}",
+                 tr:nth-child(2n) td { background-color: #ffe0b2 }\n  \
+                 tr:first-child td { font-size: 14pt }\n  \
+                 tr:nth-child(2) td { height: 22.5pt }\n  \
+                 tr:last-child td { font-style: italic }\n  \
+                 td:first-child { width: 14.5ch }\n  \
+                 td:last-child { text-align: right }\n}",
             ),
             (
                 Shape { rows: 1, cols: 3 },

@@ -1,4 +1,4 @@
-// Concern: parses a filename into the closed A1 range it declares, refusing non-canonical spellings | Non-concern: file contents, range overlap | IO: (&str) -> FileName or Diagnostic
+// Concern: parses a name into the A1 range it declares, closed or open, refusing non-canonical spellings | Non-concern: file contents, range overlap | IO: (&str) -> a FileName or a Root, else a refusal
 
 use crate::diagnostic::{Applicability, ByteSpan, Code, Diagnostic, Fix, Loc};
 use crate::overlap::Rect;
@@ -23,6 +23,104 @@ pub const RANGE_SEP: char = RANGE_SEP_POSIX;
 pub struct FileName {
     pub region: Rect,
     pub declared_shape: Shape,
+}
+
+/// A sidecar's scoping root. `Closed` is spelled whole; the other two name ONE axis and leave the
+/// other open, binding it late to the tab's content — so `A:A` is column A over whatever the tab
+/// reaches, and stays that after a row is appended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Root {
+    Closed(Rect),
+    Columns { first: u32, last: u32 },
+    Rows { first: u32, last: u32 },
+}
+
+impl Root {
+    /// `None` where the tab states no content: an open range is clamped to it by construction, so it
+    /// can never be what makes a coordinate stated.
+    pub fn resolve(self, content: Option<Rect>) -> Option<Rect> {
+        match self {
+            Root::Closed(region) => Some(region),
+            Root::Columns { first, last } => content.map(|c| Rect {
+                min_col: first,
+                max_col: last,
+                min_row: c.min_row,
+                max_row: c.max_row,
+            }),
+            Root::Rows { first, last } => content.map(|c| Rect {
+                min_col: c.min_col,
+                max_col: c.max_col,
+                min_row: first,
+                max_row: last,
+            }),
+        }
+    }
+}
+
+/// What a SIDECAR stem may name, which is a closed range or an open one. A range file's name is
+/// [`parse_filename`], which still refuses the open forms: a grid fills its declared range exactly,
+/// and a whole column is 1,048,576 rows of it.
+pub fn parse_root(name: &str) -> Result<Root, Diagnostic> {
+    let split = name
+        .split_once(RANGE_SEP_POSIX)
+        .or_else(|| dash_range_split(name))
+        .or_else(|| open_dash_split(name));
+    if let Some((left, right)) = split {
+        if is_all_alpha(left) && is_all_alpha(right) {
+            let (first, last) = (column_of(name, left)?, column_of(name, right)?);
+            return ordered(name, first, last).map(|(first, last)| Root::Columns { first, last });
+        }
+        if is_all_digit(left) && is_all_digit(right) {
+            let (first, last) = (row_of(name, left)?, row_of(name, right)?);
+            return ordered(name, first, last).map(|(first, last)| Root::Rows { first, last });
+        }
+    }
+    parse_filename(name).map(|parsed| Root::Closed(parsed.region))
+}
+
+/// `A-C` and `2-5` on a host that spells a range with `-`. Kept apart from [`dash_split`] because
+/// that one demands two parseable A1 corners, which an open end is not.
+fn open_dash_split(name: &str) -> Option<(&str, &str)> {
+    let (left, right) = name.split_once(RANGE_SEP_WINDOWS)?;
+    let open =
+        (is_all_alpha(left) && is_all_alpha(right)) || (is_all_digit(left) && is_all_digit(right));
+    open.then_some((left, right))
+}
+
+fn column_of(name: &str, letters: &str) -> Result<u32, Diagnostic> {
+    parse_a1(&format!("{letters}1"))
+        .map(|a| a.col)
+        .map_err(|e| a1_diag(name, 0, letters.len(), e))
+}
+
+fn row_of(name: &str, digits: &str) -> Result<u32, Diagnostic> {
+    let n: u32 = digits.parse().map_err(|_| {
+        Diagnostic::new(
+            Code::MalformedFilename,
+            Loc::file(name),
+            format!("{digits:?} is not a row number: {name:?}"),
+        )
+    })?;
+    n.checked_sub(1).ok_or_else(|| {
+        Diagnostic::new(
+            Code::MalformedFilename,
+            Loc::file(name),
+            format!("row numbers start at 1: {name:?}"),
+        )
+    })
+}
+
+/// Top-left to bottom-right, as every closed range is spelled: `C:A` is the same region written
+/// backwards, and one region with two spellings is what the cascade cannot order.
+fn ordered(name: &str, first: u32, last: u32) -> Result<(u32, u32), Diagnostic> {
+    if first > last {
+        return Err(Diagnostic::new(
+            Code::MalformedFilename,
+            Loc::file(name),
+            format!("an open range runs top-left to bottom-right: {name:?}"),
+        ));
+    }
+    Ok((first, last))
 }
 
 pub fn parse_filename(name: &str) -> Result<FileName, Diagnostic> {

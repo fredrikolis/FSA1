@@ -43,6 +43,10 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 - **FS5 · every value exists at a coordinate some file declares.** (would violate FS1)
 - **FS6 · every coordinate takes its content from at most one file.** (would violate FS1)
 
+## PRES — presentation
+
+- **PRES1 · a selector addresses structure, never a coordinate.** A sidecar's selectors address the shape of its region — the whole of it, an edge row or column, an index, a periodic offset — and no selector names a single cell. One coordinate's presentation is stated by a sidecar whose ROOT is that coordinate.
+
 ## VAL — the value model
 
 - **VAL1 · every value is computed, never asserted.** Every cell's value derives from its own content and the values it references, and from nothing else — including any value the engine reuses instead of recomputing, which is therefore the value a fresh computation would yield.

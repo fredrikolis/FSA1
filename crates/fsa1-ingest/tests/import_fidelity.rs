@@ -243,11 +243,8 @@ fn a_styled_xlsx_carries_its_appearance_and_names_every_loss() {
     assert_eq!(report.files, 1, "one block over the sheet's occupancy");
     assert_eq!(written(&dest, "Visual"), vec!["A1:B4".to_string()]);
 
-    let content = stylesheet(&dest, "Visual").expect("the tab states presentation");
-    assert!(
-        content.starts_with("A1:B4\n"),
-        "one sidecar, named for the sheet's used region: {content}"
-    );
+    // The block's own rules and every coordinate PRES1 cut out of it, read together: what this grades is that each attribute CROSSES, not which root ends up stating it.
+    let content = every_sidecar(&dest, "Visual");
     for declaration in [
         "background-color: #ffc000",
         "border-top: 1px solid #ff0000",
@@ -545,8 +542,25 @@ fn tab_layer(dest: &Path, tab: &str) -> Option<String> {
     std::fs::read_to_string(dest.join(tab).join(fsa1_model::PRESENTATION_SUFFIX)).ok()
 }
 
-/// The rules the tab's FIRST rooted sidecar holds, prefixed by the root its NAME states so a caller
-/// reads the scope and the rules together. A tab that states no presentation writes no sidecar.
+/// Every rooted sidecar the tab states, each prefixed by its root, in name order.
+fn every_sidecar(dest: &Path, tab: &str) -> String {
+    let mut found: Vec<String> = std::fs::read_dir(dest.join(tab))
+        .expect("the tab is written")
+        .map(|e| e.expect("a readable entry").path())
+        .filter(|p| fsa1_model::presentation_stem(&canonical(&base(p))).is_some())
+        .map(|p| {
+            let name = canonical(&base(&p));
+            let stem = fsa1_model::presentation_stem(&name).expect("a sidecar names its root");
+            format!(
+                "{stem}\n{}",
+                std::fs::read_to_string(&p).expect("a readable sidecar")
+            )
+        })
+        .collect();
+    found.sort();
+    found.join("")
+}
+
 fn stylesheet(dest: &Path, tab: &str) -> Option<String> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(dest.join(tab))
         .expect("the tab is written")

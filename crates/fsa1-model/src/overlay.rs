@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
-use crate::filename::parse_filename;
+use crate::filename::{parse_filename, parse_root};
 use crate::geometry::{AxisRun, declared_heights, declared_widths};
 use crate::names::{is_presentation_entry, is_tab_layer, presentation_stem};
 use crate::overlap::Rect;
@@ -218,7 +218,7 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
                 }
             }
         });
-        let blocks = read_sidecars(&tab, sidecars, &mut diags);
+        let blocks = read_sidecars(&tab, sidecars, content, &mut diags);
         out.insert(
             tab,
             TabOverlay {
@@ -269,20 +269,23 @@ fn range_of(name: &str) -> Option<Rect> {
 fn read_sidecars(
     tab: &str,
     sidecars: Vec<(String, String)>,
+    content: Option<Rect>,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<(Rect, Presentation)> {
     let mut read: Vec<(Rect, String, Presentation)> = Vec::new();
     for (name, text) in sidecars {
         let stem = presentation_stem(&name).expect("the classifier admitted only sidecars");
         let located = format!("{tab}/{name}");
-        match parse_filename(stem) {
-            Ok(parsed) => match parse_rules(&located, parsed.region, &text) {
-                Ok(presentation) => read.push((
-                    parsed.region,
-                    crate::canonical_range_name(&name),
-                    presentation,
-                )),
-                Err(d) => diags.extend(d),
+        match parse_root(stem) {
+            // An open root clamps to the tab's content, so a tab stating none reaches nothing: a no-op, never a refusal.
+            Ok(root) => match root.resolve(content) {
+                None => continue,
+                Some(region) => match parse_rules(&located, region, &text) {
+                    Ok(presentation) => {
+                        read.push((region, crate::canonical_range_name(&name), presentation))
+                    }
+                    Err(d) => diags.extend(d),
+                },
             },
             Err(d) => diags.push(Diagnostic::new(d.code, Loc::file(&located), d.message)),
         }
@@ -369,13 +372,12 @@ mod tests {
         );
     }
 
-    /// A sidecar's NAME is its root, so every root form a range file refuses it refuses too, located
-    /// on the sidecar. The filename grammar has one reader and this is the boundary that says so.
+    /// A sidecar's NAME is its root, so every MALFORMED root a range file refuses it refuses too,
+    /// located on the sidecar. The open forms are the one place the two grammars part: a sidecar
+    /// states a region and a grid must FILL one, so `A:A` is a root here and 1,048,576 rows there.
     #[test]
     fn a_sidecar_name_is_refused_for_every_root_a_range_file_would_refuse() {
         for (name, want) in [
-            ("A:A.css", Code::WholeColumnRowReserved),
-            ("3:3.css", Code::WholeColumnRowReserved),
             ("A1:A1.css", Code::DegenerateRange),
             ("a1:c3.css", Code::LowercaseColumn),
             ("C3:A1.css", Code::NonCanonicalRange),
@@ -392,6 +394,38 @@ mod tests {
             assert!(
                 diags.iter().any(|d| d.loc.to_string().contains(name)),
                 "{name}'s refusal must be located on it: {diags:?}"
+            );
+        }
+    }
+
+    /// The open forms, which a RANGE file still refuses: the filename grammar parts from the
+    /// sidecar's exactly here, and nowhere else.
+    #[test]
+    fn an_open_root_loads_on_a_sidecar_and_is_still_refused_on_a_range_file() {
+        // `over` panics on a refusal, so loading at all is the assertion.
+        let (wb, overlay) = over(&[
+            ("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9"),
+            ("A:A.css", "  td { width: 30ch }\n"),
+            ("2:2.css", "  td { height: 20pt }\n"),
+        ]);
+        assert_eq!(
+            overlay.cell_style(&wb, 0, 0, 0).and_then(|s| s.width),
+            Some(Chars(30.0)),
+            "`A:A` clamps to the tab's content and sizes column A",
+        );
+        assert_eq!(
+            overlay.cell_style(&wb, 0, 2, 1).and_then(|s| s.height),
+            Some(Points(20.0)),
+            "`2:2` clamps on the other axis",
+        );
+        for name in ["A:A", "3:3"] {
+            let refused = Workbook::from_tabs(&[("Sheet1", &[(name, "1")])])
+                .expect_err("a GRID file may not name an open range");
+            assert!(
+                refused
+                    .iter()
+                    .any(|d| d.code == Code::WholeColumnRowReserved),
+                "{name} as a grid file: {refused:?}",
             );
         }
     }

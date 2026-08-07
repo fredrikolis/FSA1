@@ -746,18 +746,26 @@ fn render_format_html_writes_one_document_to_stdout() {
         "column letters and row numbers ride as <th>:\n{out}"
     );
 
-    let (vc, vals) = run(&[
-        "render",
-        fx.path().to_str().unwrap(),
-        "--format",
-        "html",
-        "--mode",
-        "values",
-    ]);
-    assert_eq!(vc, 0);
+    // A page draws values and shows a formula in its bar, so a `--mode` has nothing left to pick.
+    for mode in ["values", "functions", "combined"] {
+        let (code, _, err) = run_err(&[
+            "render",
+            fx.path().to_str().unwrap(),
+            "--format",
+            "html",
+            "--mode",
+            mode,
+        ]);
+        assert_eq!(code, 3, "--mode {mode} with html is refused");
+        assert!(err.contains("formula bar"), "{mode}: {err}");
+    }
     assert!(
-        vals.contains("<td>4</td>") && !vals.contains('←'),
-        "--format is orthogonal to --mode:\n{vals}"
+        out.contains("<td data-ref=\"B1\" data-formula=\"=A1+3\"") || out.contains("data-formula"),
+        "a formula rides as an attribute, not as cell text:\n{out}"
+    );
+    assert!(
+        !out.contains('←'),
+        "no cell carries the combined arrow:\n{out}"
     );
 }
 

@@ -1,11 +1,11 @@
-// Concern: encodes what a sheet's styles and axis sizes cross as, and names what they cannot | Non-concern: cutting the blocks, naming a body (serialize.rs) | IO: (sheet, block) -> rules + warnings
+// Concern: encodes what a block's styles cross as cutting out what no shape reaches, and names what cannot cross | Non-concern: choosing the blocks, naming a body | IO: (sheet, block) -> roots
 
 use std::collections::{BTreeMap, HashMap};
 
 use fsa1_ast::a1::{format_cell, format_column};
 use fsa1_model::{
     BlankPaint, Border, BorderLine, Chars, Declaration, Edge, FontStyle, FontWeight, Points,
-    Presentation, Rgb, Rule, Target, TextAlign, TextDecoration, VerticalAlign, WhiteSpace,
+    Presentation, Rect, Rgb, Rule, Target, TextAlign, TextDecoration, VerticalAlign, WhiteSpace,
 };
 
 use crate::decompose::Block;
@@ -119,16 +119,37 @@ fn index_in(axis: u32, first: u32, last: u32) -> Option<u32> {
     (zero >= first && zero <= last).then(|| zero - first + 1)
 }
 
-/// The rules the block's cells earn — its AXES are the tab layer's, never a block's. `None` where
-/// they earn none: a block stating nothing writes no sidecar.
-pub fn encode(sheet: &SheetSource, block: Block) -> Option<Presentation> {
+/// The rules the block's cells earn — its AXES are the tab layer's, never a block's — and, apart,
+/// the coordinates no structural selector reaches. A selector names a REGION's shape; one cell is
+/// its own region, so what would have been a per-cell rule becomes a root of its own.
+pub fn encode(
+    sheet: &SheetSource,
+    block: Block,
+) -> (Option<Presentation>, Vec<(Rect, Presentation)>) {
     let ctx = Ctx::of(&sheet.styles);
     let restored = fsa1_model::default_style().declarations();
     let mut rules: BTreeMap<Target, Vec<Declaration>> = BTreeMap::new();
     for property in PROPERTIES {
         encode_property(sheet, block, &ctx, &restored, property, &mut rules);
     }
-    spell(rules)
+    let mut alone: BTreeMap<(u32, u32), Vec<Declaration>> = BTreeMap::new();
+    rules.retain(|target, declarations| match *target {
+        Target::Cell { row, col } => {
+            let at = (block.col + col - 2, block.row + row - 2);
+            alone.entry(at).or_default().append(declarations);
+            false
+        }
+        _ => true,
+    });
+    let cells = alone
+        .into_iter()
+        .filter_map(|((col, row), declarations)| {
+            let mut one: BTreeMap<Target, Vec<Declaration>> = BTreeMap::new();
+            one.insert(Target::All, declarations);
+            Some((Rect::cell(col, row), spell(one)?))
+        })
+        .collect();
+    (spell(rules), cells)
 }
 
 /// `None` where the rules are empty: a block stating nothing writes no sidecar.
@@ -873,14 +894,15 @@ mod tests {
 
     fn block_of(rows: u32, cols: u32, points: &[f64]) -> String {
         let (sheet, block) = sizes(rows, cols, points);
-        let presentation =
-            encode(&sheet, block).unwrap_or_else(|| panic!("{points:?} should earn a rule"));
+        let presentation = encode(&sheet, block)
+            .0
+            .unwrap_or_else(|| panic!("{points:?} should earn a rule"));
         spell(block, &presentation)
     }
 
-    /// One property over one block, resolved All -> Col -> Row -> Cell: the modal value carries the
-    /// block, a uniform column or row overrides it where it differs, and only what those three leave
-    /// wrong costs a cell rule. The rules are WRITTEN all, rows, columns, cells — not that order.
+    /// One property over one block, resolved All -> Col -> Row: the modal value carries the block and
+    /// a uniform column or row overrides it where it differs. What those three still leave wrong is
+    /// no longer a RULE at all — it leaves the block as a root of its own (PRES1).
     #[test]
     fn each_property_is_encoded_by_specificity_and_written_canonically() {
         assert_eq!(
@@ -902,16 +924,28 @@ mod tests {
              tr:last-child td { font-size: 12pt }\n",
             "the modal takes the tie by first appearance, and row 1 is already correct",
         );
+        let (sheet, block) = sizes(
+            3,
+            3,
+            &[14.0, 14.0, 14.0, 11.0, 11.0, 20.0, 11.0, 11.0, 20.0],
+        );
+        let (rules, alone) = encode(&sheet, block);
         assert_eq!(
-            block_of(
-                3,
-                3,
-                &[14.0, 14.0, 14.0, 11.0, 11.0, 20.0, 11.0, 11.0, 20.0]
-            ),
-            "  tr:first-child td { font-size: 14pt }\n  \
-             tr:nth-child(2) td:last-child { font-size: 20pt }\n  \
-             tr:last-child td:last-child { font-size: 20pt }\n",
-            "a uniform row, then a cell rule for each coordinate the cascade still leaves wrong",
+            spell(block, &rules.expect("the uniform row earns a rule")),
+            "  tr:first-child td { font-size: 14pt }\n",
+            "the block states only what a SHAPE reaches",
+        );
+        let cut: Vec<String> = alone
+            .iter()
+            .map(|(at, p)| format!("{} {}", at.label(), fsa1_model::spell_rules(*at, p).trim()))
+            .collect();
+        assert_eq!(
+            cut,
+            vec![
+                "C2 td { font-size: 20pt }".to_string(),
+                "C3 td { font-size: 20pt }".to_string(),
+            ],
+            "and each coordinate the cascade still leaves wrong becomes its own root",
         );
     }
 
@@ -930,8 +964,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        let presentation =
-            encode(&sheet, CELL).expect("a Normal font unlike the format's default earns a rule");
+        let presentation = encode(&sheet, CELL)
+            .0
+            .expect("a Normal font unlike the format's default earns a rule");
         assert_eq!(
             spell(CELL, &presentation),
             "  td { font-family: Arial; font-size: 9pt }\n",
@@ -942,7 +977,7 @@ mod tests {
         assert_eq!(default.font_family.as_deref(), Some("Calibri"));
         assert_eq!(default.font_size.map(|pt| pt.0), Some(11.0));
         assert_eq!(
-            encode(&one_cell(XlsxStyle::default()), CELL),
+            encode(&one_cell(XlsxStyle::default()), CELL).0,
             None,
             "a Normal font that IS the format's default is restored unwritten, so it earns nothing",
         );
@@ -978,7 +1013,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            encode(&sheet, CELL),
+            encode(&sheet, CELL).0,
             None,
             "and neither half reached a rule, which is what the two lines say",
         );
@@ -1252,7 +1287,7 @@ mod tests {
     #[test]
     fn every_sidecar_the_encoder_can_emit_reparses_to_the_one_it_emitted() {
         let reparses = |sheet: &SheetSource, what: &str| {
-            let Some(presentation) = encode(sheet, CELL) else {
+            let Some(presentation) = encode(sheet, CELL).0 else {
                 return;
             };
             let text = spell(CELL, &presentation);

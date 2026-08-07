@@ -1,4 +1,4 @@
-// Concern: one function per verb, naming its target by path and choosing its drawer | Non-concern: parsing the flags behind the options | IO: (a path + options) -> an outcome, or a Refusal
+// Concern: one function per verb, naming its target, choosing its drawer and refusing an option its carrier cannot take | Non-concern: parsing the flags | IO: (path + options) -> an outcome or a Refusal
 
 use std::path::{Path, PathBuf};
 
@@ -40,7 +40,7 @@ pub struct Rendered {
 
 pub fn view_at(
     target: &str,
-    mode: RenderMode,
+    mode: Option<RenderMode>,
     presenter: Presenter,
     format: Format,
     full: bool,
@@ -57,6 +57,15 @@ pub fn view_at(
     let overlay = match format {
         Format::Html => Some(load_overlay(&resolved.root)?),
         Format::Ascii => None,
+    };
+    // A page draws VALUES and shows a formula in its bar, so a `--mode` has nothing left to pick.
+    let mode = match (format, mode) {
+        (Format::Html, None) => RenderMode::Values,
+        (Format::Html, Some(_)) => {
+            let msg = "--format html draws values and shows each formula in its formula bar, so it takes no --mode; drop the flag, or use --format ascii";
+            return Err(fail(Kind::Validation, msg));
+        }
+        (Format::Ascii, mode) => mode.unwrap_or(RenderMode::Combined),
     };
     let scope = match (resolved.tab, resolved.region()) {
         (tab, Some(rect)) => ViewScope::Region(tab.unwrap_or(0), rect),
@@ -101,7 +110,7 @@ pub fn view_at(
     Ok(Rendered { text, notes, empty })
 }
 
-pub fn render(target: &str, mode: RenderMode, format: Format) -> Result<Rendered, Refusal> {
+pub fn render(target: &str, mode: Option<RenderMode>, format: Format) -> Result<Rendered, Refusal> {
     view_at(target, mode, Presenter::Table, format, false)
 }
 

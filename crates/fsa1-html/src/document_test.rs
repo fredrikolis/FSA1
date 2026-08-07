@@ -19,9 +19,11 @@ fn a_cell_spelling_markup_renders_as_visible_text() {
         html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
         "the cell must arrive escaped:\n{html}"
     );
-    assert!(
-        !html.contains("<script"),
-        "no <script> may reach the document:\n{html}"
+    // The document ships ONE script, its own; a cell's text may never become a second.
+    assert_eq!(
+        html.matches("<script").count(),
+        1,
+        "only the formula bar's own script may appear:\n{html}"
     );
 }
 
@@ -77,14 +79,22 @@ fn an_embedded_newline_and_padding_survive_the_html_carrier() {
 /// An axis size is CSS the browser already understands, so it crosses into the document as written
 /// rather than being dropped for want of a table-level carrier.
 #[test]
-fn an_axis_size_reaches_the_documents_css() {
+fn an_axis_size_reaches_the_document_where_the_browser_honours_it() {
     let html = doc(&[
         ("A1:B2", "1\t2\n3\t4"),
         ("A1:B2.css", "  td { height: 22.5pt; width: 14.5ch }\n"),
     ]);
     assert!(
-        html.contains(".c0 { height: 22.5pt; width: 14.5ch }"),
-        "the author's own sizes must reach the stylesheet:\n{html}"
+        html.contains(".c0 { height: 22.5pt }"),
+        "a height rides the cell's own class:\n{html}"
+    );
+    assert!(
+        html.contains("table-layout: fixed") && html.contains(r#"<col style="width: 14.5ch">"#),
+        "a WIDTH rides the <colgroup>, which is the only place it binds:\n{html}"
+    );
+    assert!(
+        !html.contains(".c0 { height: 22.5pt; width: 14.5ch }"),
+        "and never the cell, where it does nothing:\n{html}"
     );
 }
 
@@ -96,7 +106,7 @@ fn two_cells_with_the_same_declarations_share_one_class_and_one_rule() {
         ("A1:B1.css", "  td { font-weight: bold }\n"),
     ]);
     assert_eq!(
-        html.matches("<td class=\"c0\">").count(),
+        html.matches("<td class=\"c0\"").count(),
         2,
         "both cells wear the same class:\n{html}"
     );

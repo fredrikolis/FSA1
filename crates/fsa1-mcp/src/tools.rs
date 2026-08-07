@@ -96,15 +96,12 @@ fn str_arg(args: &Value, key: &str) -> Result<String, Refusal> {
 fn run(name: &str, args: &Value) -> Result<String, Refusal> {
     match name {
         "render" => {
-            let mode = match args
-                .get("mode")
-                .and_then(Value::as_str)
-                .unwrap_or("combined")
-            {
-                "combined" => RenderMode::Combined,
-                "values" => RenderMode::Values,
-                "functions" => RenderMode::Functions,
-                v => {
+            let mode = match args.get("mode").and_then(Value::as_str) {
+                None => None,
+                Some("combined") => Some(RenderMode::Combined),
+                Some("values") => Some(RenderMode::Values),
+                Some("functions") => Some(RenderMode::Functions),
+                Some(v) => {
                     return Err(bad_arg(&format!(
                         "mode must be combined, values or functions (got {v:?})"
                     )));
