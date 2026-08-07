@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use fsa1_ingest::{Decomposition, ImportReport};
 use fsa1_model::{
-    Diagnostic, Direction, FormulaOutcome, Overlay, RenderMode, TraceNode, ViewScope, view,
+    Diagnostic, Direction, Figures, FormulaOutcome, Overlay, RenderMode, TraceNode, ViewScope, view,
 };
 
 use crate::address;
@@ -58,6 +58,11 @@ pub fn view_at(
         Format::Html => Some(load_overlay(&resolved.root)?),
         Format::Ascii => None,
     };
+    // Gated on the PRESENTER, not the format: `tree` reaches this same function and draws no figure, so it must not open one, exactly as `eval` and `trace` never do.
+    let (figures, mut notes) = match presenter {
+        Presenter::Table => load_figures(&resolved.root)?,
+        Presenter::Tree => (Figures::default(), Vec::new()),
+    };
     // A page draws VALUES and shows a formula in its bar, so a `--mode` has nothing left to pick.
     let mode = match (format, mode) {
         (Format::Html, None) => RenderMode::Values,
@@ -73,7 +78,6 @@ pub fn view_at(
         (None, None) => ViewScope::Workbook,
     };
 
-    let mut notes = Vec::new();
     if let ViewScope::Region(sheet, rect) = scope
         && let Some(used) = overlay
             .as_ref()
@@ -97,13 +101,44 @@ pub fn view_at(
         ));
     }
 
+    // A figure is in scope for its TAB, and bound only for the carrier that DRAWS one: ASCII discards the spec, so expanding for it buys a fetch and a JSON build for nothing and reports each fault twice.
+    let mut bound: Vec<(String, String)> = Vec::new();
+    for sheet in &v.sheets {
+        for figure in figures.in_tab(sheet.name) {
+            match format {
+                Format::Html => {
+                    let sheet_id = wb.tab_index(sheet.name).expect("a view names its own tabs");
+                    match figure.expand(wb, sheet_id) {
+                        Ok(spec) => bound.push((figure.name.clone(), spec.to_string())),
+                        Err(diags) => notes.extend(diags.iter().map(Diagnostic::to_string)),
+                    }
+                }
+                // ASCII neither draws nor binds; the presenter below is where it NAMES one.
+                Format::Ascii => {}
+            }
+        }
+    }
+
     let text = match (presenter, format) {
-        (Presenter::Table, Format::Ascii) => present::table(&v),
+        (Presenter::Table, Format::Ascii) => {
+            // ASCII cannot DRAW one, so it names what it cannot draw rather than dropping it.
+            for figure in v.sheets.iter().flat_map(|s| figures.in_tab(s.name)) {
+                notes.push(format!(
+                    "figure {} binds {}",
+                    figure.name,
+                    match figure.bindings().as_slice() {
+                        [] => "no range".to_string(),
+                        bindings => bindings.join(", "),
+                    }
+                ));
+            }
+            present::table(&v)
+        }
         (Presenter::Table, Format::Html) => {
             let overlay = overlay
                 .as_ref()
                 .expect("Format::Html loaded the overlay above");
-            fsa1_html::document(wb, overlay, &v)
+            fsa1_html::document(wb, overlay, &v, &bound)
         }
         (Presenter::Tree, _) => present::tree(&v, if full { u32::MAX } else { TREE_CELL_CAP }),
     };
@@ -130,9 +165,10 @@ pub fn check(target: &str) -> Result<Vec<Diagnostic>, Refusal> {
             let msg = format!("cannot read {root_display:?}: {e}");
             Err(fail(Kind::Io, &msg))
         }
-        // Best-effort: a bare-filename loc carries no tab, so a scope cannot exclude it on that axis.
+        // Best-effort: a bare-filename loc carries no tab, so a scope cannot exclude it on that axis, and with no `Workbook` to resolve against a binding is graded on its SYNTAX and no further.
         Ok(Err(load_diags)) => Ok(in_scope(load_diags, &scope)
             .chain(in_scope(sidecar_diags(&decomposed.root)?, &scope))
+            .chain(in_scope(figure_diags(&decomposed.root, None)?, &scope))
             .collect()),
         Ok(Ok(wb)) => {
             if let Some(name) = scope.tab()
@@ -147,6 +183,7 @@ pub fn check(target: &str) -> Result<Vec<Diagnostic>, Refusal> {
             // The values first and the sidecars after, the order this verb reports on either branch.
             let mut found = wb.lint_scoped(&scope);
             found.extend(in_scope(sidecar_diags(&decomposed.root)?, &scope));
+            found.extend(in_scope(figure_diags(&decomposed.root, Some(&wb))?, &scope));
             Ok(found)
         }
     }
@@ -285,6 +322,24 @@ pub fn load_overlay(path: &Path) -> Result<Overlay, Refusal> {
     }
 }
 
+/// The THIRD load, off the same directory: a verb that DRAWS a figure asks for it, and every other
+/// one never opens a `.vl.json` at all. Unlike [`load_overlay`] a refusal here is a NOTE, because a
+/// figure is ADDITIVE: a sidecar that will not parse changes what every cell wears, while a figure
+/// that will not parse costs the document that figure and nothing else. `check` grades one.
+pub fn load_figures(path: &Path) -> Result<(Figures, Vec<String>), Refusal> {
+    match Figures::load_dir(path) {
+        Err(e) => {
+            let msg = format!("cannot read {:?}: {e}", path.display());
+            Err(fail(Kind::Io, &msg))
+        }
+        Ok(Err(diags)) => Ok((
+            Figures::default(),
+            diags.iter().map(Diagnostic::to_string).collect(),
+        )),
+        Ok(Ok(figures)) => Ok((figures, Vec::new())),
+    }
+}
+
 pub fn load(path: &Path) -> Result<fsa1_model::Workbook, Refusal> {
     match fsa1_model::Workbook::load_dir(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -312,6 +367,35 @@ fn sidecar_diags(root: &Path) -> Result<Vec<fsa1_model::Diagnostic>, Refusal> {
         Ok(Err(diags)) => Ok(diags),
         Ok(Ok(_)) => Ok(Vec::new()),
     }
+}
+
+/// `check` parses a figure to LINT it, so its refusals are findings rather than a reason to stop.
+/// What each branch can REACH differs and is not pretended otherwise: with a loadable `wb` the JSON
+/// must parse AND every binding must resolve; without one there is nothing to resolve against, so
+/// only the JSON and the binding SYNTAX are graded.
+fn figure_diags(
+    root: &Path,
+    wb: Option<&fsa1_model::Workbook>,
+) -> Result<Vec<fsa1_model::Diagnostic>, Refusal> {
+    let figures = match Figures::load_dir(root) {
+        Err(e) => {
+            let msg = format!("cannot read {:?}: {e}", root.display());
+            return Err(fail(Kind::Io, &msg));
+        }
+        Ok(Err(diags)) => return Ok(diags),
+        Ok(Ok(figures)) => figures,
+    };
+    let Some(wb) = wb else {
+        return Ok(figures.binding_syntax());
+    };
+    Ok(figures
+        .all()
+        .filter_map(|(tab, figure)| {
+            let sheet = wb.tab_index(tab)?;
+            figure.expand(wb, sheet).err()
+        })
+        .flatten()
+        .collect())
 }
 
 fn in_scope<'a>(

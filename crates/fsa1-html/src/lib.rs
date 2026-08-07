@@ -1,7 +1,8 @@
-// Concern: assembles the tables, the stylesheet and the bar into one standalone document | Non-concern: spelling a cell, the bar's own content | IO: (Workbook, Overlay, View) -> a document
+// Concern: assembles the tables, stylesheet, bar and figures into one standalone document | Non-concern: spelling a cell, expanding a spec | IO: (Workbook, Overlay, View, bound specs) -> a document
 
 mod bar;
 mod escape;
+mod figures;
 mod stylesheet;
 mod table;
 
@@ -9,11 +10,16 @@ use fsa1_model::{Overlay, View, Workbook};
 
 use crate::stylesheet::Classes;
 
-/// Serialize `view` as ONE self-contained document — no fetch, no asset — each cell classed by the
-/// [`fsa1_model::CellStyle`] `overlay` resolves to over `workbook`. The tables are framed first: a
-/// class exists once the cell wearing it has been seen, so the stylesheet above them is complete and
-/// in document order. The bar reads the `<td>` the table already spelled and derives nothing.
-pub fn document(workbook: &Workbook, overlay: &Overlay, view: &View<'_>) -> String {
+/// ONE self-contained document — no fetch, no asset — each cell classed by the [`fsa1_model::CellStyle`]
+/// `overlay` resolves to over `workbook`. The tables are framed first, so the stylesheet above them
+/// is complete and in document order. Each of `figures` is `(name, bound spec)`, ALREADY expanded:
+/// this crate resolves no binding, and handed none the document is byte-identical to a pre-figure one.
+pub fn document(
+    workbook: &Workbook,
+    overlay: &Overlay,
+    view: &View<'_>,
+    figures: &[(String, String)],
+) -> String {
     let mut classes = Classes::default();
     let tables: Vec<String> = view
         .sheets
@@ -34,7 +40,7 @@ pub fn document(workbook: &Workbook, overlay: &Overlay, view: &View<'_>) -> Stri
 </head>
 <body>
 {bar}
-{body}
+{body}{figures}
 <script>{bar_js}</script>
 </body>
 </html>"#,
@@ -44,6 +50,7 @@ pub fn document(workbook: &Workbook, overlay: &Overlay, view: &View<'_>) -> Stri
         bar = bar::MARKUP,
         bar_js = bar::SCRIPT,
         body = tables.join("\n"),
+        figures = figures::block(figures),
     )
 }
 

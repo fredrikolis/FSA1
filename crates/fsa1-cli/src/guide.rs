@@ -40,6 +40,17 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   faults; render --format html carries it into the document's CSS, and pack carries it into
   the .xlsx as fonts, fills, borders, alignment, column widths and row heights.
 
+FIGURES — <tab>/<name>.vl.json, a Vega-Lite spec bound to the tab's ranges
+  The STEM is a name, never a range, so it collides with no cell and takes no part in the
+  cascade. Bind data through Vega-Lite's own named data: "data": {"name": "A1:D4"}, or
+  "Orders!A1:D4" across tabs. A binding is a REFERENCE — one corner or two joined by ":",
+  so A1:A1 is legal and a whole column A:A is refused. Every data.name in the spec binds,
+  one per layer included, and each must name a rectangle the tab fills.
+  The range resolves to a table whose FIRST ROW is the field names (no blank, no duplicate)
+  and whose cells contribute VALUES, never formulas: blank is null, an error is its text.
+  check lints the JSON and every binding; render --format html embeds the expanded spec and
+  the Vega runtime and draws it; render --format ascii names it on stderr and draws the table.
+
 NAMES — a named cell/range/formula, by an identifier (not an A1 address)
   A name is an entry in its SCOPE folder: a tab folder = sheet-scoped, the workbook root = workbook-
   scoped (a sheet-scoped name shadows a workbook one of the same identifier). Reference it in a

@@ -24,10 +24,11 @@ use fsa1_ast::{
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::grid::{Cell as GridCell, Grid};
 use crate::names::{
-    NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename, is_presentation_entry,
+    NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename, is_figure_entry,
+    is_presentation_entry,
 };
 use crate::overlap::{Rect, detect_overlaps};
-use crate::{ParsedFile, parse_file, presentation_in_grid};
+use crate::{ParsedFile, figure_in_root, parse_file, presentation_in_grid};
 
 use forge::ForgeStore;
 use plan::DepGraph;
@@ -314,6 +315,9 @@ impl Workbook {
             } else if is_presentation_entry(&entry_name) {
                 // A sidecar styles COORDINATES, and a coordinate is a tab's; at the root it names none.
                 root_faults.push(presentation_in_grid(Loc::file(&entry_name)));
+            } else if is_figure_entry(&entry_name) {
+                // Without this arm it falls into `read_name_entry`'s `RefFile` arm and is claimed as a defined name.
+                root_faults.push(figure_in_root(Loc::file(&entry_name)));
             } else if let Some(name) = read_name_entry(
                 root,
                 NameScope::Workbook,
@@ -340,7 +344,7 @@ impl Workbook {
             let mut cells = Vec::new();
             for (fname, contents) in files {
                 // A sidecar is classified FIRST, exactly as on disk: its stem holds a range separator, so the cell arm would otherwise take it and its name would die as malformed.
-                if is_presentation_entry(&fname) {
+                if is_presentation_entry(&fname) || is_figure_entry(&fname) {
                     continue;
                 }
                 if is_cell_filename(&fname) {
@@ -824,7 +828,8 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
         if Workbook::is_reserved_entry(&name) {
             continue;
         }
-        if ft.is_file() && is_presentation_entry(&name) {
+        // A figure is skipped with the sidecars: its stem is a NAME, so the name arm below would otherwise claim it and its `.vl` suffix would die as a corner alias.
+        if ft.is_file() && (is_presentation_entry(&name) || is_figure_entry(&name)) {
             continue;
         }
         if ft.is_file() && is_cell_filename(&name) {
@@ -853,6 +858,10 @@ fn read_name_entry(
     ft: std::fs::FileType,
     scratch: &mut Vec<u8>,
 ) -> std::io::Result<Option<RawNameEntry>> {
+    // Before the symlink arm: a figure is one however the filesystem stores it, and a name branch claiming its stem is the one thing this entry kind may never do.
+    if is_figure_entry(entry_name) {
+        return Ok(None);
+    }
     if ft.is_symlink() {
         let (target_sheet, target_cell) = resolve_symlink_target(root, path)?;
         return Ok(Some(RawNameEntry {
@@ -864,7 +873,11 @@ fn read_name_entry(
             },
         }));
     }
-    if ft.is_file() && !is_cell_filename(entry_name) && !is_presentation_entry(entry_name) {
+    if ft.is_file()
+        && !is_cell_filename(entry_name)
+        && !is_presentation_entry(entry_name)
+        && !is_figure_entry(entry_name)
+    {
         return Ok(Some(RawNameEntry {
             scope,
             entry_name: entry_name.to_string(),

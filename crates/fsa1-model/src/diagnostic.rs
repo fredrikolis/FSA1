@@ -37,6 +37,9 @@ pub enum Code {
     PresentationProperty,
     PresentationValue,
     NonCanonicalPresentation,
+    FigureInRoot,
+    FigureSyntax,
+    FigureBinding,
 }
 
 impl Code {
@@ -65,6 +68,9 @@ impl Code {
         Code::PresentationProperty,
         Code::PresentationValue,
         Code::NonCanonicalPresentation,
+        Code::FigureInRoot,
+        Code::FigureSyntax,
+        Code::FigureBinding,
     ];
 
     pub fn code_str(self) -> &'static str {
@@ -93,6 +99,9 @@ impl Code {
             Code::PresentationProperty => "presentation-property",
             Code::PresentationValue => "presentation-value",
             Code::NonCanonicalPresentation => "non-canonical-presentation",
+            Code::FigureInRoot => "figure-in-root",
+            Code::FigureSyntax => "figure-syntax",
+            Code::FigureBinding => "figure-binding",
         }
     }
 
@@ -140,6 +149,11 @@ impl Code {
             }
             Code::NonCanonicalPresentation => {
                 "a presentation sidecar has one spelling per appearance"
+            }
+            Code::FigureInRoot => "a figure states one tab's ranges, so it lives in a tab folder",
+            Code::FigureSyntax => "a figure's body must parse as JSON",
+            Code::FigureBinding => {
+                "a figure's data name must be an A1 reference this workbook resolves to a table its first row can key"
             }
         }
     }
@@ -219,6 +233,15 @@ impl Code {
             }
             Code::NonCanonicalPresentation => {
                 "apply the rewrite the message names: index 1 is `:first-child` and the last index `:last-child`, an axis of extent 1 carries no selector of its own, rules run all, then rows, then columns, then cells ascending, declarations are alphabetical"
+            }
+            Code::FigureInRoot => {
+                "move the `<name>.vl.json` into the tab folder whose ranges it binds; a figure names no coordinate at the workbook root"
+            }
+            Code::FigureSyntax => {
+                "correct the file so it is one JSON object holding a Vega-Lite spec (balance braces and brackets, quote every key, drop trailing commas)"
+            }
+            Code::FigureBinding => {
+                "write each `data.name` as an A1 reference -- one corner (`A1`) or two joined by `:` (`A1:D4`), optionally prefixed `<tab>!` -- naming a rectangle the workbook fills, whose FIRST ROW is a full set of distinct field names"
             }
         }
     }
@@ -396,7 +419,7 @@ mod tests {
     fn registry_is_self_consistent() {
         assert_eq!(
             Code::ALL.len(),
-            24,
+            27,
             "every Code variant must be listed in ALL"
         );
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();

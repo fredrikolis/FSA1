@@ -28,3 +28,8 @@ Cargo.lock.orig
 # the release carries the bytes.
 distribution/npm/platforms/*/fsa1-mcp
 distribution/npm/platforms/*/fsa1-mcp.exe
+
+# The pinned Vega runtime `scripts/fetch-vega.sh` fetches and `fsa1-html/build.rs` embeds. A
+# megabyte of somebody else's minified JavaScript: the repo carries the pin (vega-manifest.txt),
+# the build carries the bytes.
+crates/fsa1-html/vendor/

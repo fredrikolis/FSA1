@@ -41,6 +41,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: fetch the pinned Vega runtime
+        run: bash scripts/fetch-vega.sh
       - name: fmt --check
         run: cargo fmt --all -- --check
       - name: clippy -D warnings
@@ -164,6 +166,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: fetch the pinned Vega runtime
+        run: bash scripts/fetch-vega.sh
       - name: SER2 round-trip oracle (formulas + openpyxl)
         run: conformance/serde/run.sh
 
@@ -185,5 +189,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: fetch the pinned Vega runtime
+        run: bash scripts/fetch-vega.sh
       - name: presentation round-trip oracle (openpyxl)
         run: conformance/presentation/run.sh

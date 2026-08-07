@@ -1,0 +1,1 @@
+Concern: the Vega runtime version and sha256 a figure is drawn by | Non-concern: fetching it (scripts/fetch-vega.sh), embedding it (fsa1-html/build.rs) | IO: none

@@ -1,0 +1,7 @@
+# One row per part, concatenated in THIS order into the bundle: `vega` defines the runtime,
+# `vega-lite` compiles a Vega-Lite spec down to it. vega-embed is deliberately absent -- the page
+# calls `vegaLite.compile` and `new vega.View` itself, which is two pins instead of three.
+#
+# <name> <version> <sha256> <url>
+vega 5.33.1 463f3db6a40b20e9747b4ed38f37ed0add508838f9141b1cf8366784b07b30c8 https://cdn.jsdelivr.net/npm/vega@5.33.1/build/vega.min.js
+vega-lite 5.23.0 58c27358e26f2d319cf62f45bc17a4c8362f08645001df2ec8d341eee4097c7f https://cdn.jsdelivr.net/npm/vega-lite@5.23.0/build/vega-lite.min.js

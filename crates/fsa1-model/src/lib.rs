@@ -6,6 +6,8 @@
 
 pub mod declaration;
 pub mod diagnostic;
+pub mod figure;
+pub mod figures;
 pub mod filename;
 pub mod format;
 pub mod geometry;
@@ -26,6 +28,8 @@ pub use declaration::{
     TextDecoration, VerticalAlign, WhiteSpace,
 };
 pub use diagnostic::{Applicability, ByteSpan, Code, Diagnostic, Fix, Loc, Severity};
+pub use figure::Figure;
+pub use figures::Figures;
 pub use filename::{
     FileName, RANGE_SEP, RANGE_SEP_POSIX, RANGE_SEP_WINDOWS, parse_filename, reseparate_range_name,
 };
@@ -37,8 +41,9 @@ pub use grid::{
     Cell, Grid, deserialize_tsv, encode_field, lex_literal, load_error_value, split_format_marker,
 };
 pub use names::{
-    Name, NameRepr, NameScope, NameTable, NameTarget, PRESENTATION_SUFFIX, RawNameEntry,
-    is_cell_filename, is_presentation_entry, is_tab_layer, presentation_stem, quote_sheet,
+    FIGURE_SUFFIX, Name, NameRepr, NameScope, NameTable, NameTarget, PRESENTATION_SUFFIX,
+    RawNameEntry, is_cell_filename, is_figure_entry, is_presentation_entry, is_tab_layer,
+    presentation_stem, quote_sheet,
 };
 pub use overlap::{Rect, detect_overlaps};
 pub use overlay::Overlay;
@@ -213,6 +218,18 @@ pub fn presentation_in_grid(loc: Loc) -> Diagnostic {
             "presentation is a `<range>{PRESENTATION_SUFFIX}` sidecar, never a block in a grid: \
              move the rules into a file named for the absolute range they styled, dropping the \
              `@scope {{ ... }}` frame"
+        ),
+    )
+}
+
+/// A figure binds the A1 ranges of ONE tab, and the workbook root has no coordinates to bind.
+pub fn figure_in_root(loc: Loc) -> Diagnostic {
+    Diagnostic::new(
+        Code::FigureInRoot,
+        loc,
+        format!(
+            "a figure is a `<name>{FIGURE_SUFFIX}` entry of a TAB folder, whose ranges it binds; at \
+             the workbook root it names no coordinate: move it into the tab it charts"
         ),
     )
 }

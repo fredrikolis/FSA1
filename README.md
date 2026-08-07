@@ -22,9 +22,11 @@ As a Claude Code plugin:
 /plugin install fsa1@fredrikolis
 ```
 
-Or from source:
+Or from source. The first step fetches the pinned Vega runtime a figure is drawn by; the build
+embeds it and refuses without it.
 
 ```
+bash scripts/fetch-vega.sh
 cargo run -p fsa1-cli -- sample ./demo && cargo run -p fsa1-cli -- tree ./demo
 ```
 

@@ -1,14 +1,27 @@
-// Concern: freezes the document's output contract | Non-concern: the CLI dispatch (fsa1-cli/tests owns it), the ASCII table | IO: (range files + sidecars) -> assertions
+// Concern: freezes the document's output contract | Non-concern: the CLI dispatch (fsa1-cli/tests owns it), the ASCII table | IO: (range files, sidecars, figures) -> assertions
 
-use fsa1_model::{Overlay, RenderMode, ViewScope, Workbook, view};
+use fsa1_model::{Figure, Overlay, RenderMode, ViewScope, Workbook, view};
 
 use crate::document;
 
 fn doc(files: &[(&str, &str)]) -> String {
+    figured(files, &[])
+}
+
+/// `figures` is `(name, spec text)`, expanded here exactly as `fsa1-verbs` expands it.
+fn figured(files: &[(&str, &str)], figures: &[(&str, &str)]) -> String {
     let wb = Workbook::from_tabs(&[("Sheet1", files)]).expect("loads clean");
     let overlay = Overlay::from_tabs(&[("Sheet1", files)]).expect("its sidecars load clean");
     let v = view(&wb, Some(&overlay), ViewScope::Workbook, RenderMode::Values).expect("a view");
-    document(&wb, &overlay, &v)
+    let bound: Vec<(String, String)> = figures
+        .iter()
+        .map(|(name, text)| {
+            let figure = Figure::parse(name, text).expect("the figure parses");
+            let spec = figure.expand(&wb, 0).expect("its bindings resolve");
+            ((*name).to_string(), spec.to_string())
+        })
+        .collect();
+    document(&wb, &overlay, &v, &bound)
 }
 
 /// Cell text is author-controlled, and this document is the boundary it crosses into markup.
@@ -138,4 +151,67 @@ fn a_document_stating_no_width_keeps_the_browsers_own_layout() {
         widened.contains("table-layout: fixed") && widened.contains(r#"<col style="width: 30ch">"#),
         "one authored width turns it on:\n{widened}"
     );
+}
+
+/// A workbook stating no figure pays for none: the runtime is a megabyte, and a document that never
+/// draws one must not carry a byte of it, nor a `<figure>`, nor a second script.
+#[test]
+fn a_document_with_no_figure_carries_no_runtime_and_no_figure() {
+    let html = doc(&[("A1:B2", "1\t2\n3\t4")]);
+    assert!(!html.contains("<figure"), "no figure element:\n{html}");
+    assert!(!html.contains("vegaLite"), "no runtime");
+    assert_eq!(
+        html.matches("<script").count(),
+        1,
+        "only the formula bar's own script:\n{html}"
+    );
+}
+
+/// The export is ONE self-contained file. A CDN `src=` would make a saved page stop drawing the day
+/// the network is gone, so the runtime is inlined, once, however many figures the document holds.
+#[test]
+fn a_figured_document_carries_the_runtime_once_and_fetches_nothing() {
+    let spec = r#"{"data":{"name":"A1:B2"},"mark":"bar"}"#;
+    let html = figured(
+        &[("A1:B2", "x\ty\n3\t4")],
+        &[("Sheet1/one.vl.json", spec), ("Sheet1/two.vl.json", spec)],
+    );
+    assert_eq!(html.matches("<figure").count(), 2, "one element per figure");
+    assert_eq!(
+        html.matches("vegaLite.compile").count(),
+        1,
+        "one mounting script, however many figures:\n{}",
+        &html[..400]
+    );
+    for fetch in [
+        "<script src=",
+        "<link ",
+        "@import",
+        "src=\"http",
+        "href=\"http",
+    ] {
+        assert!(!html.contains(fetch), "{fetch:?} would leave the file");
+    }
+    assert!(
+        html.contains(r#""datasets":{"A1:B2":[{"x":3,"y":4}]}"#),
+        "the spec arrives BOUND:\n{html}"
+    );
+}
+
+/// A `<script>` is a raw-text element, so a cell spelling `</script>` inside a bound spec would end
+/// it and turn the rest of the document into markup.
+#[test]
+fn a_cell_cannot_close_the_spec_script_it_rides_in() {
+    let html = figured(
+        &[("A1:A2", "h\n</script><img src=x>")],
+        &[(
+            "Sheet1/f.vl.json",
+            r#"{"data":{"name":"A1:A2"},"mark":"bar"}"#,
+        )],
+    );
+    assert!(
+        !html.contains("<img src=x>"),
+        "the cell may never become markup:\n{html}"
+    );
+    assert!(html.contains(r"\u003c/script>"), "escaped instead:\n{html}");
 }

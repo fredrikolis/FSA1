@@ -10,6 +10,18 @@ trap 'rm -rf "$LOG_DIR"' EXIT
 
 failed=0
 
+# fsa1-html's build.rs embeds the pinned runtime, so a fresh clone cannot compile without it. Fetched
+# here rather than left to the developer: a gate that fails on a clean checkout teaches nothing.
+if [ -z "${FSA1_VEGA_BUNDLE:-}" ] && [ ! -f crates/fsa1-html/vendor/vega-bundle.js ]; then
+	printf 'vega bundle    '
+	if bash scripts/fetch-vega.sh >"$LOG_DIR/vega.log" 2>&1; then
+		printf 'fetched\n'
+	else
+		printf 'FAILED -- see %s\n' "$LOG_DIR/vega.log"
+		exit 1
+	fi
+fi
+
 fail() {
 	printf 'FAILED\n'
 	tail -30 "$1" >&2

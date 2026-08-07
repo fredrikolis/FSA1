@@ -80,11 +80,16 @@ forbid_orphans = true
 # The direction that IS allowed: {cli, mcp} -> verbs -> {model, ingest, xlsx, html} -> ast (and ingest/xlsx/html ->
 # model), except fsa1-html, which reaches fsa1-model only. This encodes the owner's hard rule that
 # the AST impl is swappable behind a narrow boundary AND the FORMAT
-# FIREWALL: the format libraries (calamine + zip/xml on the READ side in fsa1-ingest, zip/xml on the
-# WRITE side in fsa1-xlsx) are confined to those two format crates, so fsa1-model/ast stay
-# format-library-free and the engine keeps reading TSV grids (HARD RULE 4). fsa1-xlsx carrying
-# zip/quick-xml is NOT a firewall breach: a format crate is exactly where those libraries belong — the
-# invariant is only that model/ast stay free of them, and they do.
+# FIREWALL: what is confined to fsa1-ingest and fsa1-xlsx is a FOREIGN DOCUMENT reader or writer —
+# the libraries that read and write somebody else's spreadsheet package (calamine + zip/xml on the
+# READ side in fsa1-ingest, zip/xml on the WRITE side in fsa1-xlsx). fsa1-model/ast never reach one,
+# so the engine keeps reading TSV grids (HARD RULE 4). fsa1-xlsx carrying zip/quick-xml is NOT a
+# firewall breach: a format crate is exactly where those libraries belong — the invariant is only
+# that model/ast stay free of them, and they do.
+# The distinction the rule turns on is FOREIGN, not "a parser": FSA1's OWN on-disk encodings are
+# fsa1-model's own job, and it already parses two of them in-crate — TSV for cells (grid.rs) and CSS
+# for presentation (presentation.rs). JSON for a figure (figure.rs) is the third, and no more a
+# firewall breach than the other two. The owner ruled so on 2026-08-07.
 deny = [
     ["fsa1-ast", "fsa1-model"],
     ["fsa1-ast", "fsa1-cli"],

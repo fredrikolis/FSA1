@@ -77,6 +77,11 @@ jobs:
 
       # Both front ends ship: the launcher fetches `mcp_asset`, and website/public/install-cli
       # fetches `asset` for anyone who wants the command in their own shell.
+      # fsa1-cli -> fsa1-verbs -> fsa1-html, whose build.rs embeds this bundle: without it every
+      # target builds nothing and the tag ships no assets at all.
+      - name: fetch the pinned Vega runtime
+        run: bash scripts/fetch-vega.sh
+
       - name: Build both front ends (release)
         run: cargo build --release -p fsa1-cli -p fsa1-mcp --target ${{ matrix.target }}
 

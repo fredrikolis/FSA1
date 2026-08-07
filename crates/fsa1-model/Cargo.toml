@@ -1,4 +1,4 @@
-# Concern: declares the package and its one dep, fsa1-ast | Non-concern: the format libraries, which fsa1-xlsx and fsa1-ingest confine | IO: none
+# Concern: declares the package and its deps, fsa1-ast and serde_json | Non-concern: the FOREIGN document readers, which fsa1-xlsx and fsa1-ingest confine | IO: none
 [package]
 name = "fsa1-model"
 version = "0.1.0"
@@ -7,3 +7,6 @@ license.workspace = true
 
 [dependencies]
 fsa1-ast = { path = "../fsa1-ast" }
+# FSA1's own on-disk encoding for a figure, as TSV is for cells and CSS for presentation. Not a
+# FOREIGN document reader, so not the firewall's business (owner's ruling, 2026-08-07).
+serde_json = { version = "1", features = ["preserve_order"] }

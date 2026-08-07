@@ -1,4 +1,4 @@
-// Concern: what an entry's NAME means — a range, a rooted or tab-level sidecar, a name — and what it resolves to | Non-concern: finding the entries on disk, evaluating | IO: (entries) -> NameTable
+// Concern: what an entry's NAME means — a range, a sidecar, a figure, a defined name — and what it resolves to | Non-concern: finding the entries on disk, evaluating | IO: (entries) -> NameTable
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use fsa1_ast::a1::parse_a1;
@@ -146,6 +146,21 @@ pub fn is_tab_layer(name: &str) -> bool {
 /// Either kind — what a loader asks when it wants every entry that states presentation.
 pub fn is_presentation_entry(name: &str) -> bool {
     is_tab_layer(name) || presentation_stem(name).is_some()
+}
+
+/// The suffix that makes an entry a figure.
+pub const FIGURE_SUFFIX: &str = ".vl.json";
+
+/// The NAME a figure is stated under, or `None` for any other entry. A figure's stem is a name and
+/// never a range, so it takes no part in the cascade and collides with no cell.
+pub(crate) fn figure_stem(name: &str) -> Option<&str> {
+    let stem = name.strip_suffix(FIGURE_SUFFIX)?;
+    (!stem.is_empty()).then_some(stem)
+}
+
+/// Asked BEFORE the defined-name branch, which would otherwise claim the stem as a name.
+pub fn is_figure_entry(name: &str) -> bool {
+    figure_stem(name).is_some()
 }
 
 /// The routing predicate both loader paths share. A range separator cannot occur in a name, so `:`
