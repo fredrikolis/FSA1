@@ -188,7 +188,8 @@ fn unquote_sheet(s: &str) -> String {
     }
 }
 
-/// A degraded symlink carries no leading `=`; the ref-file writer and a hand-written ref do.
+/// A degraded symlink and the alias file that stands in for one carry no leading `=`; `emit_ref_file`
+/// and a hand-written formula ref do.
 fn strip_eq(content: &str) -> &str {
     let t = content.trim();
     t.strip_prefix('=').unwrap_or(t).trim()

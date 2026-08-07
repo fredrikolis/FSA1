@@ -23,10 +23,13 @@ impl Fixture {
         Fixture { root }
     }
 
+    /// `name` is canonical, with `:`. It is re-spelled for this host before it becomes a path: on
+    /// NTFS a `:` name SUCCEEDS as an alternate data stream, so a raw write would leave the test
+    /// grading a workbook that was never written.
     pub fn file(&self, tab: &str, name: &str, body: &str) -> &Fixture {
         let dir = self.root.join(tab);
         std::fs::create_dir_all(&dir).expect("create tab dir");
-        std::fs::write(dir.join(name), body).expect("write file");
+        std::fs::write(dir.join(fsa1_model::range_file_name(name)), body).expect("write file");
         self
     }
 

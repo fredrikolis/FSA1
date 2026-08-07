@@ -116,28 +116,19 @@ fn parse_region(name: &str, value: &str) -> Region {
     }
 }
 
-/// The `(row, col)` a closed A1 range anchors at. A one-cell block is named `A1`, never `A1:A1`, so
-/// the head of the split is the anchor either way.
+/// A range file's name in the corpus's canonical `:` spelling, whatever separator this host wrote.
+fn canonical(name: &str) -> String {
+    fsa1_model::canonical_range_name(name)
+}
+
+/// The `(row, col)` a range file anchors at, read by the FORMAT's own parser rather than a splitter
+/// of this harness's own: a name spelled with either separator then sorts identically, and there is
+/// one place that knows how a filename is spelled. `Rect` counts from 0; the labelled starts these
+/// sort against are 1-based A1 rows, so the anchor is stated in their terms.
 fn anchor(what: &str, range: &str) -> (u32, u32) {
-    let head = range
-        .split(':')
-        .next()
-        .expect("a split always yields a first part");
-    let digits = head
-        .find(|c: char| c.is_ascii_digit())
-        .unwrap_or_else(|| panic!("{what}: {range:?} is not an A1 range"));
-    let (letters, row) = head.split_at(digits);
-    assert!(
-        !letters.is_empty() && letters.bytes().all(|b| b.is_ascii_uppercase()),
-        "{what}: {range:?} does not open with an uppercase column"
-    );
-    let col = letters
-        .bytes()
-        .fold(0u32, |n, b| n * 26 + u32::from(b - b'A' + 1));
-    let row = row
-        .parse()
-        .unwrap_or_else(|e| panic!("{what}: {range:?} carries no row number: {e}"));
-    (row, col)
+    let parsed = fsa1_model::parse_filename(range)
+        .unwrap_or_else(|d| panic!("{what}: {range:?} is not a range filename: {}", d.message));
+    (parsed.region.min_row + 1, parsed.region.min_col + 1)
 }
 
 /// Every range file the run wrote for `sheet`, in ascending anchor order -- the order the policy
@@ -159,7 +150,8 @@ fn read_blocks(what: &str, root: &Path, sheet: &str) -> Result<Vec<String>, Stri
         .map_err(|e| format!("the tab {sheet:?} is unreadable: {e}"))?
         .map(|e| e.expect("a readable entry").path())
         .filter(|p| p.is_file())
-        .map(|p| base(&p))
+        // A frozen `block:` line names a REGION, which has one canonical spelling.
+        .map(|p| canonical(&base(&p)))
         .collect();
     names.sort_by_key(|name| anchor(what, name));
     Ok(names)

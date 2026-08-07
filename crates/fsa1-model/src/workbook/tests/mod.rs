@@ -6,8 +6,6 @@ use super::*;
 use fsa1_ast::{ArrayView, ErrKind, RangeRef, Shape, eval_at};
 
 mod forge;
-// Name SYMLINKS need `std::os::unix`; on Windows a name takes the ref-file form, read identically.
-#[cfg(unix)]
 mod names;
 mod scale;
 
@@ -244,7 +242,7 @@ fn a_cell_file_round_trips_whole_at_and_past_the_read_buffer_boundary() {
         .collect();
     for (i, body) in bodies.iter().enumerate() {
         let name = format!("{}1", fsa1_ast::a1::format_column(i as u32));
-        std::fs::write(tab.join(name), body).unwrap();
+        std::fs::write(tab.join(crate::range_file_name(&name)), body).unwrap();
     }
 
     let wb = Workbook::load_dir(&base)

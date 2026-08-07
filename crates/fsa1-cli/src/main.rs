@@ -389,20 +389,8 @@ fn cmd_trace(rest: &[String]) -> u8 {
     }
 }
 
-/// The one command that writes to disk. The sample content is the model's; this only lays it out.
-/// The tutorial table names every range the canonical A1 way, with `:`. This is where a name becomes
-/// a file, so it is where the host has its say: on Windows `:` opens an alternate data stream rather
-/// than naming a file, and the grid would be lost instead of written.
-fn host_spelling(rel: &Path) -> PathBuf {
-    let Some(name) = rel.file_name().and_then(|n| n.to_str()) else {
-        return rel.to_path_buf();
-    };
-    match fsa1_model::reseparate_range_name(name, fsa1_model::RANGE_SEP) {
-        Some(spelled) => rel.with_file_name(spelled),
-        None => rel.to_path_buf(),
-    }
-}
-
+/// The one command that writes to disk. The sample content is the model's; this only lays it out,
+/// each range file taking the name `range_file_path` says this host can carry.
 fn cmd_sample(rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
     for arg in rest {
@@ -437,7 +425,7 @@ fn cmd_sample(rest: &[String]) -> u8 {
 
     let content = fsa1_model::sample_workbook();
     for (rel, body) in &content {
-        let full = dir.join(host_spelling(rel));
+        let full = dir.join(fsa1_model::range_file_path(rel));
         if let Some(parent) = full.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {

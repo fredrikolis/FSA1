@@ -250,6 +250,16 @@ mod tests {
         assert_eq!(ok("B2:D9").declared_shape, Shape { rows: 8, cols: 3 });
     }
 
+    /// Every assertion elsewhere reads names back canonically, which would still pass if the writer
+    /// stopped choosing per host. This is the one that says which separator THIS host must write.
+    #[test]
+    fn the_writer_spells_a_range_the_way_this_filesystem_allows() {
+        #[cfg(windows)]
+        assert_eq!(RANGE_SEP, RANGE_SEP_WINDOWS);
+        #[cfg(not(windows))]
+        assert_eq!(RANGE_SEP, RANGE_SEP_POSIX);
+    }
+
     #[test]
     fn reader_accepts_both_separators_on_every_platform() {
         assert_eq!(ok("A1-D1").declared_shape, Shape { rows: 1, cols: 4 });

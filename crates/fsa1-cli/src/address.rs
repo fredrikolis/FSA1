@@ -157,29 +157,51 @@ fn probe_scope(p: &Path) -> Probe {
             class: Class::Root,
             loaded,
         },
-        Ok(Ok(_)) => {
-            if let Some((parent, base)) = parent_base(p)
-                && shaped_and_owns(&parent, &base)
-            {
-                let parent_loaded = Workbook::load_dir(&parent);
-                return Probe {
-                    wb_path: parent,
-                    class: Class::Tab(base),
-                    loaded: parent_loaded,
-                };
-            }
-            Probe {
-                wb_path: p.to_path_buf(),
-                class: Class::Root,
-                loaded,
-            }
-        }
+        Ok(Ok(_)) => as_tab_of_parent(p).unwrap_or(Probe {
+            wb_path: p.to_path_buf(),
+            class: Class::Root,
+            loaded,
+        }),
+        Ok(Err(_)) if !has_tab_dir(p) => as_tab_of_parent(p).unwrap_or(Probe {
+            wb_path: p.to_path_buf(),
+            class: Class::Root,
+            loaded,
+        }),
         _ => Probe {
             wb_path: p.to_path_buf(),
             class: Class::Root,
             loaded,
         },
     }
+}
+
+/// The reading a directory takes when a workbook-shaped parent owns it as a tab, which is the one
+/// that survives: a tab is not a workbook, so what a load of it as a root said does not stand.
+fn as_tab_of_parent(p: &Path) -> Option<Probe> {
+    let (parent, base) = parent_base(p)?;
+    if !shaped_and_owns(&parent, &base) {
+        return None;
+    }
+    let loaded = Workbook::load_dir(&parent);
+    Some(Probe {
+        wb_path: parent,
+        class: Class::Tab(base),
+        loaded,
+    })
+}
+
+/// A workbook root holds its tabs as folders, so one non-reserved subfolder is the whole test.
+/// This is what places a load that FAILED: a directory with no tab folder is no root, so a parent
+/// owning it as a tab is the reading, and the refusals raised against it as a root were speculative
+/// — a name scoped to the workbook there that is well-formed scoped to the sheet is the live case.
+fn has_tab_dir(p: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(p) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.file_type().is_ok_and(|ft| ft.is_dir())
+            && !Workbook::is_reserved_entry(&e.file_name().to_string_lossy())
+    })
 }
 
 struct Structure {
@@ -433,10 +455,11 @@ mod tests {
             std::fs::create_dir_all(&root).unwrap();
             Tmp(root)
         }
+        /// `name` is canonical, with `:`; the host is asked how it spells that on disk.
         fn file(&self, tab: &str, name: &str, body: &str) -> &Tmp {
             let dir = self.0.join(tab);
             std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join(name), body).unwrap();
+            std::fs::write(dir.join(fsa1_model::range_file_name(name)), body).unwrap();
             self
         }
         fn dir(&self, name: &str) -> &Tmp {
@@ -516,6 +539,24 @@ mod tests {
                 max_col: 2,
                 max_row: 2
             })
+        );
+    }
+
+    /// A tab folder read AS a root scopes its names to the workbook, where a `../` target is
+    /// rightly ambiguous. That refusal is an artefact of the wrong reading and must not escape:
+    /// the folder has no tabs of its own, so it is a tab, and the parent resolves the name.
+    #[test]
+    fn a_tab_dirs_speculative_root_refusal_does_not_escape_the_parent_reading() {
+        let t = Tmp::new("spec-refusal");
+        t.file("Model", "A1", "header");
+        t.file("Cash Flows", "B2", "888");
+        std::fs::write(t.at("Model/flow"), "../Cash Flows/B2").expect("write the ref-file alias");
+        let r = resolve(&t.at("Model/flow")).expect("the parent resolves the cross-sheet name");
+        let tab = r.tab.expect("the name resolved onto a tab");
+        assert_eq!(
+            r.workbook.sheet_names()[tab as usize],
+            "Cash Flows",
+            "resolved across to the target tab, not refused"
         );
     }
 

@@ -35,9 +35,9 @@ mod tests {
     use crate::workbook::Workbook;
     use fsa1_ast::Value;
 
-    /// The tutorial is the first thing a new user runs, so it has to be writable wherever they
-    /// are. The table is canonical `:` on every host, so this runs the same everywhere: each range
-    /// has a `-` spelling naming the same region, which is what a Windows run writes instead.
+    /// The tutorial is the first thing a new user runs, so it has to be writable wherever they are.
+    /// The table is canonical `:` on every host, so each range needs a `-` spelling naming the same
+    /// region, which is what a Windows run writes instead.
     #[test]
     fn every_tutorial_range_has_a_windows_legal_spelling() {
         for (rel, _) in sample_workbook() {
@@ -68,7 +68,7 @@ mod tests {
                 .unwrap_or(0)
         ));
         for (rel, content) in sample_workbook() {
-            let full = base.join(&rel);
+            let full = base.join(crate::range_file_path(&rel));
             std::fs::create_dir_all(full.parent().expect("a tutorial path has a tab folder"))
                 .expect("create tab folder");
             std::fs::write(&full, content).expect("write sample file");

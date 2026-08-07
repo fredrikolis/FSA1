@@ -38,7 +38,10 @@ fn sample_writes_a_renderable_workbook_and_prints_next_steps() {
         "Summary tab written:\n{out}"
     );
     assert!(
-        target.join("Orders/A1:D1").is_file(),
+        target
+            .join("Orders")
+            .join(fsa1_model::range_file_name("A1:D1"))
+            .is_file(),
         "the header range file exists:\n{out}"
     );
     assert!(

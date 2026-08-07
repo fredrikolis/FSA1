@@ -1,4 +1,4 @@
-# Concern: runs every mechanical gate across three OSes | Non-concern: publishing a release (plugin-release.yml), deploying the site (deploy-site.yml) | IO: (a push or a manual run) -> per-job verdicts
+# Concern: runs every mechanical gate on Linux and macOS | Non-concern: publishing a release (plugin-release.yml), deploying the site (deploy-site.yml) | IO: (a push or a manual run) -> per-job verdicts
 name: ci
 
 # The mechanical commit gate (.githooks/pre-commit + commit-msg), plus the checks that need a clean
@@ -18,11 +18,11 @@ permissions:
   contents: read
 
 jobs:
-  # fmt + clippy + the full test gate. windows-latest is still excluded, but NOT for the reason it
-  # used to be: no tracked filename carries `:` any more, so a Windows `git checkout` no longer
-  # fails on the corpus. What remains is that tests still write `:` names of their own, so turning
-  # the row on is a change with work behind it, not a one-line edit. fail-fast: false so one OS
-  # still reports the other.
+  # fmt + clippy + the full test gate. Every name that becomes a FILE now goes through RANGE_SEP,
+  # every alias through write_name_alias, and an assertion names a REGION rather than a spelling --
+  # but a POSIX host accepts `:` as a filename, so a green run here cannot prove any of that. Adding
+  # windows-latest is what would, and it goes on its own commit so a red row is one line to undo.
+  # fail-fast: false so one OS still reports the other.
   test:
     strategy:
       fail-fast: false

@@ -64,8 +64,10 @@ fn block_name(block: Block) -> String {
     )
 }
 
+/// This names a REGION in a warning a person reads, not a file on disk, so it is spelled with the
+/// A1 range operator on every host. Only a filename answers to the platform.
 fn merged_region(region: &MergedRegion) -> String {
-    let sep = fsa1_model::RANGE_SEP;
+    let sep = fsa1_model::RANGE_SEP_POSIX;
     format!(
         "{}{sep}{}",
         format_cell(region.col, region.row),
@@ -287,10 +289,15 @@ mod tests {
         WhiteSpace, Workbook, deserialize_tsv,
     };
 
-    /// The production path: the sheet's own occupancy, partitioned by the policy seam.
+    /// The production path: the sheet's own occupancy, partitioned by the policy seam. Names come
+    /// back in the canonical `:` spelling whatever this host writes, so an assertion below states a
+    /// REGION and not the platform it ran on.
     fn files(sheet: &SheetSource, warnings: &mut Vec<UnpackWarning>) -> Vec<(String, String)> {
         let blocks = Decomposition::Occupancy.blocks(&crate::occupancy(sheet));
         sheet_files(sheet, &blocks, &Resolution::empty(), warnings)
+            .into_iter()
+            .map(|(name, body)| (fsa1_model::canonical_range_name(&name), body))
+            .collect()
     }
 
     /// Every generated file through the REAL loader, which is what `check` runs: a refusal here is a

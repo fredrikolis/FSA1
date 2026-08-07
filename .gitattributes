@@ -1,3 +1,4 @@
+# Concern: how git handles each kind of file in this repo | Non-concern: which files exist, what any of them contain | IO: (a path) -> its filter and line-ending treatment
 *.xlsb filter=lfs diff=lfs merge=lfs -text
 *.xltx filter=lfs diff=lfs merge=lfs -text
 *.ods filter=lfs diff=lfs merge=lfs -text
@@ -14,3 +15,14 @@
 # when checked out on Windows.
 bin/fsa1-cli text eol=lf
 *.sh text eol=lf
+
+# schema.rs byte-compares emit() against this file, and a Windows checkout under the default
+# core.autocrlf would rewrite it to CRLF and fail that assertion.
+*.schema text eol=lf
+
+# Every corpus compared byte-for-byte or split on "\n": a CRLF checkout puts a trailing \r on each
+# line and no frozen reading matches. The extension-less range files under encoding/ are workbook
+# cell files, which the format defines as LF-delimited regardless.
+*.expected text eol=lf
+conformance/encoding/artifacts/** text eol=lf
+conformance/render/oracle/** text eol=lf

@@ -1,6 +1,5 @@
-// Concern: pins defined names over a REAL temp-dir tree, symlinks included | Non-concern: the pure name-table and rewrite logic | IO: temp-dir trees -> asserted values
+// Concern: pins defined names over a REAL temp-dir tree, alias targets included | Non-concern: the pure name-table and rewrite logic | IO: temp-dir trees -> asserted values
 use std::fs;
-use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use fsa1_ast::{ErrKind, Value};
@@ -23,7 +22,7 @@ fn temp_base(tag: &str) -> PathBuf {
 fn write(base: &Path, tab: &str, name: &str, body: &str) {
     let dir = base.join(tab);
     fs::create_dir_all(&dir).expect("create tab dir");
-    fs::write(dir.join(name), body).expect("write file");
+    fs::write(dir.join(crate::range_file_name(name)), body).expect("write file");
 }
 
 fn load(base: &Path) -> Result<Workbook, Vec<crate::diagnostic::Diagnostic>> {
@@ -41,8 +40,8 @@ fn a_symlink_named_range_is_summed_by_a_formula() {
     write(&base, "Sheet1", "A3", "20");
     write(&base, "Sheet1", "A4", "30");
     write(&base, "Sheet1", "H1", "=SUM(Days)");
-    symlink("A2", base.join("Sheet1").join("Days.begin")).unwrap();
-    symlink("A4", base.join("Sheet1").join("Days.end")).unwrap();
+    crate::write_name_alias("A2", &base.join("Sheet1").join("Days.begin")).unwrap();
+    crate::write_name_alias("A4", &base.join("Sheet1").join("Days.end")).unwrap();
 
     let wb = load(&base).expect("loads clean");
     assert_eq!(value(&wb, 0, 7, 0), Value::Number(60.0)); // H1
@@ -55,20 +54,23 @@ fn a_range_name_over_a_blank_corner_materializes_to_a_sum() {
     let base = temp_base("blank-corner");
     write(&base, "Sheet1", "A3", "20"); // only the interior cell is populated; A2/A4 are blank
     write(&base, "Sheet1", "H1", "=SUM(Days)");
-    symlink("A2", base.join("Sheet1").join("Days.begin")).unwrap(); // blank corner (no A2 file)
-    symlink("A4", base.join("Sheet1").join("Days.end")).unwrap(); // blank corner (no A4 file)
+    crate::write_name_alias("A2", &base.join("Sheet1").join("Days.begin")).unwrap(); // blank corner (no A2 file)
+    crate::write_name_alias("A4", &base.join("Sheet1").join("Days.end")).unwrap(); // blank corner (no A4 file)
 
     let wb = load(&base).expect("loads clean despite the blank corners");
     assert_eq!(value(&wb, 0, 7, 0), Value::Number(20.0)); // H1 = SUM(A2:A4) over blank/20/blank
     fs::remove_dir_all(&base).ok();
 }
 
+/// Write-through is the filesystem's, not the loader's: a write to a symlink lands on its target,
+/// where a write to a ref-file lands on the ref-file. Only the symlink form can be asserted.
+#[cfg(unix)]
 #[test]
 fn a_bare_single_cell_symlink_writes_through_to_its_cell() {
     let base = temp_base("write-through");
     write(&base, "Sheet1", "B5", "7");
     write(&base, "Sheet1", "C1", "=total*2");
-    symlink("B5", base.join("Sheet1").join("total")).unwrap();
+    crate::write_name_alias("B5", &base.join("Sheet1").join("total")).unwrap();
 
     let wb = load(&base).expect("loads clean");
     assert_eq!(value(&wb, 0, 1, 4), Value::Number(7.0)); // B5
@@ -134,11 +136,14 @@ fn a_sheet_scoped_name_shadows_a_workbook_scoped_one() {
     fs::remove_dir_all(&base).ok();
 }
 
+/// The refusal needs something to refuse: a ref-file named `A5` holding `B5` simply IS cell A5
+/// holding that text, so only where the alias is a symlink is there a name here to reject.
+#[cfg(unix)]
 #[test]
 fn a_name_that_parses_as_a1_is_refused() {
     let base = temp_base("ident-a1");
     write(&base, "Sheet1", "B5", "1");
-    symlink("B5", base.join("Sheet1").join("A5")).unwrap(); // `A5` parses as A1 -> refused
+    crate::write_name_alias("B5", &base.join("Sheet1").join("A5")).unwrap(); // `A5` parses as A1 -> refused
     let diags = load(&base).expect_err("must refuse");
     assert!(
         diags.iter().any(|d| d.code == Code::NameRefusal),
@@ -151,7 +156,7 @@ fn a_name_that_parses_as_a1_is_refused() {
 fn a_lone_corner_is_refused() {
     let base = temp_base("lone-corner");
     write(&base, "Sheet1", "A2", "1");
-    symlink("A2", base.join("Sheet1").join("r.begin")).unwrap();
+    crate::write_name_alias("A2", &base.join("Sheet1").join("r.begin")).unwrap();
     let diags = load(&base).expect_err("must refuse");
     assert!(
         diags.iter().any(|d| d.code == Code::NameRefusal),
@@ -165,8 +170,8 @@ fn an_inverted_corner_range_is_refused() {
     let base = temp_base("inverted");
     write(&base, "Sheet1", "A2", "1");
     write(&base, "Sheet1", "A4", "3");
-    symlink("A4", base.join("Sheet1").join("r.begin")).unwrap();
-    symlink("A2", base.join("Sheet1").join("r.end")).unwrap();
+    crate::write_name_alias("A4", &base.join("Sheet1").join("r.begin")).unwrap();
+    crate::write_name_alias("A2", &base.join("Sheet1").join("r.end")).unwrap();
     let diags = load(&base).expect_err("must refuse");
     assert!(
         diags.iter().any(|d| d.code == Code::NameRefusal),
@@ -208,7 +213,7 @@ fn a_name_targeting_a_sheet_with_a_space_resolves_to_the_value() {
     let base = temp_base("spaced-sheet");
     write(&base, "My Data", "B5", "7");
     write(&base, "Sheet1", "C1", "=total*2");
-    symlink("My Data/B5", base.join("total")).unwrap(); // workbook-scoped, at the root
+    crate::write_name_alias("My Data/B5", &base.join("total")).unwrap(); // workbook-scoped, at the root
     let wb = load(&base).expect("loads clean");
     let s1 = wb.tab_index("Sheet1").unwrap();
     assert_eq!(value(&wb, s1, 2, 0), Value::Number(14.0)); // C1 = total*2, total -> 'My Data'!B5 = 7
@@ -223,8 +228,8 @@ fn a_range_name_over_a_spaced_sheet_is_summed() {
     write(&base, "My Data", "A3", "20");
     write(&base, "My Data", "A4", "30");
     write(&base, "My Data", "H1", "=SUM(Days)");
-    symlink("A2", base.join("My Data").join("Days.begin")).unwrap();
-    symlink("A4", base.join("My Data").join("Days.end")).unwrap();
+    crate::write_name_alias("A2", &base.join("My Data").join("Days.begin")).unwrap();
+    crate::write_name_alias("A4", &base.join("My Data").join("Days.end")).unwrap();
     let wb = load(&base).expect("loads clean");
     let s = wb.tab_index("My Data").unwrap();
     assert_eq!(value(&wb, s, 7, 0), Value::Number(60.0)); // H1 = SUM('My Data'!A2:A4)
@@ -253,8 +258,8 @@ fn an_ad_hoc_eval_resolves_names_like_a_stored_formula() {
     write(&base, "Sheet1", "A2", "10");
     write(&base, "Sheet1", "A3", "20");
     write(&base, "Sheet1", "A4", "30");
-    symlink("A2", base.join("Sheet1").join("Days.begin")).unwrap();
-    symlink("A4", base.join("Sheet1").join("Days.end")).unwrap();
+    crate::write_name_alias("A2", &base.join("Sheet1").join("Days.begin")).unwrap();
+    crate::write_name_alias("A4", &base.join("Sheet1").join("Days.end")).unwrap();
     let wb = load(&base).expect("loads clean");
     let s = wb.tab_index("Sheet1").unwrap();
     assert_eq!(

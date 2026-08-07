@@ -47,7 +47,9 @@ fn read_tree(root: &Path) -> BTreeMap<String, String> {
             .collect();
         entries.sort();
         for entry in entries {
-            let name = base(&entry);
+            // A frozen `file:` line names a REGION, which has one canonical spelling.
+            let raw = base(&entry);
+            let name = fsa1_model::canonical_range_name(&raw);
             let content = std::fs::read_to_string(&entry).expect("a UTF-8 range file");
             files.insert(format!("{tab_name}/{name}"), content);
         }

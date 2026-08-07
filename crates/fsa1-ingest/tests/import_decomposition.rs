@@ -39,7 +39,7 @@ fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
                 .strip_prefix(root)
                 .expect("every file is under the root")
                 .to_string_lossy()
-                .into_owned();
+                .replace(std::path::MAIN_SEPARATOR, "/");
             out.push((rel, std::fs::read(&path).expect("read a written file")));
         }
     }
@@ -47,8 +47,16 @@ fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
     out
 }
 
+/// Paths with each range file's name in the canonical `:` spelling, whatever separator this host
+/// wrote: an assertion below names a REGION, not the platform the test ran on.
 fn names_in(root: &Path) -> Vec<String> {
-    tree(root).into_iter().map(|(name, _)| name).collect()
+    tree(root)
+        .into_iter()
+        .map(|(path, _)| match path.rsplit_once('/') {
+            Some((dir, name)) => format!("{dir}/{}", fsa1_model::canonical_range_name(name)),
+            None => path,
+        })
+        .collect()
 }
 
 /// The whole resolution rule on the side that has no appearance channel: `.ods` states no style, so

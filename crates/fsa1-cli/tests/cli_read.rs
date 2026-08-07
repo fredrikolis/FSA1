@@ -412,10 +412,10 @@ fn format_json_is_now_an_unknown_flag() {
     assert_eq!(code, 2, "`--format json` is now an unknown flag (exit 2)");
 }
 
-fn symlink(fx: &Fixture, tab: &str, link: &str, target: &str) {
+fn alias(fx: &Fixture, tab: &str, link: &str, target: &str) {
     let dir = fx.path().join(tab);
     std::fs::create_dir_all(&dir).expect("create tab dir");
-    std::os::unix::fs::symlink(target, dir.join(link)).expect("create symlink");
+    fsa1_model::write_name_alias(target, &dir.join(link)).expect("create name alias");
 }
 
 fn tree_fixture(tag: &str) -> Fixture {
@@ -425,8 +425,8 @@ fn tree_fixture(tag: &str) -> Fixture {
         .file("Sheet1", "C1", "=B1*2")
         .file("Sheet1", "A2:A5", "1\n2\n3\n4")
         .file("Sheet1", "Rate", "=B1*1.05");
-    symlink(&fx, "Sheet1", "Days.begin", "A2");
-    symlink(&fx, "Sheet1", "Days.end", "A5");
+    alias(&fx, "Sheet1", "Days.begin", "A2");
+    alias(&fx, "Sheet1", "Days.end", "A5");
     std::fs::create_dir_all(fx.path().join(".cache")).unwrap();
     std::fs::write(fx.path().join(".cache").join("junk"), "regenerable").unwrap();
     fx
@@ -580,7 +580,10 @@ fn tree_collapses_a_grid5_array_formula_under_functions_and_expands_it_under_val
     let (fc, funcs) = run(&["tree", fx.path().to_str().unwrap(), "--mode", "functions"]);
     assert_eq!(fc, 0, "{funcs}");
     assert!(
-        funcs.contains("C1:C3  # =SORT(A1:A3)"),
+        funcs.contains(&format!(
+            "{}  # =SORT(A1:A3)",
+            fsa1_model::range_file_name("C1:C3")
+        )),
         "the array formula is ONE node at the range anchor:\n{funcs}"
     );
     assert!(
@@ -591,7 +594,7 @@ fn tree_collapses_a_grid5_array_formula_under_functions_and_expands_it_under_val
     let (vc, vals) = run(&["tree", fx.path().to_str().unwrap(), "--mode", "values"]);
     assert_eq!(vc, 0, "{vals}");
     assert!(
-        !vals.contains("C1:C3"),
+        !vals.contains(&fsa1_model::range_file_name("C1:C3")),
         "under --values the range file is expanded, not shown collapsed:\n{vals}"
     );
     for (label, elem) in [("C1", "1"), ("C2", "2"), ("C3", "3")] {
@@ -841,7 +844,7 @@ fn name_fixture(tag: &str) -> Fixture {
         .file("Assumptions", "B6", "99")
         .file("Data", "A1", "77");
     std::fs::write(fx.path().join("anchor"), "=Data!A1").expect("write workbook-scoped name");
-    symlink(&fx, "Model", "blk_total", "B5");
+    alias(&fx, "Model", "blk_total", "B5");
     fx
 }
 
@@ -1036,7 +1039,7 @@ fn name_target_on_a_spaced_tab_resolves_via_the_quoted_sheet_split() {
     let fx = Fixture::new("name-quoted-sheet");
     fx.file("Model", "A1", "header")
         .file("Cash Flows", "B2", "888");
-    symlink(&fx, "Model", "flow", "../Cash Flows/B2");
+    alias(&fx, "Model", "flow", "../Cash Flows/B2");
 
     let (code, out) = run(&["render", &at(&fx, "Model/flow")]);
     assert_eq!(code, 0, "a name into a spaced tab resolves:\n{out}");

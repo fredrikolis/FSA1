@@ -1,4 +1,4 @@
-// Concern: the crate's public surface plus parse_file, its whole-file load entry | Non-concern: formula semantics, xlsx serde | IO: (name, contents) -> ParsedFile
+// Concern: the crate's public entry points | Non-concern: formula semantics, xlsx serde | IO: (a name and contents, or an alias target) -> the parsed file, or the spelling this host stores
 //! The filesystem spreadsheet model: a tab is a folder, a file's name is the closed A1 range its
 //! content fills, and that content deserializes (TSV) to a [`Grid`] of literals and `=formula` cells.
 //! [`Workbook`] resolves those grids for `fsa1_ast::eval`; there is no drag-fill anywhere, and
@@ -84,6 +84,45 @@ pub fn write_workbook_gitattributes(root: &std::path::Path) -> std::io::Result<(
         return Ok(());
     }
     std::fs::write(path, WORKBOOK_GITATTRIBUTES)
+}
+
+/// The name a range file carries ON THIS HOST, given its canonical `:` spelling. One call, so a
+/// caller that has to name a file never has to know which separator this host writes.
+pub fn range_file_name(canonical: &str) -> String {
+    reseparate_range_name(canonical, RANGE_SEP).unwrap_or_else(|| canonical.to_string())
+}
+
+/// The canonical `:` spelling of a range file's name, whatever this host wrote. The inverse of
+/// [`range_file_name`], so a reader comparing names never has to know which separator made them.
+pub fn canonical_range_name(name: &str) -> String {
+    reseparate_range_name(name, RANGE_SEP_POSIX).unwrap_or_else(|| name.to_string())
+}
+
+/// [`range_file_name`] applied to the last component of a path, which is where a name becomes a
+/// file. A path with no final component, or one no host respells, is returned unchanged.
+pub fn range_file_path(rel: &std::path::Path) -> std::path::PathBuf {
+    match rel.file_name().and_then(|n| n.to_str()) {
+        Some(name) => rel.with_file_name(range_file_name(name)),
+        None => rel.to_path_buf(),
+    }
+}
+
+/// Write the alias a defined name is stored as. This is the ONE place the host has a say: a symlink
+/// where the platform has them, and where it does not, a file holding the same relative target as
+/// its bare text -- which is what a symlink-flattening checkout leaves behind, and what the loader's
+/// degraded-path reader was built for. The loader resolves both forms identically.
+#[cfg(unix)]
+pub fn write_name_alias(target: &str, link: &std::path::Path) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(link).is_ok() {
+        let _ = std::fs::remove_file(link);
+    }
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(not(unix))]
+pub fn write_name_alias(target: &str, link: &std::path::Path) -> std::io::Result<()> {
+    // BARE, no `=`: a leading `=` says "formula" to the reader, and this is a path.
+    std::fs::write(link, target)
 }
 
 /// The file content is its grid — no header, annotation, or metadata line, and the first line is the

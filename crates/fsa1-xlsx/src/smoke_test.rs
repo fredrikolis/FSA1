@@ -165,8 +165,8 @@ fn defined_names_survive_the_pack_leg() {
     std::fs::create_dir_all(root.join("Data")).expect("tab dir");
     std::fs::write(root.join("Data/C1"), "10").expect("cell");
     std::fs::write(root.join("Data/C2"), "=C1*2").expect("cell");
-    std::os::unix::fs::symlink("Data/C1", root.join("TaxRate")).expect("workbook-scoped name");
-    std::os::unix::fs::symlink("C1", root.join("Data/Local")).expect("sheet-scoped name");
+    fsa1_model::write_name_alias("Data/C1", &root.join("TaxRate")).expect("workbook-scoped name");
+    fsa1_model::write_name_alias("C1", &root.join("Data/Local")).expect("sheet-scoped name");
 
     let wb = Workbook::load_dir(&root)
         .expect("fs read ok")

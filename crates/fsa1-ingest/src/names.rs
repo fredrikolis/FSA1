@@ -1,4 +1,4 @@
-// Concern: writes each defined name into its scope folder | Non-concern: reading the metadata, resolving a name at load | IO: (dest, names) -> symlinks + ref-files
+// Concern: writes each defined name into its scope folder | Non-concern: resolving a name at load, how an alias is stored (the format owns it) | IO: (dest, names) -> an alias per name
 
 use std::path::{Path, PathBuf};
 
@@ -281,30 +281,16 @@ fn create_dir(dir: &Path) -> Result<(), IngestError> {
     })
 }
 
-#[cfg(unix)]
+/// The host's say in how an alias is stored belongs to the format, not to ingest: this only turns
+/// its failure into an `IngestError`.
 fn make_link(target: &str, link: &Path) -> Result<(), IngestError> {
-    if link.exists() || std::fs::symlink_metadata(link).is_ok() {
-        let _ = std::fs::remove_file(link);
-    }
-    std::os::unix::fs::symlink(target, link).map_err(|e| {
+    fsa1_model::write_name_alias(target, link).map_err(|e| {
         IngestError::io(
             ErrorKind::DestIo,
             format!(
-                "cannot create name symlink {:?} -> {target}: {e}",
+                "cannot create name alias {:?} -> {target}: {e}",
                 link.display()
             ),
-        )
-    })
-}
-
-/// Only the WRITER is platform-conditional: the loader's reader-union reads this ref-file form and
-/// the symlink form identically.
-#[cfg(not(unix))]
-fn make_link(target: &str, link: &Path) -> Result<(), IngestError> {
-    std::fs::write(link, format!("={target}")).map_err(|e| {
-        IngestError::io(
-            ErrorKind::DestIo,
-            format!("cannot write name ref-file {:?}: {e}", link.display()),
         )
     })
 }
@@ -441,7 +427,11 @@ mod tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(dest.join("Data")).unwrap();
-        std::fs::write(dest.join("Data").join("A1:H4"), "1\n2\n3\n4").unwrap();
+        std::fs::write(
+            dest.join("Data").join(fsa1_model::range_file_name("A1:H4")),
+            "1\n2\n3\n4",
+        )
+        .unwrap();
         let name = |n: &str, target: &str| DefinedName {
             name: n.to_string(),
             scope: None,
@@ -470,9 +460,13 @@ mod tests {
             );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), want);
         }
+        // Read back canonically: the assertion below names a REGION, not a spelling.
         let mut inside: Vec<String> = std::fs::read_dir(dest.join("Data"))
             .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .map(|e| {
+                let n = e.unwrap().file_name();
+                fsa1_model::canonical_range_name(&n.to_string_lossy())
+            })
             .collect();
         inside.sort();
         assert_eq!(

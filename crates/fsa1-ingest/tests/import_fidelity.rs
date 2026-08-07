@@ -122,7 +122,11 @@ fn a_strict_pass_still_reports_the_losses_it_never_policed() {
 fn a_styled_ods_loses_its_look_and_the_report_vouches_for_no_category_it_never_read() {
     let dest = temp_dest("ods-styled");
     let report = import_file(&fixture("styled.ods"), &dest, false).expect("import completes");
-    let content = std::fs::read_to_string(dest.join("Styled").join("A1:A2")).expect("the block");
+    let content = std::fs::read_to_string(
+        dest.join("Styled")
+            .join(fsa1_model::range_file_name("A1:A2")),
+    )
+    .expect("the block");
     assert_eq!(content, "Total\n42", "the values cross, the look does not");
     assert!(
         !content.contains("@scope"),
@@ -214,7 +218,8 @@ fn the_ods_verbatim_report_source_equals_the_on_disk_cell_content() {
     };
     // Calc's occupancy is one block, so A1 is the first FIELD of the range file that covers it.
     let on_disk =
-        std::fs::read_to_string(dest.join("Calc").join("A1:B1")).expect("the block holding A1");
+        std::fs::read_to_string(dest.join("Calc").join(fsa1_model::range_file_name("A1:B1")))
+            .expect("the block holding A1");
     let a1 = on_disk
         .split(['\t', '\n'])
         .next()
@@ -237,8 +242,11 @@ fn a_styled_xlsx_carries_its_appearance_and_names_every_loss() {
     let report = import_file(&fixture("visuals.xlsx"), &dest, false).expect("import completes");
     assert_eq!(report.files, 1, "one block over the sheet's occupancy");
 
-    let content =
-        std::fs::read_to_string(dest.join("Visual").join("A1:B4")).expect("the block file");
+    let content = std::fs::read_to_string(
+        dest.join("Visual")
+            .join(fsa1_model::range_file_name("A1:B4")),
+    )
+    .expect("the block file");
     for declaration in [
         "background-color: #ffc000",
         "border-top: 1px solid #ff0000",
@@ -496,24 +504,26 @@ fn column_b_valued(xml: String) -> String {
     )
 }
 
+/// A name as the canonical `:` spelling, whatever separator this host wrote. The reader takes both,
+/// so a test that compared raw names would be asserting against the host rather than the format.
+fn canonical(name: &str) -> String {
+    fsa1_model::canonical_range_name(name)
+}
+
 /// The range files one tab was written, by name and in order.
 fn written(dest: &Path, tab: &str) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dest.join(tab))
         .expect("the tab is written")
-        .map(|e| {
-            e.expect("a readable entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|e| canonical(&e.expect("a readable entry").file_name().to_string_lossy()))
         .collect();
     names.sort();
     names
 }
 
+/// `file` is given canonically, with `:`; the host is asked how it actually spelled that name.
 fn scope_of(dest: &Path, tab: &str, file: &str) -> String {
-    let content =
-        std::fs::read_to_string(dest.join(tab).join(file)).expect("the block file is written");
+    let content = std::fs::read_to_string(dest.join(tab).join(fsa1_model::range_file_name(file)))
+        .expect("the block file is written");
     let at = content.find("@scope").unwrap_or_else(|| {
         panic!("no @scope block in {tab}/{file}:\n{content}");
     });
@@ -763,7 +773,11 @@ fn a_block_spanning_unoccupied_coordinates_spells_them_blank_and_reads_back_unch
     import_file(&fixture("blanks_repeats.xlsx"), &dest, false).expect("import completes");
     assert_eq!(written(&dest, "Sparse"), vec!["A1:D3".to_string()]);
     assert_eq!(
-        std::fs::read_to_string(dest.join("Sparse").join("A1:D3")).expect("the block file"),
+        std::fs::read_to_string(
+            dest.join("Sparse")
+                .join(fsa1_model::range_file_name("A1:D3"))
+        )
+        .expect("the block file"),
         "1\t\t\t4\n\t\t\t\n7\t\t\t",
         "nine of the twelve coordinates are blank fields, and no row gains or loses one",
     );
