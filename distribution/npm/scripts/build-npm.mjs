@@ -16,7 +16,7 @@ const MATRIX = [
   { plat: "linux-arm64-musl", asset: "fsa1-mcp-linux-aarch64-musl", bin: "fsa1-mcp" },
   { plat: "darwin-x64", asset: "fsa1-mcp-macos-x86_64", bin: "fsa1-mcp" },
   { plat: "darwin-arm64", asset: "fsa1-mcp-macos-aarch64", bin: "fsa1-mcp" },
-  { plat: "win32-x64", asset: "fsa1-mcp-windows-x86_64.exe", bin: "fsa1-mcp.exe" },
+  { plat: "windows-x64", asset: "fsa1-mcp-windows-x86_64.exe", bin: "fsa1-mcp.exe" },
 ];
 
 const [version, binariesDir] = process.argv.slice(2);

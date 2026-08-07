@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "fsa1-mcp"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "fsa1-ingest",
  "fsa1-model",

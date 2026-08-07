@@ -90,13 +90,13 @@ jobs:
           chk=$(awk '{print "fsa1-cli-" $1 "\nfsa1-mcp-" $1}' "$W/t" | sort -u)
           [ "$pub" = "$chk" ] || { printf 'published:\n%s\nchecked here:\n%s\n' "$pub" "$chk"; rc=1; }
           while read -r slug s m; do
-            for pair in "plugin/launcher/fsa1-mcp:fsa1-mcp" "website/public/install-cli:fsa1-cli"; do
+            for pair in "website/public/install-cli:fsa1-cli"; do
               f=${pair%%:*}; want="${pair#*:}-$slug"
               r=$(got "$f" "$s" "$m")
               [ "$r" = "$want" ] || { echo "$f ($s $m) -> ${r:-nothing}, published $want"; rc=1; }
             done
           done < "$W/t"
-          for f in plugin/launcher/fsa1-mcp website/public/install-cli; do
+          for f in website/public/install-cli; do
             r=$(got "$f" SunOS sparc64)
             [ -z "$r" ] && [ "$(cat "$W/e")" != 0 ] \
               || { echo "$f on SunOS/sparc64 -> '${r:-no download}' exit $(cat "$W/e"), want a refusal"; rc=1; }

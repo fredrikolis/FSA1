@@ -1,7 +1,7 @@
 # Concern: declares the MCP server package and the crates it composes | Non-concern: the deny edges barring anything from depending on it (.annotated-tree.toml) | IO: none
 [package]
 name = "fsa1-mcp"
-version = "0.1.0"
+version = "0.2.3"
 edition = "2024"
 license.workspace = true
 

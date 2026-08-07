@@ -13,7 +13,7 @@ const PLATFORM_PACKAGES = {
   "linux-arm64": "fsa1-mcp-linux-arm64-musl",
   "darwin-x64": "fsa1-mcp-darwin-x64",
   "darwin-arm64": "fsa1-mcp-darwin-arm64",
-  "win32-x64": "fsa1-mcp-win32-x64",
+  "win32-x64": "fsa1-mcp-windows-x64",
 };
 
 function resolveBinary() {

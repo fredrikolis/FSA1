@@ -13,7 +13,8 @@
 # Plugin launcher / shell scripts must stay LF: a CRLF shebang (`#!/usr/bin/env bash\r`) fails on
 # Linux and macOS with `env: 'bash\r': No such file or directory`. Keep them Unix-line-ended even
 # when checked out on Windows.
-plugin/launcher/fsa1-mcp text eol=lf
+distribution/npm/bin/fsa1-mcp.js text eol=lf
+distribution/npm/scripts/build-npm.mjs text eol=lf
 *.sh text eol=lf
 
 # schema.rs byte-compares emit() against this file, and a Windows checkout under the default

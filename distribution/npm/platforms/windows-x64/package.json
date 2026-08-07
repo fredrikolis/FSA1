@@ -1,19 +1,19 @@
 {
-  "name": "fsa1-mcp-darwin-x64",
+  "name": "fsa1-mcp-windows-x64",
   "version": "0.2.2",
-  "description": "Prebuilt fsa1-mcp binary for darwin x64. Installed automatically as an optional dependency of `fsa1-mcp`.",
+  "description": "Prebuilt fsa1-mcp binary for win32 x64. Installed automatically as an optional dependency of `fsa1-mcp`.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/fredrikolis/FSA1.git"
   },
   "os": [
-    "darwin"
+    "win32"
   ],
   "cpu": [
     "x64"
   ],
   "files": [
-    "fsa1-mcp"
+    "fsa1-mcp.exe"
   ]
 }

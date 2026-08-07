@@ -12,7 +12,6 @@ skill — what it is and when to reach for it.
 plugin/                              # the plugin itself, and everything a host fetches
 plugin/.claude-plugin/plugin.json    # its manifest
 plugin/.mcp.json                     # declares the one MCP server the host starts
-plugin/launcher/fsa1-mcp             # cross-platform launcher (bash) -> execs the native server
 plugin/skills/fsa1/SKILL.md          # tells Claude what the tools do and when to reach for them
 .github/workflows/plugin-release.yml # cross-builds native binaries -> GitHub Release
 ```
@@ -41,20 +40,15 @@ the admin approval surface. An MCP server is declared, named and reviewable, so 
 executable comes through. A Claude Code user who wants the command in their own shell installs it
 with the one-liner at https://fsa1.sh.
 
-## Why `plugin/launcher/fsa1-mcp` is a launcher, not the binary
+## Why the server comes from npm
 
-A plugin's launcher is shared across every host the plugin runs on: **Cowork's Linux cloud sandbox**
-and **Claude Code on the user's own macOS / Windows / Linux desktop**. A compiled Rust binary is
-per-(os, arch), so `plugin/launcher/fsa1-mcp` is a small bash script that resolves the matching binary and caches
-it under `${CLAUDE_PLUGIN_DATA}` (persistent across plugin updates — `${CLAUDE_PLUGIN_ROOT}` changes
-every update, so nothing is cached there). Resolution order, all overridable:
+A plugin's files are shared across every host it runs on, and a compiled binary is per-(os, arch).
+`npx -y fsa1-mcp` resolves the one binary for the machine from a cache that survives sessions, which
+is how every local MCP server in the official plugin directory is reached. The npm wrapper names
+five per-platform packages as optional dependencies, each carrying one binary behind an `os`/`cpu`
+constraint; npm installs exactly the matching one and skips the rest.
 
-1. `$FSA1_MCP_BIN` — explicit path (dev / power users)
-2. cached binary in `${CLAUDE_PLUGIN_DATA}/bin`
-3. bundled prebuilt `dist/<os>-<arch>/fsa1-mcp` (if you choose to commit binaries)
-4. local dev build `../target/{release,debug}/fsa1-mcp` (contributors in the repo)
-5. **GitHub Release asset** `fsa1-mcp-<os>-<arch>[.exe]` — the normal path for an installed plugin
-6. build from source with `cargo -p fsa1-mcp` — last resort, needs a Rust toolchain
+Linux ships a STATIC musl build, so no glibc version has to agree with a sandbox we never see.
 
 ## Native binaries & platforms
 

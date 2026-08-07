@@ -1,11 +1,23 @@
 {
   "name": "fsa1-mcp-linux-arm64-musl",
-  "version": "0.0.0",
+  "version": "0.2.2",
   "description": "Prebuilt fsa1-mcp binary for linux arm64. Installed automatically as an optional dependency of `fsa1-mcp`.",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/fredrikolis/FSA1.git" },
-  "os": ["linux"],
-  "cpu": ["arm64"],
-  "libc": ["musl", "glibc"],
-  "files": ["fsa1-mcp"]
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fredrikolis/FSA1.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "musl",
+    "glibc"
+  ],
+  "files": [
+    "fsa1-mcp"
+  ]
 }
