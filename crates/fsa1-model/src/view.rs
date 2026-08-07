@@ -1,7 +1,8 @@
-// Concern: resolves a scope to a View, spelling its cells and names from one demand | Non-concern: drawing it (the CLI presenters own that) | IO: (&Workbook, ViewScope, RenderMode) -> View
+// Concern: resolves a scope to a View, spelling its cells and names from one demand | Non-concern: drawing it (fsa1-html, present.rs) | IO: (&Workbook, Option<&Overlay>, ViewScope, RenderMode) -> View
 
 use crate::names::{Name, NameScope, NameTarget};
 use crate::overlap::Rect;
+use crate::overlay::Overlay;
 use crate::render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, combined_cell, render, viewport_cell_count,
 };
@@ -11,7 +12,7 @@ use crate::workbook::{FileEntry, FormulaOutcome, Workbook};
 pub enum ViewScope {
     Workbook,
     Tab(u32),
-    /// The literal rectangle, padded where no file covers it — never clipped to the used region.
+    /// The literal rectangle, padded where no file covers it — never clipped to the stated region.
     Region(u32, Rect),
 }
 
@@ -60,11 +61,16 @@ impl SheetView<'_> {
     }
 }
 
-/// Every coordinate the view will show and every in-scope name's dependency cone accrete into a
-/// SINGLE [`Workbook::values_at`] demand before anything is spelled, so no two parts of a view can
-/// disagree about a cell. Each sheet's viewport is bounded by [`MAX_VIEWPORT_CELLS`] independently;
-/// over the bound is a refusal message for the caller to spell, never a crash.
-pub fn view<'a>(wb: &'a Workbook, scope: ViewScope, mode: RenderMode) -> Result<View<'a>, String> {
+/// Every coordinate the view will show and every in-scope name's dependency cone accrete into ONE
+/// [`Workbook::values_at`] demand before anything is spelled, so no two parts of a view can disagree
+/// about a cell. Each sheet's viewport is bounded by [`MAX_VIEWPORT_CELLS`] independently; over the
+/// bound is a refusal, never a crash. `overlay` is `None` where a view spans CONTENT alone.
+pub fn view<'a>(
+    wb: &'a Workbook,
+    overlay: Option<&Overlay>,
+    scope: ViewScope,
+    mode: RenderMode,
+) -> Result<View<'a>, String> {
     let sheets: Vec<u32> = match scope {
         ViewScope::Workbook => (0..wb.sheet_names().len() as u32).collect(),
         ViewScope::Tab(s) | ViewScope::Region(s, _) => vec![s],
@@ -73,7 +79,8 @@ pub fn view<'a>(wb: &'a Workbook, scope: ViewScope, mode: RenderMode) -> Result<
     for &s in &sheets {
         let vp = match scope {
             ViewScope::Region(_, rect) => Some(rect),
-            _ => wb.used_region(s),
+            // Without an overlay the viewport spans CONTENT alone: a view that will not draw a style has no reason to widen for one.
+            _ => overlay.map_or_else(|| wb.content_region(s), |o| o.stated_region(wb, s)),
         };
         if let Some(rect) = vp {
             let cells = viewport_cell_count(rect);

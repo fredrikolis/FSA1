@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use fsa1_model::{Cell, Workbook};
+use fsa1_model::{Cell, Overlay, Rect, Workbook};
 
 fn serde_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../conformance/serde")
@@ -73,20 +73,34 @@ fn file_bytes(path: &Path) -> Vec<u8> {
     std::fs::read(path).expect("read file bytes")
 }
 
-fn load(root: &Path, at: &str) -> Workbook {
-    Workbook::load_dir(root)
-        .unwrap_or_else(|e| panic!("reading the unpacked {at}: {e}"))
-        .unwrap_or_else(|d| panic!("the unpacked {at} must load: {d:?}"))
+/// Both halves of what a tree states: its values, and the presentation beside them. SER2 promises
+/// the look survives a pack, so a comparison reading only the workbook would not see it move.
+struct Loaded {
+    workbook: Workbook,
+    overlay: Overlay,
 }
 
-/// Every coordinate either side puts inside its own used region, so a cell one workbook holds and
-/// the other does not is compared rather than skipped.
-fn coordinates(a: &Workbook, b: &Workbook, sheet: u32) -> Vec<(u32, u32)> {
+impl Loaded {
+    fn stated(&self, sheet: u32) -> Option<Rect> {
+        self.overlay.stated_region(&self.workbook, sheet)
+    }
+}
+
+fn load(root: &Path, at: &str) -> Loaded {
+    let workbook = Workbook::load_dir(root)
+        .unwrap_or_else(|e| panic!("reading the unpacked {at}: {e}"))
+        .unwrap_or_else(|d| panic!("the unpacked {at} must load: {d:?}"));
+    let overlay = Overlay::load_dir(root)
+        .unwrap_or_else(|e| panic!("reading the unpacked {at}'s sidecars: {e}"))
+        .unwrap_or_else(|d| panic!("the unpacked {at}'s sidecars must load: {d:?}"));
+    Loaded { workbook, overlay }
+}
+
+/// Every coordinate either side states, so a cell one workbook holds and the other does not is
+/// compared rather than skipped.
+fn coordinates(a: &Loaded, b: &Loaded, sheet: u32) -> Vec<(u32, u32)> {
     let mut out = Vec::new();
-    for r in [a.used_region(sheet), b.used_region(sheet)]
-        .into_iter()
-        .flatten()
-    {
+    for r in [a.stated(sheet), b.stated(sheet)].into_iter().flatten() {
         for row in r.min_row..=r.max_row {
             out.extend((r.min_col..=r.max_col).map(|col| (col, row)));
         }
@@ -100,7 +114,8 @@ fn coordinates(a: &Workbook, b: &Workbook, sheet: u32) -> Vec<(u32, u32)> {
 /// range file covers it is deliberately absent: `pack` keeps one `<cellXfs>` entry per LOOK, so two
 /// distinct xf indices that draw alike collapse into one and a re-unpack may legitimately cut the
 /// sheet into different blocks. The tree is the decomposition's; only these four are the contract's.
-fn content_at(wb: &Workbook, sheet: u32, col: u32, row: u32) -> [(&'static str, String); 4] {
+fn content_at(loaded: &Loaded, sheet: u32, col: u32, row: u32) -> [(&'static str, String); 4] {
+    let wb = &loaded.workbook;
     let (formula, format) = match wb.source_at(sheet, col, row).map(|s| s.cell) {
         Some(Cell::Formula { src, format, .. }) => (src.clone(), *format),
         Some(Cell::Value { format, .. }) => (String::new(), *format),
@@ -113,7 +128,10 @@ fn content_at(wb: &Workbook, sheet: u32, col: u32, row: u32) -> [(&'static str, 
             "display format",
             format.map(|f| f.code()).unwrap_or_default(),
         ),
-        ("style", format!("{:?}", wb.cell_style(sheet, col, row))),
+        (
+            "style",
+            format!("{:?}", loaded.overlay.cell_style(wb, sheet, col, row)),
+        ),
     ]
 }
 
@@ -174,11 +192,11 @@ fn ser2_every_accept_fixture_reopens_with_the_same_content_and_pack_leaves_the_s
 
         let (a, b) = (load(&wb_a, &stem), load(&wb_b, &stem));
         assert_eq!(
-            a.sheet_names(),
-            b.sheet_names(),
+            a.workbook.sheet_names(),
+            b.workbook.sheet_names(),
             "SER2: re-unpacking the pack of {stem} must reopen the same tabs"
         );
-        for (sheet, tab) in a.sheet_names().iter().enumerate() {
+        for (sheet, tab) in a.workbook.sheet_names().iter().enumerate() {
             let sheet = sheet as u32;
             for (col, row) in coordinates(&a, &b, sheet) {
                 let (was, now) = (

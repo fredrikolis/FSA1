@@ -1,4 +1,4 @@
-// Concern: resolves the CellStyle in force at one coordinate, and the one a cell declaring nothing wears | Non-concern: reading the block, rendering a style | IO: (&Presentation, row, col) -> CellStyle
+// Concern: resolves the CellStyle in force at one coordinate, and the one a cell declaring nothing wears | Non-concern: which blocks reach a coordinate (overlay.rs) | IO: (&Presentation, r, c) -> Style
 
 use crate::declaration::{
     Border, Chars, Declaration, Edge, FontStyle, FontWeight, Points, Rgb, TextAlign,

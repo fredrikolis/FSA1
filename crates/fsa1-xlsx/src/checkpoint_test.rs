@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use calamine::{Data, Reader, open_workbook_auto};
-use fsa1_model::Workbook;
+use fsa1_model::{Overlay, Workbook};
 
 use crate::write_xlsx;
 
@@ -19,8 +19,8 @@ fn temp_xlsx(tag: &str) -> PathBuf {
     ))
 }
 
-fn formatted_workbook() -> Workbook {
-    Workbook::from_tabs(&[(
+fn formatted_workbook() -> (Workbook, Overlay) {
+    let tabs: &[(&str, &[(&str, &str)])] = &[(
         "Sheet1",
         &[
             ("A1", "2021-05-15~m/d/yyyy"),
@@ -29,8 +29,11 @@ fn formatted_workbook() -> Workbook {
             ("A4", "12.50"),
             ("A5", "=1+1~$#,##0.00"),
         ],
-    )])
-    .expect("the formatted checkpoint workbook loads cleanly")
+    )];
+    (
+        Workbook::from_tabs(tabs).expect("the formatted checkpoint workbook loads cleanly"),
+        Overlay::from_tabs(tabs).expect("its sidecars, of which there are none, load cleanly"),
+    )
 }
 
 fn read_zip_entry(path: &std::path::Path, name: &str) -> String {
@@ -46,7 +49,7 @@ fn read_zip_entry(path: &std::path::Path, name: &str) -> String {
 
 #[test]
 fn formatted_export_is_accepted_by_calamine_and_carries_numfmts_and_s() {
-    let wb = formatted_workbook();
+    let (wb, overlay) = formatted_workbook();
     // An env-named dest is what `conformance/serde/checkpoint_numfmts.py` grades.
     let dest = match std::env::var_os("FSA1_CHECKPOINT_XLSX") {
         Some(p) => PathBuf::from(p),
@@ -54,7 +57,7 @@ fn formatted_export_is_accepted_by_calamine_and_carries_numfmts_and_s() {
     };
     let _ = std::fs::remove_file(&dest);
 
-    write_xlsx(&wb, &dest).expect("write_xlsx succeeds for a formatted workbook");
+    write_xlsx(&wb, &overlay, &dest).expect("write_xlsx succeeds for a formatted workbook");
 
     let mut book = open_workbook_auto(&dest).expect("calamine re-opens the formatted export");
     let range = book

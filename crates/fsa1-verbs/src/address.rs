@@ -10,8 +10,11 @@ use fsa1_model::{Diagnostic, NameTarget, Rect, Workbook, is_cell_filename, parse
 
 use crate::refusal::{Kind, Refusal, bad_arg, fail, refused};
 
-/// The whole workbook always loads, so cross-tab refs resolve whatever the path selected.
+/// The whole workbook always loads, so cross-tab refs resolve whatever the path selected. `root` is
+/// carried out because presentation is a SECOND load off the same directory, which a verb that draws
+/// it performs itself.
 pub struct Resolved {
+    pub root: PathBuf,
     pub workbook: Workbook,
     pub tab: Option<u32>,
     region: Option<Rect>,
@@ -363,6 +366,7 @@ pub fn resolve(path: &str) -> Result<Resolved, Refusal> {
                     .unwrap_or_default();
                 let (tab, rect) = resolve_name(&wb, name, &scope)?;
                 return Ok(Resolved {
+                    root: s.root,
                     workbook: wb,
                     tab: Some(tab),
                     region: Some(rect),
@@ -386,6 +390,7 @@ pub fn resolve(path: &str) -> Result<Resolved, Refusal> {
                 None => None,
             };
             Ok(Resolved {
+                root: s.root,
                 workbook: wb,
                 tab,
                 region: s.region,
@@ -405,7 +410,7 @@ pub fn resolve(path: &str) -> Result<Resolved, Refusal> {
 }
 
 impl Resolved {
-    /// `None` leaves the caller on the tab's `used_region`.
+    /// `None` leaves the caller on everything the tab states, presentation included.
     pub fn region(&self) -> Option<Rect> {
         self.region
     }

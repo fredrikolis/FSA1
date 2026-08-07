@@ -1,9 +1,9 @@
-// Concern: smoke-tests the writer — a calamine reopen, and an occupied-dest refusal | Non-concern: the graded conformance corpus (conformance/serde/) | IO: (a Workbook) -> a temp .xlsx
+// Concern: smoke-tests the writer — a calamine reopen, and an occupied-dest refusal | Non-concern: the graded conformance corpus (conformance/serde/) | IO: (a Workbook + an Overlay) -> a temp .xlsx
 
 use std::path::PathBuf;
 
 use calamine::{Data, Reader, open_workbook_auto};
-use fsa1_model::Workbook;
+use fsa1_model::{Overlay, Workbook};
 
 use crate::write_xlsx;
 
@@ -18,8 +18,10 @@ fn temp_xlsx(tag: &str) -> PathBuf {
     ))
 }
 
-fn tiny_workbook() -> Workbook {
-    Workbook::from_tabs(&[
+/// The tree carries no sidecar, so its overlay states nothing — built from the SAME tree rather
+/// than defaulted, so the two loads can never be given different input.
+fn tiny_workbook() -> (Workbook, Overlay) {
+    let tabs: &[(&str, &[(&str, &str)])] = &[
         (
             "Sheet1",
             &[
@@ -31,17 +33,20 @@ fn tiny_workbook() -> Workbook {
             ],
         ),
         ("Summary", &[("A1", "=Sheet1!A2")]),
-    ])
-    .expect("the tiny in-memory workbook loads cleanly")
+    ];
+    (
+        Workbook::from_tabs(tabs).expect("the tiny in-memory workbook loads cleanly"),
+        Overlay::from_tabs(tabs).expect("its sidecars, of which there are none, load cleanly"),
+    )
 }
 
 #[test]
 fn writer_emits_a_package_calamine_reopens() {
-    let wb = tiny_workbook();
+    let (wb, overlay) = tiny_workbook();
     let dest = temp_xlsx("reopen");
     let _ = std::fs::remove_file(&dest);
 
-    write_xlsx(&wb, &dest).expect("write_xlsx succeeds");
+    write_xlsx(&wb, &overlay, &dest).expect("write_xlsx succeeds");
 
     let mut book = open_workbook_auto(&dest).expect("calamine re-opens the emitted .xlsx");
 
@@ -79,7 +84,7 @@ fn writer_emits_a_package_calamine_reopens() {
 
 #[test]
 fn excels_future_function_prefix_survives_the_pack_leg_verbatim() {
-    let wb = Workbook::from_tabs(&[(
+    let tabs: &[(&str, &[(&str, &str)])] = &[(
         "Sheet1",
         &[
             ("A1", "3"),
@@ -87,10 +92,11 @@ fn excels_future_function_prefix_survives_the_pack_leg_verbatim() {
             ("B1", "=_xlfn.MINIFS(A1:A2,A1:A2,\">0\")"),
             ("B2", "=_xlfn._xlws.FILTER(A1:A2,A1:A2>0)"),
         ],
-    )])
-    .expect("the prefixed workbook loads cleanly");
+    )];
+    let wb = Workbook::from_tabs(tabs).expect("the prefixed workbook loads cleanly");
+    let overlay = Overlay::from_tabs(tabs).expect("its sidecars load cleanly");
     let dest = temp_xlsx("xlfn");
-    write_xlsx(&wb, &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &dest).expect("export writes the package");
 
     let mut book = open_workbook_auto(&dest).expect("calamine reopens the export");
     let f = book
@@ -114,7 +120,7 @@ fn excels_future_function_prefix_survives_the_pack_leg_verbatim() {
 /// what it does catch is a part order or a table count the reader trusts and we got wrong.
 #[test]
 fn a_styled_workbook_reopens_with_its_values_intact() {
-    let wb = Workbook::from_tabs(&[(
+    let tabs: &[(&str, &[(&str, &str)])] = &[(
         "Sheet1",
         &[
             ("A1:A2", "Item\n42"),
@@ -124,10 +130,11 @@ fn a_styled_workbook_reopens_with_its_values_intact() {
                  color: #3f0421; font-weight: bold; height: 22.5pt; text-align: center; width: 14.5ch }\n",
             ),
         ],
-    )])
-    .expect("the styled workbook loads cleanly");
+    )];
+    let wb = Workbook::from_tabs(tabs).expect("the styled workbook loads cleanly");
+    let overlay = Overlay::from_tabs(tabs).expect("its sidecars load cleanly");
     let dest = temp_xlsx("styled");
-    write_xlsx(&wb, &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &dest).expect("export writes the package");
 
     let mut book = open_workbook_auto(&dest).expect("calamine re-opens the styled export");
     let range = book
@@ -141,11 +148,11 @@ fn a_styled_workbook_reopens_with_its_values_intact() {
 
 #[test]
 fn export_refuses_an_occupied_dest() {
-    let wb = tiny_workbook();
+    let (wb, overlay) = tiny_workbook();
     let dest = temp_xlsx("occupied");
     std::fs::write(&dest, b"pre-existing").expect("seed the dest");
 
-    let err = write_xlsx(&wb, &dest).expect_err("an occupied dest is refused (CORE3)");
+    let err = write_xlsx(&wb, &overlay, &dest).expect_err("an occupied dest is refused (CORE3)");
     assert!(
         matches!(err, crate::ExportError::DestExists(_)),
         "the refusal names the occupied destination"
@@ -174,8 +181,11 @@ fn defined_names_survive_the_pack_leg() {
     let wb = Workbook::load_dir(&root)
         .expect("fs read ok")
         .expect("the workbook loads");
+    let overlay = Overlay::load_dir(&root)
+        .expect("fs read ok")
+        .expect("its sidecars load");
     let dest = temp_xlsx("names");
-    write_xlsx(&wb, &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &dest).expect("export writes the package");
 
     let xml = {
         let f = std::fs::File::open(&dest).expect("open the package");

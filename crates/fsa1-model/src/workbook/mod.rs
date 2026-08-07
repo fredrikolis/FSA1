@@ -1,4 +1,4 @@
-// Concern: the loaded workbook — its tabs, its caches, and the demand entry points | Non-concern: the plan, evaluate, and forge passes themselves | IO: (dir or tabs) -> Workbook; (cells) -> values
+// Concern: the loaded workbook, its tabs, its caches and the demand entry points | Non-concern: presentation, which it cannot reach (overlay.rs); the evaluate passes | IO: (dir or tabs) -> Workbook
 //! Every demand runs a PLAN pass then an EVALUATE pass. The dependency graph between them is a
 //! CONTAINED optimization: its type never leaves this module, and it equals a naive per-cell
 //! evaluation, which the differential test below proves.
@@ -13,7 +13,7 @@ mod tests;
 mod trace;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::Path;
 
 use fsa1_ast::{
@@ -21,17 +21,12 @@ use fsa1_ast::{
     unix_secs_to_serial,
 };
 
-use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
-use crate::filename::parse_filename;
-use crate::geometry::{AxisRun, declared_heights, declared_widths};
 use crate::grid::{Cell as GridCell, Grid};
 use crate::names::{
     NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename, presentation_stem,
 };
 use crate::overlap::{Rect, detect_overlaps};
-use crate::presentation::{Presentation, parse_rules};
-use crate::style::{CellStyle, resolve};
 use crate::{ParsedFile, parse_file, presentation_in_grid};
 
 use forge::ForgeStore;
@@ -81,9 +76,6 @@ struct LoadedFile {
 struct Tab {
     name: String,
     files: Vec<LoadedFile>,
-    /// The tab's sidecars in CASCADE order — widest root first, ties by filename — so a coordinate
-    /// several roots cover wears them layered later-over-earlier and the narrowest one stands.
-    blocks: Vec<(Rect, Presentation)>,
     single: HashMap<(u32, u32), usize>,
     spans: Vec<(Rect, usize)>,
     by_name: HashMap<String, usize>,
@@ -91,7 +83,7 @@ struct Tab {
 
 impl Tab {
     /// File order is PRESERVED: a [`FileId`]'s second component indexes `files`.
-    fn new(name: String, files: Vec<LoadedFile>, blocks: Vec<(Rect, Presentation)>) -> Tab {
+    fn new(name: String, files: Vec<LoadedFile>) -> Tab {
         let mut single = HashMap::new();
         let mut spans = Vec::new();
         let mut by_name = HashMap::new();
@@ -107,7 +99,6 @@ impl Tab {
         Tab {
             name,
             files,
-            blocks,
             single,
             spans,
             by_name,
@@ -118,19 +109,14 @@ impl Tab {
 /// `(sheet index, file index within the tab)` — what an eval-time refusal's file anchor is keyed by.
 type FileId = (u32, usize);
 
-/// One tab's tree as the reader classified it: its range files, and its presentation sidecars as
-/// `(name, text)`. Three entry kinds, and this is what says which of them each was.
+/// One tab's tree as the reader classified it: its range files as `(name, text)`. A sidecar is
+/// classified and then dropped, presentation reaching no [`Workbook`] (VAL1).
 struct TabInput {
     name: String,
     files: Vec<(String, String)>,
-    sidecars: Vec<(String, String)>,
 }
 
-type TabParts = (
-    Vec<(String, String)>,
-    Vec<RawNameEntry>,
-    Vec<(String, String)>,
-);
+type TabParts = (Vec<(String, String)>, Vec<RawNameEntry>);
 
 /// `(sheet index, zero-based col, zero-based row)`. Every grid cell is a DISTINCT computation, so
 /// the graph and the caches are keyed per cell, never per file.
@@ -319,11 +305,10 @@ impl Workbook {
                 continue;
             }
             if ft.is_dir() {
-                let (files, names, sidecars) = read_tab_dir(root, &entry_name, &entry.path())?;
+                let (files, names) = read_tab_dir(root, &entry_name, &entry.path())?;
                 tabs.push(TabInput {
                     name: entry_name,
                     files,
-                    sidecars,
                 });
                 raw_names.extend(names);
             } else if presentation_stem(&entry_name).is_some() {
@@ -353,12 +338,12 @@ impl Workbook {
         let mut raw_names = Vec::new();
         for (tab_name, files) in tabs {
             let mut cells = Vec::new();
-            let mut sidecars = Vec::new();
             for (fname, contents) in files {
                 // A sidecar is classified FIRST, exactly as on disk: its stem holds a range separator, so the cell arm would otherwise take it and its name would die as malformed.
                 if presentation_stem(&fname).is_some() {
-                    sidecars.push((fname, contents));
-                } else if is_cell_filename(&fname) {
+                    continue;
+                }
+                if is_cell_filename(&fname) {
                     cells.push((fname, contents));
                 } else {
                     raw_names.push(RawNameEntry {
@@ -371,7 +356,6 @@ impl Workbook {
             cell_tabs.push(TabInput {
                 name: tab_name,
                 files: cells,
-                sidecars,
             });
         }
         Workbook::from_dir_parts(cell_tabs, raw_names)
@@ -388,7 +372,6 @@ impl Workbook {
             let TabInput {
                 name: tab_name,
                 files,
-                sidecars,
             } = tab;
             let mut loaded = Vec::new();
             let mut regions: Vec<(String, Rect)> = Vec::new();
@@ -414,11 +397,7 @@ impl Workbook {
                 }
             }
             diags.extend(detect_overlaps(&tab_name, &regions));
-            out_tabs.push(Tab::new(
-                tab_name.clone(),
-                loaded,
-                read_sidecars(&tab_name, sidecars, &mut diags),
-            ));
+            out_tabs.push(Tab::new(tab_name.clone(), loaded));
         }
         if diags.is_empty() {
             let has_array_regions = out_tabs
@@ -459,6 +438,11 @@ impl Workbook {
     pub fn with_now(mut self, serial: f64) -> Workbook {
         self.now = serial;
         self
+    }
+
+    /// The name a [`SheetId`] addresses, for a caller keyed by name rather than by index.
+    pub fn sheet_name(&self, sheet: u32) -> Option<&str> {
+        self.tabs.get(sheet as usize).map(|t| t.name.as_str())
     }
 
     /// In tab order, so an index IS a [`SheetId`].
@@ -610,24 +594,6 @@ impl Workbook {
         self.tabs[idx].by_name.get(name).copied()
     }
 
-    /// Every coordinate the tab states anything about — file regions AND scope roots, a block over a
-    /// rectangle no file covers still having to reach a renderer and a pack. NOT what an open-axis
-    /// reference clamps to: that is [`Workbook::content_region`], presentation moving no value.
-    pub fn used_region(&self, sheet: u32) -> Option<Rect> {
-        let tab = self.tabs.get(sheet as usize)?;
-        let stated = tab
-            .files
-            .iter()
-            .map(|f| f.region)
-            .chain(tab.blocks.iter().map(|(root, _)| *root));
-        stated.reduce(|acc, r| Rect {
-            min_col: acc.min_col.min(r.min_col),
-            min_row: acc.min_row.min(r.min_row),
-            max_col: acc.max_col.max(r.max_col),
-            max_row: acc.max_row.max(r.max_row),
-        })
-    }
-
     /// How far the tab's CONTENT reaches — file regions only. A sidecar states no value, so a
     /// block cannot move the bound an open-axis reference resolves against (VAL1).
     pub fn content_region(&self, sheet: u32) -> Option<Rect> {
@@ -656,83 +622,6 @@ impl Workbook {
             cell: file.grid.cell_at(dr, dc),
             array_continuation,
         })
-    }
-
-    /// `col` and `row` are zero-based and absolute, as [`Workbook::value_at`]'s are. `Some` wherever
-    /// the tab STATES something at the coordinate — a file covers it, or a scope root does, or both —
-    /// and `None` only where it states neither; a covered coordinate no block reaches is an EMPTY
-    /// style, which is a different fact from a gap. Blocks layer in the order written.
-    pub fn cell_style(&self, sheet: u32, col: u32, row: u32) -> Option<CellStyle> {
-        let tab = self.tabs.get(sheet as usize)?;
-        let mut style: Option<CellStyle> = None;
-        for (root, presentation) in &tab.blocks {
-            if root.contains(col, row) {
-                let matched = resolve(presentation, row - root.min_row + 1, col - root.min_col + 1);
-                style.get_or_insert_default().layer(&matched);
-            }
-        }
-        let mut style = match style {
-            Some(style) => style,
-            None => self
-                .covering(sheet, col, row)
-                .map(|_| CellStyle::default())?,
-        };
-        // An axis size belongs to the AXIS: resolved per coordinate, one column renders two widths.
-        style.width = self.axis_size(self.column_widths(sheet), col);
-        style.height = self.axis_size(self.row_heights(sheet), row);
-        Some(style)
-    }
-
-    fn axis_size<T: Copy>(&self, runs: Vec<AxisRun<T>>, index: u32) -> Option<T> {
-        runs.iter()
-            .find(|r| index >= r.start && index <= r.end)
-            .map(|r| r.size)
-    }
-
-    /// The sheet columns this tab's sidecars size, ascending, disjoint and coalesced — what a
-    /// `<col min= max= width=>` run is. Two blocks may size one axis differently and neither is a
-    /// fault: the cascade answers it, so the SMALLEST root stands, ties to the later name. An axis no block sizes is
-    /// absent rather than defaulted.
-    pub fn column_widths(&self, sheet: u32) -> Vec<AxisRun<Chars>> {
-        self.axis_runs(sheet, declared_widths)
-    }
-
-    /// [`Workbook::column_widths`] on the other axis.
-    pub fn row_heights(&self, sheet: u32) -> Vec<AxisRun<Points>> {
-        self.axis_runs(sheet, declared_heights)
-    }
-
-    /// Two blocks' runs may interleave and part-overlap, so they are merged one axis at a time and
-    /// re-coalesced rather than intersected pairwise. The overwrite IS the cascade read on an axis:
-    /// blocks come in the order written, so the last one sizing a given axis is the one that stands.
-    fn axis_runs<T: Copy + PartialEq>(
-        &self,
-        sheet: u32,
-        declared: fn(Rect, &Presentation) -> Vec<AxisRun<T>>,
-    ) -> Vec<AxisRun<T>> {
-        let Some(tab) = self.tabs.get(sheet as usize) else {
-            return Vec::new();
-        };
-        let mut sized: BTreeMap<u32, T> = BTreeMap::new();
-        for (root, presentation) in &tab.blocks {
-            for run in declared(*root, presentation) {
-                for axis in run.start..=run.end {
-                    sized.insert(axis, run.size);
-                }
-            }
-        }
-        let mut runs: Vec<AxisRun<T>> = Vec::new();
-        for (axis, size) in sized {
-            match runs.last_mut() {
-                Some(run) if run.end + 1 == axis && run.size == size => run.end = axis,
-                _ => runs.push(AxisRun {
-                    start: axis,
-                    end: axis,
-                    size,
-                }),
-            }
-        }
-        runs
     }
 
     /// Every fault a LOADED workbook can still carry, in file order throughout: the per-cell load
@@ -813,6 +702,12 @@ impl Workbook {
 
     fn refuse(&self, diag: Diagnostic) {
         self.diagnostics.borrow_mut().push(diag);
+    }
+
+    /// Whether a range file states the coordinate at all — the gap test an [`crate::overlay::Overlay`]
+    /// resolver asks before it calls a coordinate under no block an EMPTY style rather than nothing.
+    pub(crate) fn covers(&self, sheet: u32, col: u32, row: u32) -> bool {
+        self.covering(sheet, col, row).is_some()
     }
 
     /// Overlaps are rejected at load, so at most one file covers a coordinate.
@@ -912,11 +807,10 @@ impl Workbook {
 
 /// Entries are sorted, for a deterministic load order. Three entry kinds are told apart HERE, and a
 /// sidecar is tested for first: its stem holds a range separator, so the cell arm below would
-/// otherwise take `A1:C3.css` and refuse it as a malformed range name.
+/// otherwise take `A1:C3.css` and refuse it as a malformed range name. Its CONTENT is never read.
 fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabParts> {
     let mut files = Vec::new();
     let mut names = Vec::new();
-    let mut sidecars = Vec::new();
     let mut scratch = Vec::new();
     let mut file_entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     file_entries.sort_by_key(|e| e.file_name());
@@ -931,8 +825,9 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
             continue;
         }
         if ft.is_file() && presentation_stem(&name).is_some() {
-            sidecars.push((name, read_file_to_string(&f.path(), &mut scratch)?));
-        } else if ft.is_file() && is_cell_filename(&name) {
+            continue;
+        }
+        if ft.is_file() && is_cell_filename(&name) {
             files.push((name, read_file_to_string(&f.path(), &mut scratch)?));
         } else if let Some(entry) = read_name_entry(
             root,
@@ -945,54 +840,7 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
             names.push(entry);
         }
     }
-    Ok((files, names, sidecars))
-}
-
-/// The tab's sidecars, read against the root each is NAMED for, then laid in cascade order: widest
-/// root first so the narrowest reaching a coordinate is the last layered over it, ties settled by
-/// canonical filename. Total over distinct roots, so every coordinate has exactly one winner.
-fn read_sidecars(
-    tab: &str,
-    sidecars: Vec<(String, String)>,
-    diags: &mut Vec<Diagnostic>,
-) -> Vec<(Rect, Presentation)> {
-    let mut read: Vec<(Rect, String, Presentation)> = Vec::new();
-    for (name, text) in sidecars {
-        let stem = presentation_stem(&name).expect("the classifier admitted only sidecars");
-        let located = format!("{tab}/{name}");
-        match parse_filename(stem) {
-            Ok(parsed) => match parse_rules(&located, parsed.region, &text) {
-                Ok(presentation) => read.push((
-                    parsed.region,
-                    crate::canonical_range_name(&name),
-                    presentation,
-                )),
-                Err(d) => diags.extend(d),
-            },
-            Err(d) => diags.push(Diagnostic::new(d.code, Loc::file(&located), d.message)),
-        }
-    }
-    // Two spellings of one root canonicalize alike, so no order separates them. Refused, not ordered.
-    let mut seen: Vec<&String> = Vec::new();
-    for (_, key, _) in &read {
-        if seen.contains(&key) {
-            diags.push(Diagnostic::new(
-                Code::DuplicateSidecarRoot,
-                Loc::file(&format!("{tab}/{key}")),
-                format!(
-                    "two sidecars state the presentation of {key}; one root is stated once, however \
-                     its name is spelled -- delete or merge the duplicate"
-                ),
-            ));
-        }
-        seen.push(key);
-    }
-    read.sort_by(|a, b| area(b.0).cmp(&area(a.0)).then_with(|| a.1.cmp(&b.1)));
-    read.into_iter().map(|(root, _, p)| (root, p)).collect()
-}
-
-fn area(root: Rect) -> u64 {
-    u64::from(root.max_col - root.min_col + 1) * u64::from(root.max_row - root.min_row + 1)
+    Ok((files, names))
 }
 
 /// `None` for an A1-shaped regular file, which is a cell, for a presentation sidecar, or for an

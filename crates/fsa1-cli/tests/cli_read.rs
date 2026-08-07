@@ -1405,3 +1405,41 @@ fn trace_prints_a_100k_link_cone_instead_of_overflowing_the_stack() {
         "the root plus two levels:\n{capped}"
     );
 }
+
+/// The routing a workbook and its presentation loading SEPARATELY creates: a sidecar that will not
+/// parse is a fault of the verbs that draw or lint presentation, and invisible to the ones that do
+/// not open one. Deleting either half of `check`'s fold leaves this the only witness.
+#[test]
+fn a_malformed_sidecar_reaches_only_the_verbs_that_read_presentation() {
+    let fx = Fixture::new("sidecar-routing");
+    fx.file("Sheet1", "A1", "20000")
+        .file("Sheet1", "B1", "=A1*2")
+        .file("Sheet1", "A1:B1.css", "  td { color: crimson }\n");
+    let root = fx.path().to_str().unwrap();
+
+    let (code, out) = run(&["check", root]);
+    assert_eq!(code, 3, "check reports the sidecar located; got:\n{out}");
+    assert!(
+        out.contains("presentation-value") && out.contains("Sheet1/A1:B1.css"),
+        "check names the fault and where it is:\n{out}"
+    );
+
+    for verb in [vec!["render", root, "--format", "html"], vec!["pack", root]] {
+        let (code, out) = run(&verb);
+        assert_eq!(
+            code, 3,
+            "{verb:?} draws presentation, so it refuses:\n{out}"
+        );
+    }
+
+    let cell = at(&fx, "Sheet1/B1");
+    for verb in [
+        vec!["eval", root, "--formula", "=B1"],
+        vec!["render", root],
+        vec!["tree", root],
+        vec!["trace", cell.as_str()],
+    ] {
+        let (code, out) = run(&verb);
+        assert_eq!(code, 0, "{verb:?} opens no sidecar, so it answers:\n{out}");
+    }
+}

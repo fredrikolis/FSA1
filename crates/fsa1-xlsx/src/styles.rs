@@ -1,12 +1,12 @@
-// Concern: xl/styles.xml — its fonts, fills, borders, alignments and numFmts, one <cellXfs> entry per look | Non-concern: axis geometry, stamping a cell's s= | IO: (a Workbook) -> bytes + an index map
+// Concern: xl/styles.xml — its fonts, fills, borders, alignments, numFmts, one <cellXfs> per look | Non-concern: axis geometry, stamping a cell's s= | IO: (a Workbook, an Overlay) -> bytes + an index
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use fsa1_model::{
     BorderLine, CUSTOM_NUMFMT_ID, Cell, CellStyle, DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE,
-    FontStyle, FontWeight, Format, Rgb, TextAlign, TextDecoration, VerticalAlign, WhiteSpace,
-    Workbook,
+    FontStyle, FontWeight, Format, Overlay, Rgb, TextAlign, TextDecoration, VerticalAlign,
+    WhiteSpace, Workbook,
 };
 
 const HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -74,20 +74,22 @@ impl StyleTable {
     }
 }
 
-pub(crate) fn build(wb: &Workbook) -> StyleTable {
-    emit(&collect(wb))
+pub(crate) fn build(wb: &Workbook, overlay: &Overlay) -> StyleTable {
+    emit(&collect(wb, overlay))
 }
 
-fn collect(wb: &Workbook) -> BTreeSet<XfKey> {
+fn collect(wb: &Workbook, overlay: &Overlay) -> BTreeSet<XfKey> {
     let mut keys = BTreeSet::new();
     for sheet in 0..wb.sheet_names().len() as u32 {
-        let Some(region) = wb.used_region(sheet) else {
+        // A block's root reaches past the content wherever it styles a region no file covers, and every look the sheet wears has to mint its entry.
+        let stated = overlay.stated_region(wb, sheet);
+        let Some(region) = stated else {
             continue;
         };
         for row in region.min_row..=region.max_row {
             for col in region.min_col..=region.max_col {
                 // Keyed off the STYLE, so a coordinate a scope root covers and no file does mints its `<xf>` too; it has no value and so no number format.
-                let Some(style) = wb.cell_style(sheet, col, row) else {
+                let Some(style) = overlay.cell_style(wb, sheet, col, row) else {
                     continue;
                 };
                 let format = wb
@@ -609,17 +611,17 @@ mod tests {
     /// index a cell reads back is the one its own style and format were interned under.
     #[test]
     fn a_loaded_workbook_interns_the_look_each_cell_reads_back() {
-        let wb = Workbook::from_tabs(&[(
-            "Sheet1",
-            &[
-                ("A1:A2", "Total\n12.50%"),
-                ("A1:A2.css", "  tr:first-child td { font-weight: bold }\n"),
-            ],
-        )]);
-        let wb = wb.unwrap_or_else(|d| panic!("the workbook loads: {:?}", d[0]));
-        let table = build(&wb);
-        let heading = wb.cell_style(0, 0, 0).expect("A1 is covered");
-        let body = wb.cell_style(0, 0, 1).expect("A2 is covered");
+        let files: &[(&str, &str)] = &[
+            ("A1:A2", "Total\n12.50%"),
+            ("A1:A2.css", "  tr:first-child td { font-weight: bold }\n"),
+        ];
+        let wb = Workbook::from_tabs(&[("Sheet1", files)])
+            .unwrap_or_else(|d| panic!("the workbook loads: {:?}", d[0]));
+        let overlay = Overlay::from_tabs(&[("Sheet1", files)])
+            .unwrap_or_else(|d| panic!("the sidecars load: {:?}", d[0]));
+        let table = build(&wb, &overlay);
+        let heading = overlay.cell_style(&wb, 0, 0, 0).expect("A1 is covered");
+        let body = overlay.cell_style(&wb, 0, 0, 1).expect("A2 is covered");
         let heading_cell = wb.source_at(0, 0, 0).expect("A1 is covered").cell;
         let body_cell = wb.source_at(0, 0, 1).expect("A2 is covered").cell;
         assert_eq!(table.index_of(&heading, heading_cell), Some(1));

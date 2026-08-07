@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use fsa1_ingest::{Decomposition, ImportReport};
-use fsa1_model::{Diagnostic, Direction, FormulaOutcome, RenderMode, TraceNode, ViewScope, view};
+use fsa1_model::{
+    Diagnostic, Direction, FormulaOutcome, Overlay, RenderMode, TraceNode, ViewScope, view,
+};
 
 use crate::address;
 use crate::present;
@@ -51,6 +53,11 @@ pub fn view_at(
         return Err(fail(Kind::Validation, &msg));
     }
     let wb = &resolved.workbook;
+    // The HTML carrier is the one drawer that draws presentation, and the only reason to pay for it.
+    let overlay = match format {
+        Format::Html => Some(load_overlay(&resolved.root)?),
+        Format::Ascii => None,
+    };
     let scope = match (resolved.tab, resolved.region()) {
         (tab, Some(rect)) => ViewScope::Region(tab.unwrap_or(0), rect),
         (Some(sheet), None) => ViewScope::Tab(sheet),
@@ -59,7 +66,9 @@ pub fn view_at(
 
     let mut notes = Vec::new();
     if let ViewScope::Region(sheet, rect) = scope
-        && let Some(used) = wb.used_region(sheet)
+        && let Some(used) = overlay
+            .as_ref()
+            .map_or_else(|| wb.content_region(sheet), |o| o.stated_region(wb, sheet))
         && rect.intersect(&used).is_none()
     {
         notes.push(format!(
@@ -69,7 +78,7 @@ pub fn view_at(
         ));
     }
 
-    let v = view(wb, scope, mode).map_err(|msg| bad_arg(&msg))?;
+    let v = view(wb, overlay.as_ref(), scope, mode).map_err(|msg| bad_arg(&msg))?;
 
     let empty = v.sheets.len() == 1 && v.sheets[0].grid.is_none();
     if empty {
@@ -81,7 +90,12 @@ pub fn view_at(
 
     let text = match (presenter, format) {
         (Presenter::Table, Format::Ascii) => present::table(&v),
-        (Presenter::Table, Format::Html) => fsa1_html::document(wb, &v),
+        (Presenter::Table, Format::Html) => {
+            let overlay = overlay
+                .as_ref()
+                .expect("Format::Html loaded the overlay above");
+            fsa1_html::document(wb, overlay, &v)
+        }
         (Presenter::Tree, _) => present::tree(&v, if full { u32::MAX } else { TREE_CELL_CAP }),
     };
     Ok(Rendered { text, notes, empty })
@@ -108,12 +122,8 @@ pub fn check(target: &str) -> Result<Vec<Diagnostic>, Refusal> {
             Err(fail(Kind::Io, &msg))
         }
         // Best-effort: a bare-filename loc carries no tab, so a scope cannot exclude it on that axis.
-        Ok(Err(load_diags)) => Ok(load_diags
-            .into_iter()
-            .filter(|d| {
-                let (loc_tab, region) = fsa1_model::scope::loc_target(&d.loc);
-                scope.includes(loc_tab, region)
-            })
+        Ok(Err(load_diags)) => Ok(in_scope(load_diags, &scope)
+            .chain(in_scope(sidecar_diags(&decomposed.root)?, &scope))
             .collect()),
         Ok(Ok(wb)) => {
             if let Some(name) = scope.tab()
@@ -125,7 +135,10 @@ pub fn check(target: &str) -> Result<Vec<Diagnostic>, Refusal> {
                 );
                 return Err(fail(Kind::NotFound, &msg));
             }
-            Ok(wb.lint_scoped(&scope))
+            // The values first and the sidecars after, the order this verb reports on either branch.
+            let mut found = wb.lint_scoped(&scope);
+            found.extend(in_scope(sidecar_diags(&decomposed.root)?, &scope));
+            Ok(found)
         }
     }
 }
@@ -197,7 +210,8 @@ pub fn pack(folder: &Path, dest: Option<&Path>, ext: &str) -> Result<Packed, Ref
             format!("{folder:?} has no tabs to pack (a tab is a sub-folder of cell/range files)");
         return Err(fail(Kind::Validation, &msg));
     }
-    fsa1_xlsx::write_xlsx(&wb, &dest)
+    let overlay = load_overlay(folder)?;
+    fsa1_xlsx::write_xlsx(&wb, &overlay, &dest)
         .map(|()| Packed {
             dest,
             sheets: wb.sheet_names().len(),
@@ -249,6 +263,19 @@ fn pack_kind(e: &fsa1_xlsx::ExportError) -> Kind {
     }
 }
 
+/// The SECOND load, off the same directory: a verb that draws presentation asks for it, and every
+/// other one never opens a sidecar at all.
+pub fn load_overlay(path: &Path) -> Result<Overlay, Refusal> {
+    match Overlay::load_dir(path) {
+        Err(e) => {
+            let msg = format!("cannot read {:?}: {e}", path.display());
+            Err(fail(Kind::Io, &msg))
+        }
+        Ok(Err(diags)) => Err(refused(diags)),
+        Ok(Ok(overlay)) => Ok(overlay),
+    }
+}
+
 pub fn load(path: &Path) -> Result<fsa1_model::Workbook, Refusal> {
     match fsa1_model::Workbook::load_dir(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -262,4 +289,28 @@ pub fn load(path: &Path) -> Result<fsa1_model::Workbook, Refusal> {
         Ok(Err(diags)) => Err(refused(diags)),
         Ok(Ok(wb)) => Ok(wb),
     }
+}
+
+/// `check` parses presentation to LINT it, so a sidecar's refusals are findings rather than a reason
+/// to stop. A directory it cannot READ is neither: a pass that could not run reports no faults and
+/// must not be mistaken for one that found none.
+fn sidecar_diags(root: &Path) -> Result<Vec<fsa1_model::Diagnostic>, Refusal> {
+    match Overlay::load_dir(root) {
+        Err(e) => {
+            let msg = format!("cannot read {:?}: {e}", root.display());
+            Err(fail(Kind::Io, &msg))
+        }
+        Ok(Err(diags)) => Ok(diags),
+        Ok(Ok(_)) => Ok(Vec::new()),
+    }
+}
+
+fn in_scope<'a>(
+    diags: Vec<fsa1_model::Diagnostic>,
+    scope: &'a fsa1_model::scope::Scope,
+) -> impl Iterator<Item = fsa1_model::Diagnostic> + 'a {
+    diags.into_iter().filter(move |d| {
+        let (loc_tab, region) = fsa1_model::scope::loc_target(&d.loc);
+        scope.includes(loc_tab, region)
+    })
 }

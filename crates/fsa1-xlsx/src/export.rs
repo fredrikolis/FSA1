@@ -1,11 +1,11 @@
-// Concern: drives the part emitters into a fresh dest, refusing an occupied one | Non-concern: any part's bytes, the CLI envelope | IO: (a Workbook + a dest) -> .xlsx or ExportError
+// Concern: drives the part emitters into a fresh dest, refusing an occupied one | Non-concern: any part's bytes, the CLI envelope | IO: (a Workbook, an Overlay, a dest) -> .xlsx or ExportError
 
 use std::fmt;
 use std::fs::File;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use fsa1_model::Workbook;
+use fsa1_model::{Overlay, Workbook};
 
 use crate::package::{self, Part};
 use crate::shared_strings::SharedStrings;
@@ -42,8 +42,8 @@ impl std::error::Error for ExportError {
     }
 }
 
-pub(crate) fn run(workbook: &Workbook, dest: &Path) -> Result<(), ExportError> {
-    let parts = build_parts(workbook);
+pub(crate) fn run(workbook: &Workbook, overlay: &Overlay, dest: &Path) -> Result<(), ExportError> {
+    let parts = build_parts(workbook, overlay);
     let file = match File::create_new(dest) {
         Ok(f) => f,
         Err(e) if e.kind() == ErrorKind::AlreadyExists => {
@@ -58,16 +58,16 @@ pub(crate) fn run(workbook: &Workbook, dest: &Path) -> Result<(), ExportError> {
     Ok(())
 }
 
-fn build_parts(workbook: &Workbook) -> Vec<Part> {
+fn build_parts(workbook: &Workbook, overlay: &Overlay) -> Vec<Part> {
     let names = workbook.sheet_names();
     let sheet_count = names.len();
 
-    let style_table = styles::build(workbook);
+    let style_table = styles::build(workbook, overlay);
 
     let mut ss = SharedStrings::new();
     let mut worksheet_parts = Vec::with_capacity(sheet_count);
     for i in 0..sheet_count {
-        let bytes = worksheet::emit(workbook, i as u32, &mut ss, &style_table);
+        let bytes = worksheet::emit(workbook, overlay, i as u32, &mut ss, &style_table);
         worksheet_parts.push(Part::new(
             format!("xl/worksheets/sheet{}.xml", i + 1),
             bytes,

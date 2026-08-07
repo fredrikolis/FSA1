@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use fsa1_model::Workbook;
+use fsa1_model::{Overlay, Workbook};
 
 /// Repeated verbatim in every assertion message, because an agent reading one failure must not have
 /// to find this file to learn which side is allowed to move.
@@ -185,6 +185,10 @@ fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
     let workbook = Workbook::load_dir(&unpacked)
         .expect("the unpacked tree is readable")
         .map_err(|diags| format!("`check` refuses what `unpack` wrote: {diags:?}"))?;
+    // What `check` does: the values and the presentation are two loads, and both are graded here.
+    let overlay = Overlay::load_dir(&unpacked)
+        .expect("the unpacked tree is readable")
+        .map_err(|diags| format!("`check` refuses the sidecars `unpack` wrote: {diags:?}"))?;
     let lint = workbook.lint();
     if !lint.is_empty() {
         return Err(format!(
@@ -197,7 +201,7 @@ fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
         return Ok(());
     }
     let packed = work.join("packed.xlsx");
-    fsa1_xlsx::write_xlsx(&workbook, &packed).map_err(|e| format!("pack failed: {e}"))?;
+    fsa1_xlsx::write_xlsx(&workbook, &overlay, &packed).map_err(|e| format!("pack failed: {e}"))?;
 
     let reopened = work.join("reopened");
     fsa1_ingest::import_file(&packed, &reopened, false)

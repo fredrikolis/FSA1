@@ -43,6 +43,21 @@ impl Rect {
         }
     }
 
+    /// The smallest rectangle covering both, `None` only where neither states one. The geometry a
+    /// consumer spanning a tab's CONTENT and its PRESENTATION at once reads, each such consumer
+    /// naming the two halves itself.
+    pub fn union(a: Option<Rect>, b: Option<Rect>) -> Option<Rect> {
+        let (Some(a), Some(b)) = (a, b) else {
+            return a.or(b);
+        };
+        Some(Rect {
+            min_col: a.min_col.min(b.min_col),
+            min_row: a.min_row.min(b.min_row),
+            max_col: a.max_col.max(b.max_col),
+            max_row: a.max_row.max(b.max_row),
+        })
+    }
+
     /// `C2` for a single cell, `C2:D3` for a range.
     pub fn label(&self) -> String {
         let top_left = format_cell(self.min_col, self.min_row);

@@ -1,13 +1,14 @@
-// Concern: freezes the document's output contract | Non-concern: the CLI dispatch (fsa1-cli/tests owns it), the ASCII table | IO: (range files) -> assertions
+// Concern: freezes the document's output contract | Non-concern: the CLI dispatch (fsa1-cli/tests owns it), the ASCII table | IO: (range files + sidecars) -> assertions
 
-use fsa1_model::{RenderMode, ViewScope, Workbook, view};
+use fsa1_model::{Overlay, RenderMode, ViewScope, Workbook, view};
 
 use crate::document;
 
 fn doc(files: &[(&str, &str)]) -> String {
     let wb = Workbook::from_tabs(&[("Sheet1", files)]).expect("loads clean");
-    let v = view(&wb, ViewScope::Workbook, RenderMode::Values).expect("a view");
-    document(&wb, &v)
+    let overlay = Overlay::from_tabs(&[("Sheet1", files)]).expect("its sidecars load clean");
+    let v = view(&wb, Some(&overlay), ViewScope::Workbook, RenderMode::Values).expect("a view");
+    document(&wb, &overlay, &v)
 }
 
 /// Cell text is author-controlled, and this document is the boundary it crosses into markup.

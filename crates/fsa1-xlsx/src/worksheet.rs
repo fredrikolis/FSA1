@@ -1,11 +1,11 @@
-// Concern: frames one sheet's used region as <dimension>, <cols> and sized <row> elements | Non-concern: per-cell spelling, the style table | IO: (a Workbook + a sheet index) -> sheetN.xml bytes
+// Concern: frames one sheet's stated region as <dimension>, <cols> and sized <row> | Non-concern: per-cell spelling, the style table | IO: (a Workbook, an Overlay, a sheet) -> sheetN.xml bytes
 
 use std::collections::HashMap;
 use std::io::Write;
 
 use fsa1_ast::Value;
 use fsa1_ast::a1::format_cell;
-use fsa1_model::{AxisRun, Cell, Chars, Points, Rect, Workbook};
+use fsa1_model::{AxisRun, Cell, Chars, Overlay, Points, Rect, Workbook};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 
@@ -19,20 +19,23 @@ const INFALLIBLE: &str = "writing XML to an in-memory buffer is infallible";
 
 pub(crate) fn emit(
     wb: &Workbook,
+    overlay: &Overlay,
     sheet: u32,
     ss: &mut SharedStrings,
     styles: &StyleTable,
 ) -> Vec<u8> {
-    emit_inner(wb, sheet, ss, styles).expect(INFALLIBLE)
+    emit_inner(wb, overlay, sheet, ss, styles).expect(INFALLIBLE)
 }
 
 fn emit_inner(
     wb: &Workbook,
+    overlay: &Overlay,
     sheet: u32,
     ss: &mut SharedStrings,
     styles: &StyleTable,
 ) -> std::io::Result<Vec<u8>> {
-    let region = wb.used_region(sheet);
+    // A `<cols>` run and a style-only block both sit outside the content, so the sheet is framed over the union of what the tab values and what it presents.
+    let region = overlay.stated_region(wb, sheet);
     let anchors = array_anchors(wb, sheet);
 
     let mut w = Writer::new(Vec::new());
@@ -52,9 +55,9 @@ fn emit_inner(
     dimension.push_attribute(("ref", dim.as_str()));
     w.write_event(Event::Empty(dimension))?;
 
-    write_cols(&mut w, &wb.column_widths(sheet))?;
+    write_cols(&mut w, &overlay.column_widths(wb, sheet))?;
 
-    let heights = wb.row_heights(sheet);
+    let heights = overlay.row_heights(wb, sheet);
     // What a coordinate a scope root covers and no file does holds: nothing but its look, which is exactly what a covered blank holds, so the two take one arm below.
     let style_only = Cell::Value {
         value: Value::Blank,
@@ -65,8 +68,8 @@ fn emit_inner(
         for row in region.min_row..=region.max_row {
             let mut cells: Vec<cell::Sited<'_>> = Vec::new();
             for col in region.min_col..=region.max_col {
-                // The used region spans scope roots too, so a coordinate inside it may be stated by nothing at all; that is the gap, and it writes no `<c>`.
-                let Some(style) = wb.cell_style(sheet, col, row) else {
+                // The stated region spans block roots too, so a coordinate inside it may be stated by nothing at all; that is the gap, and it writes no `<c>`.
+                let Some(style) = overlay.cell_style(wb, sheet, col, row) else {
                     continue;
                 };
                 let source = wb.source_at(sheet, col, row);
@@ -186,12 +189,20 @@ mod tests {
     use super::*;
     use crate::styles;
 
-    fn sheet_xml(files: &[(&str, &str)]) -> String {
+    /// One tree, read by both loads, exactly as a verb reads a directory twice.
+    fn loaded(files: &[(&str, &str)]) -> (Workbook, Overlay) {
         let wb = Workbook::from_tabs(&[("Sheet1", files)])
             .unwrap_or_else(|d| panic!("{files:?} should load: {:?}", d[0]));
-        let styles = styles::build(&wb);
+        let overlay = Overlay::from_tabs(&[("Sheet1", files)])
+            .unwrap_or_else(|d| panic!("{files:?}'s sidecars should load: {:?}", d[0]));
+        (wb, overlay)
+    }
+
+    fn sheet_xml(files: &[(&str, &str)]) -> String {
+        let (wb, overlay) = loaded(files);
+        let styles = styles::build(&wb, &overlay);
         let mut ss = SharedStrings::new();
-        String::from_utf8(emit(&wb, 0, &mut ss, &styles)).expect("the part is UTF-8")
+        String::from_utf8(emit(&wb, &overlay, 0, &mut ss, &styles)).expect("the part is UTF-8")
     }
 
     #[test]
@@ -256,14 +267,13 @@ mod tests {
             ("C1:C2", "3\n4"),
             ("C1:C2.css", "  td { font-weight: bold }\n"),
         ];
-        let wb = Workbook::from_tabs(&[("Sheet1", files)])
-            .unwrap_or_else(|d| panic!("{files:?} should load: {:?}", d[0]));
-        let region = wb.used_region(0).expect("two files span a region");
+        let (wb, overlay) = loaded(files);
+        let region = wb.content_region(0).expect("two files span a region");
         for row in region.min_row..=region.max_row {
             for col in region.min_col..=region.max_col {
                 assert_eq!(
                     wb.source_at(0, col, row).is_some(),
-                    wb.cell_style(0, col, row).is_some(),
+                    overlay.cell_style(&wb, 0, col, row).is_some(),
                     "column {col}, row {row}: a covered coordinate has both, a gap has neither",
                 );
             }

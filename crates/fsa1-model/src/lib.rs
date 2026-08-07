@@ -12,6 +12,7 @@ pub mod geometry;
 pub mod grid;
 pub mod names;
 pub mod overlap;
+pub mod overlay;
 pub mod presentation;
 pub mod render;
 pub mod sample;
@@ -40,6 +41,7 @@ pub use names::{
     is_cell_filename, presentation_stem, quote_sheet,
 };
 pub use overlap::{Rect, detect_overlaps};
+pub use overlay::Overlay;
 pub use presentation::{Presentation, Rule, Target, parse_rules, spell_rules};
 pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, combined_cell, display_value,

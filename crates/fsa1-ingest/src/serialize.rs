@@ -310,8 +310,8 @@ mod tests {
         XlsxStyle,
     };
     use fsa1_model::{
-        Border, BorderLine, Cell, CellStyle, Chars, FontStyle, FontWeight, Points, Rgb, TextAlign,
-        WhiteSpace, Workbook, deserialize_tsv,
+        Border, BorderLine, Cell, CellStyle, Chars, FontStyle, FontWeight, Overlay, Points, Rgb,
+        TextAlign, WhiteSpace, Workbook, deserialize_tsv,
     };
 
     /// The production path: the sheet's own occupancy, partitioned by the policy seam. Names come
@@ -864,11 +864,14 @@ mod tests {
             .collect();
         let wb = Workbook::from_tabs(&[("Sheet1", &borrowed)])
             .unwrap_or_else(|d| panic!("{files:?} must load: {d:?}"));
+        let overlay = Overlay::from_tabs(&[("Sheet1", &borrowed)])
+            .unwrap_or_else(|d| panic!("{files:?}'s sidecars must load: {d:?}"));
         let mut styles: BTreeMap<(u32, u32), CellStyle> = BTreeMap::new();
-        if let Some(region) = wb.used_region(0) {
+        let stated = overlay.stated_region(&wb, 0);
+        if let Some(region) = stated {
             for row in region.min_row..=region.max_row {
                 for col in region.min_col..=region.max_col {
-                    let Some(mut style) = wb.cell_style(0, col, row) else {
+                    let Some(mut style) = overlay.cell_style(&wb, 0, col, row) else {
                         continue;
                     };
                     (style.width, style.height) = (None, None);
@@ -877,13 +880,13 @@ mod tests {
             }
         }
         let mut widths: BTreeMap<u32, Chars> = BTreeMap::new();
-        for run in wb.column_widths(0) {
+        for run in overlay.column_widths(&wb, 0) {
             for axis in run.start..=run.end {
                 widths.insert(axis, run.size);
             }
         }
         let mut heights: BTreeMap<u32, Points> = BTreeMap::new();
-        for run in wb.row_heights(0) {
+        for run in overlay.row_heights(&wb, 0) {
             for axis in run.start..=run.end {
                 heights.insert(axis, run.size);
             }

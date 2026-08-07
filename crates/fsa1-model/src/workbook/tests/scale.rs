@@ -160,7 +160,7 @@ fn a_whole_workbook_view_is_one_pass_whatever_it_is_drawn_as() {
         ),
     ] {
         let fresh = load(&tabs);
-        let v = crate::view::view(&fresh, scope, crate::render::RenderMode::Combined)
+        let v = crate::view::view(&fresh, None, scope, crate::render::RenderMode::Combined)
             .expect("the view fits the render bound");
         assert_eq!(
             fresh.pass_count(),
@@ -177,6 +177,7 @@ fn a_whole_workbook_view_is_one_pass_whatever_it_is_drawn_as() {
     // The name's value must be the one the grid shows: the same pass computed both.
     let v = crate::view::view(
         &wb,
+        None,
         crate::view::ViewScope::Tab(0),
         crate::render::RenderMode::Values,
     )
