@@ -88,8 +88,28 @@ jobs:
           printf '%s\n' "linux-x86_64 Linux x86_64" "linux-aarch64 Linux aarch64" \
             "macos-x86_64 Darwin x86_64" "macos-aarch64 Darwin arm64" \
             "windows-x86_64.exe MINGW64_NT-10.0 x86_64" > "$W/t"
-          chk=$(awk '{print "fsa1-cli-" $1 "\nfsa1-mcp-" $1}' "$W/t" | sort -u)
-          [ "$pub" = "$chk" ] || { printf 'published:\n%s\nchecked here:\n%s\n' "$pub" "$chk"; rc=1; }
+          # TWO consumers, not one, and they do not want the same builds: install-cli resolves the
+          # native fsa1-cli by uname, while the npm channel takes the STATIC musl fsa1-mcp on Linux so
+          # no glibc has to agree with a sandbox we never see. Asserting one set equals the published
+          # list is what a second consumer falsifies, so each is held to the list SEPARATELY.
+          cli=$(awk '{print "fsa1-cli-" $1}' "$W/t" | sort -u)
+          # build-npm.mjs's MATRIX is the code that CONSUMES these files and says of itself that it is
+          # the single source of truth; the release workflow's download loop is a second hand-kept
+          # copy. Read the authority, then hold the copy to it — a copy that drifts fails the npm job
+          # AFTER the Release is public, which is the worst place to learn of it.
+          # `|| true` on each assignment: errexit would kill the script before its own guard prints.
+          npm=$(grep -oE 'asset: *"fsa1-mcp-[a-z0-9_.-]+"' distribution/npm/scripts/build-npm.mjs \
+            | cut -d'"' -f2 | sort -u) || true
+          [ -n "$npm" ] || { echo "no asset names found in build-npm.mjs MATRIX"; rc=1; }
+          fetched=$(sed -n '/Download the published binaries/,/^      - name:/p' \
+            .github/workflows/plugin-release.yml | grep -oE 'fsa1-mcp-[a-z0-9_.-]+' | sort -u) || true
+          [ "$npm" = "$fetched" ] || { printf 'build-npm.mjs MATRIX and the release download loop name different assets:\nMATRIX:\n%s\ndownload loop:\n%s\n' "$npm" "$fetched"; rc=1; }
+          resolved=$(printf '%s\n%s\n' "$cli" "$npm" | sort -u)
+          miss=$(comm -23 <(printf '%s\n' "$resolved") <(printf '%s\n' "$pub"))
+          [ -z "$miss" ] || { printf 'an installer fetches these and no job publishes them:\n%s\n' "$miss"; rc=1; }
+          # Not a failure: a build nobody fetches costs a runner, not a broken install.
+          orphan=$(comm -13 <(printf '%s\n' "$resolved") <(printf '%s\n' "$pub"))
+          [ -z "$orphan" ] || printf 'note: published, fetched by neither installer:\n%s\n' "$orphan"
           while read -r slug s m; do
             for pair in "website/public/install-cli:fsa1-cli"; do
               f=${pair%%:*}; want="${pair#*:}-$slug"

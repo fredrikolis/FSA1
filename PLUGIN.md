@@ -62,13 +62,22 @@ platform: `fsa1-mcp-<slug>` is what the npm job packs into the per-platform pack
 `fsa1-cli-<slug>` is what
 `https://fsa1.sh/install-cli` fetches for a user who wants the command in their own shell.
 
-| Slug                    | Covers                          |
-| ----------------------- | ------------------------------- |
-| `linux-x86_64`          | **Cowork sandbox**, Linux CLI   |
-| `linux-aarch64`         | ARM Linux, arm64 containers     |
-| `macos-x86_64`          | Intel Macs                      |
-| `macos-aarch64`         | Apple-silicon Macs              |
-| `windows-x86_64.exe`    | Windows desktop (Claude Code)   |
+Two channels fetch from this list and they do not want the same builds, so the slug alone does not
+say who gets it:
+
+| Slug                    | Covers                          | Fetched by                    |
+| ----------------------- | ------------------------------- | ----------------------------- |
+| `linux-x86_64`          | Linux, glibc                    | `install-cli` (`fsa1-cli-`)   |
+| `linux-x86_64-musl`     | **Cowork sandbox**, any glibc   | npm (`fsa1-mcp-`)             |
+| `linux-aarch64`         | ARM Linux, glibc                | `install-cli` (`fsa1-cli-`)   |
+| `linux-aarch64-musl`    | arm64 containers, any glibc     | npm (`fsa1-mcp-`)             |
+| `macos-x86_64`          | Intel Macs                      | both                          |
+| `macos-aarch64`         | Apple-silicon Macs              | both                          |
+| `windows-x86_64.exe`    | Windows desktop (Claude Code)   | both                          |
+
+Each Linux row therefore publishes one asset nobody fetches — a `fsa1-cli-*-musl` on the musl rows,
+a `fsa1-mcp-linux-*` on the glibc ones. The CI asset check names them in its log rather than failing,
+because an unfetched build costs a runner and breaks no install.
 
 Which runner builds which asset is the workflow's to say, and only its own: a table here restating
 that goes stale the first time a runner is retired.
