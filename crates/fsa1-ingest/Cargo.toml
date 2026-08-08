@@ -1,7 +1,7 @@
 # Concern: declares the package and its deps: calamine, serde_json, and the fsa1-xlsx crate that spells the format | Non-concern: what the crate does, the deny edges (.annotated-tree.toml) | IO: none
 [package]
 name = "fsa1-ingest"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 

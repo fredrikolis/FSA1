@@ -1,4 +1,4 @@
-# Concern: cross-builds fsa1-cli for every host it runs on and attaches them to a Release | Non-concern: picking which asset a machine needs | IO: (a v* tag) -> release assets
+# Concern: turns a v* tag into Release assets, refusing one whose declared versions disagree | Non-concern: picking which asset a machine needs | IO: (a v* tag) -> release assets
 # The launcher downloads by asset name, so a Release is what makes the plugin work on a machine with
 # no Rust toolchain. Built with the toolchain pinned in rust-toolchain.toml.
 name: plugin-release
@@ -12,7 +12,49 @@ permissions:
   contents: write          # needed to create/update the Release
 
 jobs:
+  # A tag whose surfaces disagree must produce no assets rather than wrong ones, so this runs first
+  # and everything else waits on it. `plugin.json` is NOT stamped at build time: `/plugin update`
+  # reads it from the repo, so a value injected here would never reach the file a host fetches — the
+  # bump is a commit, and this job is what proves it happened.
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The workspace, the plugin manifest and the tag state one version
+        run: |
+          set -uo pipefail
+          workspace=$(awk '/^\[workspace\.package\]/{f=1;next} /^\[/{f=0}
+                           f && /^version *= *"/{sub(/^version *= *"/,"");sub(/".*/,"");print;exit}' Cargo.toml)
+          plugin=$(jq -r .version plugin/.claude-plugin/plugin.json)
+          # workflow_dispatch has no tag to compare, so the two file values are held to each other
+          # and the tag leg is skipped.
+          tag=""
+          case "${GITHUB_REF:-}" in refs/tags/*) tag="${GITHUB_REF_NAME#v}" ;; esac
+          echo "workspace Cargo.toml : ${workspace:-<unset>}"
+          echo "plugin.json          : ${plugin:-<unset>}"
+          echo "tag                  : ${tag:-<none: not a tag build>}"
+          ok=1
+          [ -n "$workspace" ] && [ -n "$plugin" ] || ok=0
+          [ "$workspace" = "$plugin" ] || ok=0
+          [ -z "$tag" ] || [ "$tag" = "$workspace" ] || ok=0
+          # Agreement between the three is worth nothing if a member crate stopped inheriting: the
+          # workspace value would pass while the binary reported its own. What `--version` prints is
+          # the point, so the members are held to the declaration too.
+          strays=$(grep -L 'version\.workspace = true' Cargo.toml crates/*/Cargo.toml conformance/Cargo.toml \
+                   | grep -v '^Cargo\.toml$' || true)
+          if [ -n "$strays" ]; then
+            echo "these do not inherit the workspace version:"
+            echo "$strays"
+            ok=0
+          fi
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::the versions above disagree; no assets will be built" >&2
+            exit 1
+          fi
+          echo "one version: $workspace"
+
   build:
+    needs: versions
     strategy:
       fail-fast: false
       matrix:

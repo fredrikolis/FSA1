@@ -1,6 +1,6 @@
-// Concern: drives the server over real stdin/stdout | Non-concern: what a verb computes (fsa1-verbs owns it) | IO: (request lines) -> assertions
+// Concern: drives the built binary over real argv, stdin, stdout and stderr | Non-concern: what a verb computes (fsa1-verbs owns it) | IO: (argv; request lines) -> assertions
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
 /// Writes every line to the server's stdin and returns one parsed value per response line. The
@@ -75,6 +75,11 @@ fn initialize_answers_with_the_version_this_server_speaks() {
     ]);
     assert_eq!(r[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(r[0]["result"]["serverInfo"]["name"], "fsa1");
+    // Where a MACHINE reads the build's version: it must be the value `--version` prints for a person.
+    assert_eq!(
+        r[0]["result"]["serverInfo"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 /// A client asking for a protocol we do not implement is told what we DO implement — echoing its
@@ -215,4 +220,115 @@ fn a_malformed_line_and_an_unknown_method_are_survivable() {
     assert_eq!(r[0]["error"]["code"], -32700);
     assert_eq!(r[1]["error"]["code"], -32601);
     assert_eq!(r[2]["id"], 3, "the server kept serving: {r:?}");
+}
+
+/// Runs the binary with `args` while HOLDING ITS STDIN OPEN and writing nothing, then waits with a
+/// deadline. A flag that fell through to the read loop would block forever on that open pipe, so
+/// returning at all is the proof that argv was answered before stdin was ever touched.
+fn run_flag(args: &[&str]) -> (String, String) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fsa1-mcp"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn fsa1-mcp");
+    // Taken out of the child handle so nothing drops it: the write end stays open for the whole wait.
+    let _held_open = child.stdin.take().expect("stdin");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait().expect("try_wait") {
+            Some(s) => break s,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                panic!("fsa1-mcp {args:?} did not return with stdin held open — it read stdin");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    };
+    assert!(status.success(), "fsa1-mcp {args:?}: {status}");
+
+    let mut out = String::new();
+    let mut err = String::new();
+    child
+        .stdout
+        .take()
+        .expect("stdout")
+        .read_to_string(&mut out)
+        .expect("read stdout");
+    child
+        .stderr
+        .take()
+        .expect("stderr")
+        .read_to_string(&mut err)
+        .expect("read stderr");
+    (out, err)
+}
+
+#[test]
+fn version_prints_the_workspace_version_without_reading_stdin() {
+    let (out, err) = run_flag(&["--version"]);
+    assert_eq!(out.trim(), env!("CARGO_PKG_VERSION"));
+    assert!(err.is_empty(), "stderr: {err}");
+}
+
+#[test]
+fn help_names_the_stdio_json_rpc_surface_without_reading_stdin() {
+    let (out, err) = run_flag(&["--help"]);
+    assert!(out.contains("JSON-RPC"), "{out}");
+    assert!(out.contains("stdio"), "{out}");
+    assert!(err.is_empty(), "stderr: {err}");
+}
+
+/// A host may pass a flag this build has never seen. Starting is the right answer: refusing to start
+/// is the worse failure, and the session proves the server really did come up.
+#[test]
+fn an_unrecognized_argument_still_starts_the_server() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fsa1-mcp"))
+        .arg("--some-future-flag")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn fsa1-mcp");
+    writeln!(
+        child.stdin.as_mut().expect("stdin"),
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/list"}}"#
+    )
+    .expect("write a request");
+    let out = child.wait_with_output().expect("wait");
+    let v: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).expect("a JSON response");
+    assert_eq!(v["id"], 1);
+}
+
+/// With stdin a PIPE rather than a terminal there is no hint, and every stdout line is a frame:
+/// one byte on that channel that is not JSON-RPC corrupts the session. This proves only the
+/// NEGATIVE: the hint needs a pty no case here allocates, so the branch writing it is covered by
+/// no test — a known blind spot, not an oversight.
+#[test]
+fn a_piped_stdin_gets_no_hint_and_stdout_carries_only_frames() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fsa1-mcp"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn fsa1-mcp");
+    writeln!(
+        child.stdin.as_mut().expect("stdin"),
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18"}}}}"#
+    )
+    .expect("write a request");
+    let out = child.wait_with_output().expect("wait");
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let v: serde_json::Value =
+            serde_json::from_str(line).expect("every stdout line is a frame");
+        assert_eq!(v["jsonrpc"], "2.0", "{line}");
+    }
 }

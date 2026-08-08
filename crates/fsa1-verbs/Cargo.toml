@@ -1,7 +1,7 @@
 # Concern: declares the package and the crates the verb layer composes | Non-concern: the deny edges barring the engine from depending on it (.annotated-tree.toml) | IO: none
 [package]
 name = "fsa1-verbs"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 

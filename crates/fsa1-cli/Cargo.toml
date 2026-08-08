@@ -1,7 +1,7 @@
 # Concern: declares the package, its binary target and the crates the CLI composes | Non-concern: the deny edges barring anything from depending on it (.annotated-tree.toml) | IO: none
 [package]
 name = "fsa1-cli"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 

@@ -1,4 +1,4 @@
-# Concern: the workspace's resolver and member list | Non-concern: any crate's own dependencies, the firewall's deny edges (.annotated-tree.toml) | IO: none
+# Concern: declares the resolver, the members, and the version every crate inherits | Non-concern: any crate's own dependencies, the firewall's deny edges (.annotated-tree.toml) | IO: none
 # Workspace root. Build-out: three product crates have landed — `fsa1-ast` (the formula-language
 # contract surface, W0), `fsa1-model` (the filesystem spreadsheet model, W2), and `fsa1-cli`
 # (the thin render/lint binary, W4) — realizing the `cli -> model -> ast` firewall, so
@@ -12,4 +12,8 @@ resolver = "2"
 members = ["crates/fsa1-ast", "crates/fsa1-cli", "crates/fsa1-verbs", "crates/fsa1-mcp", "crates/fsa1-html", "crates/fsa1-ingest", "crates/fsa1-model", "crates/fsa1-xlsx", "conformance"]
 
 [workspace.package]
+# ONE version for every member, so `fsa1-cli --version`, `fsa1-mcp --version` and `initialize`'s
+# serverInfo cannot disagree about which build a user is holding. `plugin-release.yml`'s `versions`
+# job holds this value, `plugin/.claude-plugin/plugin.json` and the tag to each other.
+version = "0.2.3"
 license = "MIT"
