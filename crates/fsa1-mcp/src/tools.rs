@@ -32,7 +32,8 @@ pub fn list() -> Vec<Value> {
             "description": format!("Serialize an FSA1 workbook directory back into a single .xlsx file. {FS_NOTE}"),
             "inputSchema": schema(json!({
                 "source": { "type": "string", "description": "the workbook directory to pack" },
-                "dest": { "type": "string", "description": "output .xlsx path; derived from the directory name when omitted" }
+                "dest": { "type": "string", "description": "output .xlsx path; derived from the directory name when omitted" },
+                "strict": { "type": "boolean", "description": "refuse rather than write where a figure reaches no Excel chart" }
             }), &["source"])
         }),
         json!({
@@ -40,8 +41,8 @@ pub fn list() -> Vec<Value> {
             "description": format!("Draw a workbook, a tab or a range as an ASCII grid, or as one standalone HTML document. {FS_NOTE}"),
             "inputSchema": schema(json!({
                 "target": target,
-                "mode": { "type": "string", "enum": ["combined", "values", "functions"], "description": "combined shows a value and the formula behind it" },
-                "format": { "type": "string", "enum": ["ascii", "html"] }
+                "mode": { "type": "string", "enum": ["combined", "values", "functions"], "description": "combined shows a value and the formula behind it; ascii only, since html draws values and shows each formula in its formula bar" },
+                "format": { "type": "string", "enum": ["ascii", "html"], "description": "html takes no mode" }
             }), &["target"])
         }),
         json!({
@@ -195,7 +196,8 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
         "pack" => {
             let source = str_arg(args, "source")?;
             let dest = args.get("dest").and_then(Value::as_str).map(Path::new);
-            let p = ops::pack(Path::new(&source), dest, "xlsx", false)?;
+            let strict = args.get("strict").and_then(Value::as_bool).unwrap_or(false);
+            let p = ops::pack(Path::new(&source), dest, "xlsx", strict)?;
             let text = format!(
                 "packed {source} -> {} ({} sheet(s), {} chart(s) written)",
                 p.dest.display(),
