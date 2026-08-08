@@ -28,7 +28,7 @@ pub use declaration::{
     TextDecoration, VerticalAlign, WhiteSpace,
 };
 pub use diagnostic::{Applicability, ByteSpan, Code, Diagnostic, Fix, Loc, Severity};
-pub use figure::Figure;
+pub use figure::{Binding, Figure};
 pub use figures::Figures;
 pub use filename::{
     FileName, RANGE_SEP, RANGE_SEP_POSIX, RANGE_SEP_WINDOWS, parse_filename, reseparate_range_name,

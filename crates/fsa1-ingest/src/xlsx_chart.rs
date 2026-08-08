@@ -1,4 +1,4 @@
-// Concern: reads a chart part into the marks, series and A1 references it states | Non-concern: spelling a figure body (figure_body.rs), a drawing's geometry | IO: (a package) -> Vec<SourceChart>
+// Concern: reads the marks, series and A1 references a chart states, and what its drawing anchors | Non-concern: spelling a figure body (figure_body.rs) | IO: (a package) -> charts + drawings
 //! What a chart part STATES, and nothing about what a figure may do with it. The element names are
 //! kept verbatim — `barChart`, `radarChart` — so a chart no figure can hold names itself in the loss.
 
@@ -48,9 +48,41 @@ pub struct SourceChart {
     pub series: Vec<SourceSeries>,
 }
 
-/// Every chart the package draws on a WORKSHEET, in package-path order. A chart no drawing reaches,
-/// and a chartsheet's, are absent: neither is drawn on a tab this import writes.
-pub fn read_charts(path: &Path) -> Result<Vec<SourceChart>, IngestError> {
+/// One drawing part, and what it anchors. A drawing holds shapes, text boxes and pictures as well as
+/// charts, so an anchor this import does not reach is content that leaves with the part.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceDrawing {
+    pub part: String,
+    /// Every `<xdr:*Anchor>` the part states, whatever it holds.
+    pub anchors: usize,
+    /// The chart parts its relationships reach, one per anchored chart.
+    pub charts: Vec<String>,
+}
+
+impl SourceDrawing {
+    /// The sentence naming what the part anchors that this import does not read back, or `None` where
+    /// every anchor it holds is a chart. A chart that yielded no FIGURE is one named loss of its own,
+    /// so it is deliberately not a second one here.
+    pub fn non_chart_content(&self) -> Option<String> {
+        if self.anchors == 0 {
+            return Some("it anchors nothing this import reads back".to_string());
+        }
+        if self.anchors > self.charts.len() {
+            return Some(format!(
+                "it anchors {} object(s) and only {} of them is a chart; a shape, a text box and a \
+                 picture each leave with the part",
+                self.anchors,
+                self.charts.len()
+            ));
+        }
+        None
+    }
+}
+
+/// Every chart the package draws on a WORKSHEET, every drawing part it holds, and every chart part
+/// NO drawing reaches. That third list is the one a census would once have named: a chart part is
+/// carried now, so an unreached one belongs to no warning family unless this pass hands it over.
+pub fn read_package(path: &Path) -> Result<Package, IngestError> {
     let file = File::open(path).map_err(|e| {
         IngestError::io(
             ErrorKind::SourceIo,
@@ -63,12 +95,88 @@ pub fn read_charts(path: &Path) -> Result<Vec<SourceChart>, IngestError> {
             format!("cannot read {:?} as a zip archive: {e}", path.display()),
         )
     })?;
+    let charts = read_charts(&mut zip)?;
+    let drawings = read_drawings(&mut zip)?;
+    let mut unreached: Vec<String> = zip
+        .file_names()
+        .filter(|n| crate::xlsx_meta::is_chart_part(n))
+        .filter(|n| !charts.iter().any(|c| c.part == **n))
+        .map(str::to_string)
+        .collect();
+    unreached.sort();
+    Ok(Package {
+        charts,
+        drawings,
+        unreached,
+    })
+}
 
-    let mut on_sheet: Vec<(String, String)> = chart_sheets(&mut zip)?.into_iter().collect();
+/// What one package states about its charts.
+#[derive(Default)]
+pub struct Package {
+    pub charts: Vec<SourceChart>,
+    pub drawings: Vec<SourceDrawing>,
+    /// Chart parts no worksheet drawing reaches — a chartsheet's, or an orphan.
+    pub unreached: Vec<String>,
+}
+
+/// Every drawing part in the package, in package-path order — including one no worksheet points at,
+/// which is content the package holds and this import still does not carry.
+fn read_drawings(zip: &mut ZipArchive<BufReader<File>>) -> Result<Vec<SourceDrawing>, IngestError> {
+    let mut parts: Vec<String> = zip
+        .file_names()
+        .filter(|n| n.starts_with("xl/drawings/") && n.ends_with(".xml") && !n.contains("/_rels/"))
+        .map(str::to_string)
+        .collect();
+    parts.sort();
+    let mut out = Vec::with_capacity(parts.len());
+    for part in parts {
+        let mut charts: Vec<String> = read_rels(zip, &part)?
+            .into_values()
+            .filter(|t| t.starts_with("xl/charts/") && t.ends_with(".xml"))
+            .collect();
+        charts.sort();
+        let anchors = match read_entry(zip, &part)? {
+            Some(xml) => count_anchors(&part, &xml)?,
+            None => 0,
+        };
+        out.push(SourceDrawing {
+            part,
+            anchors,
+            charts,
+        });
+    }
+    Ok(out)
+}
+
+/// Every `<xdr:oneCellAnchor>`, `<xdr:twoCellAnchor>` and `<xdr:absoluteAnchor>` the part states, by
+/// LOCAL name, so a package leaving the drawing namespace default counts the same.
+fn count_anchors(part: &str, xml: &str) -> Result<usize, IngestError> {
+    let mut reader = Reader::from_str(xml);
+    let mut count = 0usize;
+    loop {
+        let event = reader.read_event().map_err(|e| {
+            IngestError::io(ErrorKind::Invalid, format!("cannot read {part:?}: {e}"))
+        })?;
+        match event {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                if String::from_utf8_lossy(e.local_name().as_ref()).ends_with("Anchor") {
+                    count += 1;
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(count)
+}
+
+fn read_charts(zip: &mut ZipArchive<BufReader<File>>) -> Result<Vec<SourceChart>, IngestError> {
+    let mut on_sheet: Vec<(String, String)> = chart_sheets(zip)?.into_iter().collect();
     on_sheet.sort();
     let mut out = Vec::with_capacity(on_sheet.len());
     for (part, sheet) in on_sheet {
-        let Some(xml) = read_entry(&mut zip, &part)? else {
+        let Some(xml) = read_entry(zip, &part)? else {
             continue;
         };
         out.push(parse_chart(part, sheet, &xml)?);
@@ -113,7 +221,11 @@ fn chart_sheets(
 /// The element path, by LOCAL name, so a package spelling the chart namespace `c:` and one leaving it
 /// the default read identically. `<c:tx>` occurs under a series and under a title, and `<c:title>`
 /// under the chart and under each axis, so every read below is anchored on a path rather than a name.
-fn parse_chart(part: String, sheet: String, xml: &str) -> Result<SourceChart, IngestError> {
+pub(crate) fn parse_chart(
+    part: String,
+    sheet: String,
+    xml: &str,
+) -> Result<SourceChart, IngestError> {
     let mut reader = Reader::from_str(xml);
     let mut path: Vec<String> = Vec::new();
     let mut chart = SourceChart {

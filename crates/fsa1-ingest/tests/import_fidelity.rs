@@ -180,12 +180,19 @@ fn a_lossy_import_names_every_package_part_strict_would_refuse() {
         .filter(|w| matches!(w, UnpackWarning::WorkbookPartNotCarried { .. }))
         .map(ToString::to_string)
         .collect();
+    // A drawing anchoring nothing this import reads is its OWN named loss, not a censused part.
+    assert_eq!(named, vec!["xl/comments/comment1.xml not carried"]);
+    let drawings: Vec<String> = report
+        .warnings
+        .iter()
+        .filter(|w| matches!(w, UnpackWarning::DrawingNotCarried { .. }))
+        .map(ToString::to_string)
+        .collect();
     assert_eq!(
-        named,
+        drawings,
         vec![
-            "xl/charts/chart1.xml not carried",
-            "xl/comments/comment1.xml not carried",
-            "xl/drawings/drawing1.xml not carried",
+            "xl/charts/chart1.xml is not carried: no worksheet drawing reaches it, so it is drawn on no tab",
+            "xl/drawings/drawing1.xml is not carried: it anchors nothing this import reads back",
         ],
     );
     std::fs::remove_dir_all(&dest).ok();

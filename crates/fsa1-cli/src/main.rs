@@ -663,10 +663,12 @@ fn render_unpack_report(
 fn cmd_pack(rest: &[String]) -> u8 {
     let mut positionals: Vec<String> = Vec::new();
     let mut target = "xlsx".to_string();
+    let mut strict = false;
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
         let (flag, inline) = split_flag(arg);
         match flag {
+            "--strict" => strict = true,
             "--target" => match take_value(inline, &mut it) {
                 Some(v) if v == "xlsx" => target = v,
                 Some(v) => {
@@ -685,21 +687,42 @@ fn cmd_pack(rest: &[String]) -> u8 {
         [] => return bad_arg("pack needs a <workbook-dir>, e.g. fsa1-cli pack ./book"),
         _ => return bad_arg("pack takes exactly one <workbook-dir> (the output name is derived)"),
     };
-    match fsa1_verbs::ops::pack(Path::new(&folder), None, &target) {
+    match fsa1_verbs::ops::pack(Path::new(&folder), None, &target, strict) {
         Ok(p) => {
             let dest = p.dest.display();
             print!(
-                "packed {folder} -> {dest} ({} sheet(s) written)\n\
-                 \n\
+                "packed {folder} -> {dest} ({} sheet(s), {} chart(s) written)\n\
+                 {}\n\
                  next:\n  \
                  open {dest} in a spreadsheet app, or re-unpack it:\n  \
                  fsa1-cli unpack {dest}   # read the packed .xlsx back into a workbook\n",
                 p.sheets,
+                p.charts,
+                render_pack_report(&p.not_drawn),
             );
             0
         }
         Err(e) => refused(e),
     }
+}
+
+/// What the pack left out, one located line per figure, in the same shape the unpack report uses.
+/// Empty is a first-class answer and says so — never a silence a reader has to interpret.
+fn render_pack_report(not_drawn: &[fsa1_verbs::FigureNotDrawn]) -> String {
+    if not_drawn.is_empty() {
+        return "\npack fidelity: every figure crossed as a native Excel chart\n".to_string();
+    }
+    let lines: Vec<String> = not_drawn
+        .iter()
+        .map(|loss| format!("  {} -- {}", loss.figure, loss.why))
+        .collect();
+    format!(
+        "\npack fidelity report ({} figure(s)) -- Excel draws no chart for the following, and each \
+         is left out of the .xlsx; simplify the spec and pack again, or run with --strict to refuse \
+         instead:\n{}\n",
+        not_drawn.len(),
+        lines.join("\n"),
+    )
 }
 
 pub(crate) fn split_flag(arg: &str) -> (&str, Option<&str>) {
@@ -789,7 +812,7 @@ USAGE:
   fsa1-cli tree   <path> [--mode <combined|values|functions>]    # <path>: <wb>[/<tab>[/<A1>]]
   fsa1-cli sample <dir>
   fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]   # <src> is .ods/.xlsx; <dst> derives to ./<src-stem>/
-  fsa1-cli pack   <workbook-dir> [--target xlsx]  # serialize a workbook to a fresh ./<basename>.xlsx
+  fsa1-cli pack   [--strict] <workbook-dir> [--target xlsx]  # serialize a workbook to a fresh ./<basename>.xlsx
   fsa1-cli convert <workbook-dir> [--to posix|windows|auto]  # re-spell range file names for another OS
   fsa1-cli --version | --help | --guide
 
@@ -1190,9 +1213,10 @@ DESCRIPTION:
   --strict selects the round-trip contract (the inverse of a faithful `pack`): an xlsx that the
   skeleton cannot serialize back identically is REFUSED with a located diagnostic rather than unpacked
   lossily — one carrying a non-default number format on any cell (the skeleton models General format
-  only), a package part FSA1 neither models nor can regenerate (a chart, drawing, pivotTable, table,
-  media object, external link, or macro project), or a column width / row height no range file ends up
-  carrying (which the CUT decides, so that one is found after the blocks are chosen and the partial
+  only), a package part FSA1 neither models nor can regenerate (a pivotTable, table, media object,
+  external link, or macro project), a CHART that yields no figure or a DRAWING anchoring something
+  other than a chart (a chart that DOES cross is carried, and `pack` writes it back), or a column
+  width / row height no range file ends up carrying (which the CUT decides, so that one is found after the blocks are chosen and the partial
   output is removed — the destination is left absent either way). The default (no --strict) is the
   unchanged lossy unpack, which accepts those files, imports their values, and NAMES each loss.
 
@@ -1203,8 +1227,9 @@ ARGUMENTS:
 
 OPTIONS:
   --strict               Refuse any xlsx the skeleton cannot round-trip identically (a non-default number
-                         format, an out-of-scope package part, or a size no range file carries), naming
-                         the offending cell, part or axis. Nothing is written on a refusal.
+                         format, an out-of-scope package part, a chart that carries no figure, or a
+                         size no range file carries), naming the offending cell, part or axis. Nothing
+                         is written on a refusal.
   --decompose <policy>   Which policy cuts a sheet into range files: {DECOMPOSITIONS}. Defaults to
                          occupancy for every source; appearance is only ever used when named.
                          appearance writes more,
@@ -1254,7 +1279,7 @@ SEE ALSO:
 const PACK_HELP: &str = r#"fsa1-cli pack — serialize an FSA1 workbook back into a single .xlsx file
 
 USAGE:
-  fsa1-cli pack <workbook-dir> [--target xlsx]
+  fsa1-cli pack [--strict] <workbook-dir> [--target xlsx]
 
 DESCRIPTION:
   Serialize an FSA1 workbook (the filesystem spreadsheet) back into one Excel (.xlsx) file — the
@@ -1264,14 +1289,23 @@ DESCRIPTION:
   takes no cell content on the command line, and it reads the source READ-ONLY, leaving it byte-identical
   — it writes nothing under it, .cache/ included. The output name is DERIVED — ./<workbook-basename>.xlsx in the current directory
   (pack path/to/acme-dcf -> ./acme-dcf.xlsx, basename only). It lands only at a FRESH, not-already-
-  occupied path — an existing file is refused (never clobbered). Number formats and rich parts (charts,
-  pivots, tables, media) are not modeled by the skeleton.
+  occupied path — an existing file is refused (never clobbered). Pivots, tables and media are not
+  modeled by the skeleton.
+
+  A FIGURE (<tab>/<name>.vl.json) becomes a NATIVE Excel chart wherever Excel can state one — a real
+  chart that updates when a cell changes, never a picture of one. Whether it can is settled by writing
+  the chart and reading it back: a spec that survives that round trip ships, and one that does not is
+  DROPPED with one named loss saying what stopped it, so an author can simplify the spec and pack
+  again. No raster is ever emitted.
 
 ARGUMENTS:
   <workbook-dir>    (required) The FSA1 workbook directory to serialize (tabs = sub-folders). Its
                     basename names the derived ./<basename>.xlsx output in the current directory.
 
 OPTIONS:
+  --strict          (optional) Refuse rather than write an .xlsx that leaves a figure out, naming the
+                    figure and what stopped it. Nothing is written on a refusal. The default writes
+                    the .xlsx and REPORTS each dropped figure.
   --target <fmt>    (optional) The output format. Defaults to xlsx, the only format supported today;
                     any other value is refused. Exists so a future serializer slots in without a
                     surface change.
@@ -1281,14 +1315,16 @@ EXAMPLES:
   fsa1-cli unpack book.xlsx && fsa1-cli pack ./book   # -> ./book.xlsx
 
 OUTPUT:
-  A terse confirmation on stdout naming the source, the derived destination, and the sheet count.
+  A terse confirmation on stdout naming the source, the derived destination, the sheet count and the
+  number of charts drawn, followed by one located line per figure Excel draws no chart for.
 
 EXIT CODES:
   0   Success (.xlsx written)
   1   I/O failure (the destination could not be written)
   2   Invalid arguments (incl. a <workbook-dir> with no basename, e.g. `.`, `..`, `/`, or a --target
       other than xlsx)
-  3   Validation error (the workbook would not load, or has no tabs to pack)
+  3   Validation error (the workbook would not load, has no tabs to pack, or --strict was given and a
+      figure packs to no chart)
   4   Conflict (the derived ./<basename>.xlsx already exists — refused, nothing written)
   24  Not found (no such workbook directory)
 

@@ -195,11 +195,20 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
         "pack" => {
             let source = str_arg(args, "source")?;
             let dest = args.get("dest").and_then(Value::as_str).map(Path::new);
-            let p = ops::pack(Path::new(&source), dest, "xlsx")?;
-            Ok(format!(
-                "packed {source} -> {} ({} sheet(s) written)",
+            let p = ops::pack(Path::new(&source), dest, "xlsx", false)?;
+            let text = format!(
+                "packed {source} -> {} ({} sheet(s), {} chart(s) written)",
                 p.dest.display(),
-                p.sheets
+                p.sheets,
+                p.charts
+            );
+            // A figure Excel draws no chart for is one note per figure, which is what a client acts on.
+            Ok(join_notes(
+                text,
+                &p.not_drawn
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>(),
             ))
         }
         other => Err(Refusal {

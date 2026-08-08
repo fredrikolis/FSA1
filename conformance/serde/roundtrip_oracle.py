@@ -1,4 +1,4 @@
-# Concern: the SER2 round-trip harness — unpack then pack each fixture, grading three gates | Non-concern: SER3, roundtrip.rs's reopen leg, authoring accept/ | IO: (accept/*.xlsx) -> a parity table
+# Concern: the SER2 round-trip harness — unpack then pack each fixture, grading four gates | Non-concern: SER3, roundtrip.rs's reopen leg, authoring accept/ | IO: (accept/*.xlsx) -> a parity table
 """SER2 round-trip oracle: prove each accept/ fixture EXPORTS to a file that opens identically.
 
 Run via ``run.sh`` (which builds fsa1-cli, provisions the venv, and puts the xl-oracle sibling dir
@@ -172,6 +172,62 @@ def grade_formats(fixture, export_path, ref_src):
     return rows, matched, graded, defects
 
 
+def _ref(text):
+    """A `<c:f>` as the RANGE it addresses. The `$` and the quotes around a sheet name are Excel's
+    SPELLING of a reference, not a fact about the range — openpyxl writes `'Sheet1'!B1` where FSA1
+    writes `Sheet1!$B$1`, and both name the same cell — so the gate compares what is addressed."""
+    if text is None:
+        return None
+    tab, _, addr = str(text).rpartition("!")
+    return f"{tab.strip(chr(39))}!{addr.replace('$', '')}"
+
+
+def _charts(path):
+    """Every chart each sheet draws, as ``(sheet, class name, [(tx, cat, val) per series])`` — the
+    facts a chart states about WHICH cells it plots, read by a third party rather than by FSA1."""
+    book = oracle.openpyxl.load_workbook(str(path))
+    found = []
+    for sheet in book.worksheets:
+        for chart in sheet._charts:  # noqa: SLF001  openpyxl exposes a sheet's charts nowhere else
+            series = []
+            for one in chart.series:
+                series.append(tuple(
+                    _ref(ref)
+                    for ref in (
+                        one.tx.strRef.f if one.tx is not None and one.tx.strRef is not None else None,
+                        one.cat.numRef.f if one.cat is not None and one.cat.numRef is not None else (
+                            one.cat.strRef.f if one.cat is not None and one.cat.strRef is not None else None
+                        ),
+                        one.val.numRef.f if one.val is not None and one.val.numRef is not None else None,
+                    )
+                ))
+            found.append((sheet.title, type(chart).__name__, series))
+    return found
+
+
+def grade_charts(fixture, export_path):
+    """The CHART gate: a chart the SOURCE draws must be drawn by the export too, over the same
+    ranges. openpyxl reopens the PACKED file and reads the chart itself — FSA1 is never its own
+    oracle. A reference is compared as Excel spells it, `$` included, since both sides are read by
+    the same third-party reader."""
+    want, got = _charts(fixture), _charts(export_path)
+    rows, matched, graded, defects = [], 0, 0, 0
+    for at in range(max(len(want), len(got))):
+        graded += 1
+        source = want[at] if at < len(want) else None
+        export = got[at] if at < len(got) else None
+        if source == export:
+            matched += 1
+            rows.append((source[0], f"chart{at + 1}", "MATCH", str(source[1]), str(export[1]), "chart"))
+        else:
+            defects += 1
+            rows.append((
+                (source or export)[0], f"chart{at + 1}", "DIVERGE", str(source), str(export),
+                "the export draws a different chart than the source",
+            ))
+    return rows, matched, graded, defects
+
+
 def grade_fixture(cli, fixture, workdir, lib_gaps):
     """unpack --strict -> export -> reopen (structural) -> diff vs source (identity). Returns
     ``(rows, matched, graded, defects, excluded, fatal)``. ``fatal`` is a non-cell failure
@@ -252,6 +308,19 @@ def grade_fixture(cli, fixture, workdir, lib_gaps):
     matched += fmt_matched
     graded += fmt_graded
     defects += fmt_defects
+
+    # CHART gate: a figure crosses back as a NATIVE chart or not at all, so the export must draw the
+    # same chart over the same ranges. A raster would pass a picture off as one; none is ever written.
+    try:
+        chart_rows, chart_matched, chart_graded, chart_defects = grade_charts(fixture, export_path)
+    except Exception as exc:  # noqa: BLE001
+        return rows, matched, graded, defects, excluded, (
+            f"CHART gate raised: {type(exc).__name__}: {exc}"
+        )
+    rows.extend(chart_rows)
+    matched += chart_matched
+    graded += chart_graded
+    defects += chart_defects
     return rows, matched, graded, defects, excluded, None
 
 

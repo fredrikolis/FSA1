@@ -46,7 +46,7 @@ fn writer_emits_a_package_calamine_reopens() {
     let dest = temp_xlsx("reopen");
     let _ = std::fs::remove_file(&dest);
 
-    write_xlsx(&wb, &overlay, &dest).expect("write_xlsx succeeds");
+    write_xlsx(&wb, &overlay, &[], &dest).expect("write_xlsx succeeds");
 
     let mut book = open_workbook_auto(&dest).expect("calamine re-opens the emitted .xlsx");
 
@@ -96,7 +96,7 @@ fn excels_future_function_prefix_survives_the_pack_leg_verbatim() {
     let wb = Workbook::from_tabs(tabs).expect("the prefixed workbook loads cleanly");
     let overlay = Overlay::from_tabs(tabs).expect("its sidecars load cleanly");
     let dest = temp_xlsx("xlfn");
-    write_xlsx(&wb, &overlay, &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &[], &dest).expect("export writes the package");
 
     let mut book = open_workbook_auto(&dest).expect("calamine reopens the export");
     let f = book
@@ -134,7 +134,7 @@ fn a_styled_workbook_reopens_with_its_values_intact() {
     let wb = Workbook::from_tabs(tabs).expect("the styled workbook loads cleanly");
     let overlay = Overlay::from_tabs(tabs).expect("its sidecars load cleanly");
     let dest = temp_xlsx("styled");
-    write_xlsx(&wb, &overlay, &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &[], &dest).expect("export writes the package");
 
     let mut book = open_workbook_auto(&dest).expect("calamine re-opens the styled export");
     let range = book
@@ -152,7 +152,8 @@ fn export_refuses_an_occupied_dest() {
     let dest = temp_xlsx("occupied");
     std::fs::write(&dest, b"pre-existing").expect("seed the dest");
 
-    let err = write_xlsx(&wb, &overlay, &dest).expect_err("an occupied dest is refused (CORE3)");
+    let err =
+        write_xlsx(&wb, &overlay, &[], &dest).expect_err("an occupied dest is refused (CORE3)");
     assert!(
         matches!(err, crate::ExportError::DestExists(_)),
         "the refusal names the occupied destination"
@@ -185,7 +186,7 @@ fn defined_names_survive_the_pack_leg() {
         .expect("fs read ok")
         .expect("its sidecars load");
     let dest = temp_xlsx("names");
-    write_xlsx(&wb, &overlay, &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &[], &dest).expect("export writes the package");
 
     let xml = {
         let f = std::fs::File::open(&dest).expect("open the package");

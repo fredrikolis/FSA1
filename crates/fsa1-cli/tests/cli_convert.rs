@@ -587,3 +587,96 @@ fn pack_an_un_derivable_folder_is_bad_args() {
         );
     }
 }
+
+/// A workbook whose one tab holds a table and the figure over it named by `spec`.
+fn figure_workbook(cwd: &Path, basename: &str, spec: &str) -> PathBuf {
+    let tab = cwd.join(basename).join("Sheet1");
+    std::fs::create_dir_all(&tab).expect("create tab dir");
+    std::fs::write(
+        tab.join(fsa1_model::range_file_name("A1:B4")),
+        "Region\tUnits\nNorth\t12\nSouth\t9\nEast\t15",
+    )
+    .expect("write the table");
+    std::fs::write(tab.join("sales.vl.json"), spec).expect("write the figure");
+    cwd.join(basename)
+}
+
+const BAR_FIGURE: &str = r#"{"mark":"bar","data":{"name":"A1:B4"},
+    "encoding":{"x":{"field":"Region","type":"nominal"},
+                "y":{"field":"Units","type":"quantitative"}}}"#;
+
+/// A figure that never came from Excel — no metadata of any kind — packs to a native chart, and the
+/// success line counts it so an agent reads what crossed rather than inferring it.
+#[test]
+fn pack_writes_a_hand_authored_figure_as_a_native_chart() {
+    let cwd = Fixture::new("pack-figure");
+    let book = figure_workbook(cwd.path(), "book", BAR_FIGURE);
+    let (code, out) = run_in(cwd.path(), &["pack", "--strict", book.to_str().unwrap()]);
+    assert_eq!(code, 0, "a representable figure packs strictly:\n{out}");
+    assert!(out.contains("1 chart(s) written"), "{out}");
+    assert!(out.contains("every figure crossed"), "{out}");
+    let packed = std::fs::read(cwd.path().join("book.xlsx")).expect("the .xlsx");
+    let names = zip_entries(&packed);
+    for part in ["xl/charts/chart1.xml", "xl/drawings/drawing1.xml"] {
+        assert!(names.iter().any(|n| n == part), "{part} missing: {names:?}");
+    }
+}
+
+/// A mark Excel has no chart for is ONE named loss naming the mark, the .xlsx is still written, and
+/// `--strict` refuses instead — which is what lets an agent simplify the spec and pack again.
+#[test]
+fn pack_drops_a_figure_excel_cannot_draw_and_strict_refuses_it() {
+    let cwd = Fixture::new("pack-figure-drop");
+    let spec = BAR_FIGURE.replace("\"bar\"", "\"boxplot\"");
+    let book = figure_workbook(cwd.path(), "book", &spec);
+    let (code, out) = run_in(cwd.path(), &["pack", book.to_str().unwrap()]);
+    assert_eq!(
+        code, 0,
+        "a dropped figure is a report, not a failure:\n{out}"
+    );
+    assert!(out.contains("0 chart(s) written"), "{out}");
+    assert!(out.contains("pack fidelity report (1 figure(s))"), "{out}");
+    assert!(out.contains("Sheet1/sales.vl.json"), "{out}");
+    assert!(
+        out.contains("\"boxplot\""),
+        "the loss names the mark:\n{out}"
+    );
+    let names = zip_entries(&std::fs::read(cwd.path().join("book.xlsx")).expect("the .xlsx"));
+    assert!(
+        !names.iter().any(|n| n.starts_with("xl/charts/")),
+        "{names:?}"
+    );
+
+    let (code, _, err) = run_err_in(cwd.path(), &["pack", "--strict", book.to_str().unwrap()]);
+    assert_eq!(
+        code, 3,
+        "--strict refuses rather than leaving it out:\n{err}"
+    );
+    assert!(err.contains("\"boxplot\""), "{err}");
+}
+
+/// The part names a zip holds, read without a zip crate: each local file header states its name at a
+/// fixed offset, which is enough to assert a part is present.
+fn zip_entries(bytes: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while at + 30 <= bytes.len() {
+        if bytes[at..at + 4] != [0x50, 0x4b, 0x03, 0x04] {
+            break;
+        }
+        let read = |o: usize| u16::from_le_bytes([bytes[at + o], bytes[at + o + 1]]) as usize;
+        let (compressed, name_len, extra_len) = (
+            u32::from_le_bytes([
+                bytes[at + 18],
+                bytes[at + 19],
+                bytes[at + 20],
+                bytes[at + 21],
+            ]) as usize,
+            read(26),
+            read(28),
+        );
+        out.push(String::from_utf8_lossy(&bytes[at + 30..at + 30 + name_len]).into_owned());
+        at += 30 + name_len + extra_len + compressed;
+    }
+    out
+}

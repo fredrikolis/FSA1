@@ -185,8 +185,8 @@ fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
     let workbook = Workbook::load_dir(&unpacked)
         .expect("the unpacked tree is readable")
         .map_err(|diags| format!("`check` refuses what `unpack` wrote: {diags:?}"))?;
-    // What `check` does: the values and the presentation are two loads, and both are graded here.
-    let overlay = Overlay::load_dir(&unpacked)
+    // What `check` does: both loads are graded, and the pack below opens its own overlay anyway.
+    Overlay::load_dir(&unpacked)
         .expect("the unpacked tree is readable")
         .map_err(|diags| format!("`check` refuses the sidecars `unpack` wrote: {diags:?}"))?;
     let lint = workbook.lint();
@@ -201,31 +201,31 @@ fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
         return Ok(());
     }
     let packed = work.join("packed.xlsx");
-    fsa1_xlsx::write_xlsx(&workbook, &overlay, &packed).map_err(|e| format!("pack failed: {e}"))?;
+    // The VERB, not the writer: grading a pack that skipped the chart leg grades nothing a caller runs.
+    let packed_report = fsa1_verbs::ops::pack(&unpacked, Some(&packed), "xlsx", false)
+        .map_err(|e| format!("pack failed: {}", e.message))?;
+    if !packed_report.not_drawn.is_empty() {
+        return Err(format!(
+            "pack drew no chart for {:?}",
+            packed_report
+                .not_drawn
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+        ));
+    }
 
     let reopened = work.join("reopened");
     fsa1_ingest::import_file(&packed, &reopened, false)
         .map_err(|e| format!("re-unpack of the packed export failed: {e}"))?;
     match diff(
-        "the appearance did not survive the pack -- unpack(pack(unpack(x))) differs from unpack(x)",
-        &render(&[], &without_figures(&got_files)),
-        &render(&[], &without_figures(&read_tree(&reopened))),
+        "the tree did not survive the pack -- unpack(pack(unpack(x))) differs from unpack(x)",
+        &render(&[], &got_files),
+        &render(&[], &read_tree(&reopened)),
     ) {
         Some(diff) => Err(diff),
         None => Ok(()),
     }
-}
-
-/// A figure is not appearance, and `pack` writes no chart back: the READ leg is plan 14 and the WRITE
-/// leg is plan 15, so a `.vl.json` on the way in has nothing on the way out to survive as. The first
-/// leg above already grades every figure byte against the frozen expectation; this one grades what a
-/// pack is answerable for, and comparing a figure here would assert an export FSA1 does not claim.
-fn without_figures(files: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-    files
-        .iter()
-        .filter(|(name, _)| !fsa1_model::is_figure_entry(name))
-        .map(|(name, content)| (name.clone(), content.clone()))
-        .collect()
 }
 
 /// Every fixture graded in ONE run, so a change that breaks four of them names four rather than the

@@ -223,6 +223,10 @@ fn ser2_every_accept_fixture_reopens_with_the_same_content_and_pack_leaves_the_s
     }
 }
 
+/// `xl/charts/` and `xl/drawings/` are ALLOW parts now, so the two chart probes refuse for their
+/// CONTENT rather than their presence — `chart.xlsx` states a series with neither a `<c:tx>` nor a
+/// `<c:cat>`, and `drawing.xlsx`'s injected part anchors nothing. Each still names the same part,
+/// which is what SER3 asks, so the mapping below holds unchanged.
 #[test]
 fn ser3_every_refuse_probe_is_refused_with_a_located_diagnostic_naming_the_part_or_cell() {
     let expected: &[(&str, &str)] = &[

@@ -6,8 +6,9 @@ The **in-scope** family of the SER2 round-trip conformance corpus. Every file ro
 (the ENG6 mainstream-spreadsheet proxy) recomputes the export to the same values as the source (SER2
 value gate); for a formatted cell, the source and export numFmts render the same display string (SER2
 FORMAT gate, GRID7); and re-unpacking that export reopens the same values, formulas, display formats
-and resolved styles, whatever block shape the decomposition cuts them into. All three are graded by
-`../roundtrip_oracle.py` (value + FORMAT) and `fsa1-cli/tests/roundtrip.rs` (the reopened workbook).
+and resolved styles, whatever block shape the decomposition cuts them into. A figure crosses back as a native chart over the same
+ranges (SER2 CHART gate). All are graded by `../roundtrip_oracle.py` (value + FORMAT + CHART) and
+`fsa1-cli/tests/roundtrip.rs` (the reopened workbook).
 
 That last leg was written down as **SER4 (re-import idempotence)** until `docs/cli-spec.md` withdrew
 that id into SER2. What SER2 promises a reopened workbook is content, not a file tree, and the tree is
@@ -34,6 +35,23 @@ real spreadsheet application, and graduated here unchanged; the reference values
 | `functions.xlsx` | `fsa1-ingest/tests/fixtures/functions.xlsx` | mixed value types + a lookup sheet |
 | `smoke.xlsx` | `fsa1-ingest/tests/fixtures/smoke.xlsx` | the multi-sheet smoke shape (Sheet1 + Sheet2 cross-ref) |
 | `blanks_repeats.xlsx` | `fsa1-ingest/tests/fixtures/blanks_repeats.xlsx` | blank cells + repeated values (gap handling) |
+
+## Charted family (a figure crosses out as a native chart) — graduated
+
+| File | Graduated from | What it exercises |
+|---|---|---|
+| `chart_bar_one_series.xlsx` | `conformance/presentation/fixtures/chart_bar_one_series.xlsx` (openpyxl `BarChart`) | a one-series bar chart over `Sheet1!A1:B4`, titled — the read leg makes it a `.vl.json`, the write leg makes it a `<c:barChart>` again |
+| `chart_line_two_series.xlsx` | `conformance/presentation/fixtures/chart_line_two_series.xlsx` (openpyxl `LineChart`) | two series, hence two layers, each binding its own rectangle and each written back as its own `<c:ser>` |
+
+Both are openpyxl-authored, so FSA1 authors no byte it is graded against here either. They are the
+only fixtures the **CHART gate** grades: `../roundtrip_oracle.py` reopens the PACKED file with
+openpyxl and compares the chart class and every series' three references against the source's. A
+reference is compared as the RANGE it addresses, since the `$` and the quotes around a sheet name are
+Excel's spelling of one — openpyxl writes `'Sheet1'!B1` where FSA1 writes `Sheet1!$B$1`.
+
+A charted workbook that does NOT round-trip stays in `../refuse/`, where `chart.xlsx` and
+`drawing.xlsx` are: `xl/charts/` and `xl/drawings/` are `ALLOW` parts now, so what refuses is content
+that yields no figure, never the part's presence.
 
 ## Formatted family (GRID7 typed content) — authored by `../make_accept.py`
 
@@ -90,7 +108,7 @@ and lives in `../refuse/` (see `../refuse/PROVENANCE.md`).
 ## Declared blind spots
 
 - **The `CellStyle` leg of the reopen comparison is presently VACUOUS here.** No fixture declares any
-  presentation: `unpack --strict` over the 17 `.xlsx` writes 25 range files and **not one** carries an
+  presentation: `unpack --strict` over the General and formatted `.xlsx` writes 25 range files and **not one** carries an
   `@scope` block, so `Workbook::cell_style` returns `CellStyle::default()` at every covered coordinate
   and that leg separates only *covered* from *gap*. The narrowing is real but latent: the whole-file
   text comparison it replaced diffed an `@scope` block verbatim, whitespace and all, where a resolved

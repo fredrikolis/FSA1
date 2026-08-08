@@ -223,6 +223,7 @@ dependencies = [
  "fsa1-ast",
  "fsa1-ingest",
  "fsa1-model",
+ "fsa1-verbs",
  "fsa1-xlsx",
 ]
 
@@ -410,6 +411,7 @@ dependencies = [
  "fsa1-ast",
  "fsa1-model",
  "quick-xml",
+ "serde_json",
  "zip",
 ]
 

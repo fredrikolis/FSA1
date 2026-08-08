@@ -5,7 +5,7 @@
 //! the binding a figure states is graded against the tab it lands beside, so it is graded here first.
 
 use fsa1_ast::a1::{format_cell, parse_a1};
-use fsa1_model::{FIGURE_SUFFIX, display_value, lex_literal, quote_sheet};
+use fsa1_model::{Cell, FIGURE_SUFFIX, Workbook, display_value, lex_literal, quote_sheet};
 use serde_json::{Map, Value as Json};
 
 use crate::resolve::Resolution;
@@ -16,6 +16,87 @@ use crate::xlsx_chart::{SourceChart, SourceSeries};
 
 /// The dialect the pinned runtime compiles — `vega-manifest.txt` names the version.
 const SCHEMA: &str = "https://vega.github.io/schema/vega-lite/v5.json";
+
+/// The tab a chart is drawn on, as the SPELLING needs it — nothing about how the tab was obtained.
+/// One speller then grades both legs: the source book an unpack reads, and the loaded workbook
+/// `pack` writes, which is what makes "representable" one definition rather than two.
+pub(crate) trait ChartTable {
+    fn tab(&self) -> &str;
+    /// The bounding box of the tab's occupancy, which every binding must sit inside.
+    fn content(&self) -> Option<Region>;
+    /// The header cell's text. `None` for a FORMULA, whose content and value are two spellings of one
+    /// cell: the field would key on the source text and the binding on its result.
+    fn header(&self, col: u32, row: u32) -> Option<String>;
+}
+
+/// The unpack leg's tab: cells still in the reader's intermediate, lexed as the loaded workbook will
+/// read them.
+pub(crate) struct SourceTable<'a> {
+    pub sheet: &'a SheetSource,
+    pub res: &'a Resolution,
+}
+
+impl ChartTable for SourceTable<'_> {
+    fn tab(&self) -> &str {
+        &self.sheet.name
+    }
+
+    fn content(&self) -> Option<Region> {
+        let mut found: Option<Region> = None;
+        for row in 0..self.sheet.rows {
+            for col in 0..self.sheet.cols {
+                if !self.sheet.is_occupied(col, row) {
+                    continue;
+                }
+                let one = Region {
+                    min_col: col,
+                    min_row: row,
+                    max_col: col,
+                    max_row: row,
+                };
+                found = Some(found.map_or(one, |r| r.union(one)));
+            }
+        }
+        found
+    }
+
+    fn header(&self, col: u32, row: u32) -> Option<String> {
+        let cell = self.sheet.cell(col, row)?;
+        if matches!(cell.value, SourceValue::Formula { .. }) {
+            return None;
+        }
+        let (field, _) = cell_field(&cell.value, self.res, &self.sheet.name, row);
+        Some(display_value(&lex_literal(&field).0))
+    }
+}
+
+/// The pack leg's tab: the loaded workbook a chart is about to be written from.
+pub(crate) struct BookTable<'a> {
+    pub wb: &'a Workbook,
+    pub sheet: u32,
+}
+
+impl ChartTable for BookTable<'_> {
+    fn tab(&self) -> &str {
+        self.wb.sheet_name(self.sheet).unwrap_or_default()
+    }
+
+    fn content(&self) -> Option<Region> {
+        self.wb.content_region(self.sheet).map(|r| Region {
+            min_col: r.min_col,
+            min_row: r.min_row,
+            max_col: r.max_col,
+            max_row: r.max_row,
+        })
+    }
+
+    fn header(&self, col: u32, row: u32) -> Option<String> {
+        match self.wb.source_at(self.sheet, col, row).map(|s| s.cell) {
+            Some(Cell::Formula { .. }) => None,
+            _ => Some(display_value(&self.wb.value_at(self.sheet, col, row))),
+        }
+    }
+}
 
 /// The figures one tab's charts became, and the chart parts that DID cross — which is what stops the
 /// census calling a carried chart "not carried".
@@ -38,10 +119,11 @@ pub fn figures(
     if charts.is_empty() {
         return out;
     }
-    let content = content_region(sheet);
+    let table = SourceTable { sheet, res };
+    let content = table.content();
     let mut taken: Vec<String> = Vec::new();
     for chart in charts {
-        match spell(chart, sheet, res, content, &taken) {
+        match spell(chart, &table, content, &taken) {
             Ok((stem, body)) => {
                 out.files.push((format!("{stem}{FIGURE_SUFFIX}"), body));
                 out.carried.push(chart.part.clone());
@@ -58,10 +140,9 @@ pub fn figures(
 }
 
 /// One chart's whole spelling, or the ONE sentence saying why it has none.
-fn spell(
+pub(crate) fn spell(
     chart: &SourceChart,
-    sheet: &SheetSource,
-    res: &Resolution,
+    table: &dyn ChartTable,
     content: Option<Region>,
     taken: &[String],
 ) -> Result<(String, String), String> {
@@ -83,7 +164,7 @@ fn spell(
     let layers = chart
         .series
         .iter()
-        .map(|series| layer(series, sheet, res, content, mark, chart.horizontal_bars))
+        .map(|series| layer(series, table, content, mark, chart.horizontal_bars))
         .collect::<Result<Vec<Json>, String>>()?;
     let stem = stem_of(chart, taken)?;
 
@@ -157,8 +238,7 @@ impl Mark {
 /// header names that rectangle's first row states, `field`-encoded.
 fn layer(
     series: &SourceSeries,
-    sheet: &SheetSource,
-    res: &Resolution,
+    table: &dyn ChartTable,
     content: Option<Region>,
     mark: Mark,
     horizontal_bars: bool,
@@ -170,8 +250,8 @@ fn layer(
                 .to_string(),
         );
     }
-    let cat = reference(series.cat.as_deref(), "its categories", &sheet.name)?;
-    let val = reference(series.val.as_deref(), "its values", &sheet.name)?;
+    let cat = reference(series.cat.as_deref(), "its categories", table.tab())?;
+    let val = reference(series.val.as_deref(), "its values", table.tab())?;
     // A bound table keys on a header ROW, so a series plotted across a row would have to be transposed to become one — which is a chart FSA1 does not admit.
     if cat.min_col != cat.max_col || val.min_col != val.max_col {
         return Err(
@@ -189,7 +269,7 @@ fn layer(
         ));
     }
     let body = cat.union(val);
-    let header = header_row(series, sheet, body)?;
+    let header = header_row(series, table.tab(), body)?;
     let bound = Region {
         min_row: header,
         ..body
@@ -198,13 +278,13 @@ fn layer(
         return Err(format!(
             "it binds {}, which reaches past the content sheet {:?} states",
             bound.label(),
-            sheet.name
+            table.tab()
         ));
     }
     // EVERY column of the bound rectangle keys a field, so a blank or repeated header anywhere in it is a refusal `check` would raise on the figure this would otherwise write.
     let mut fields: Vec<String> = Vec::new();
     for col in bound.min_col..=bound.max_col {
-        let Some(field) = field_name(sheet, res, col, header) else {
+        let Some(field) = table.header(col, header) else {
             return Err(format!(
                 "the header at {} is a formula, and a field NAME is spelled from content while its \
                  binding's key is spelled from the value",
@@ -258,7 +338,7 @@ fn layer(
         "data".to_string(),
         Json::Object(Map::from_iter([(
             "name".to_string(),
-            Json::String(binding(&sheet.name, bound)),
+            Json::String(binding(table.tab(), bound)),
         )])),
     );
     out.insert("encoding".to_string(), Json::Object(encoding));
@@ -276,8 +356,8 @@ fn channel(field: &str, kind: &str) -> Json {
 /// normally `<c:strRef><c:f>Sheet1!$B$1`, which is the header cell of the column it plots. It must
 /// sit immediately above the plotted rows and inside the plotted columns, or it names some other row
 /// and the table below it would be silently wrong.
-fn header_row(series: &SourceSeries, sheet: &SheetSource, body: Region) -> Result<u32, String> {
-    let name = reference(series.name_ref.as_deref(), "its own name", &sheet.name)?;
+fn header_row(series: &SourceSeries, tab: &str, body: Region) -> Result<u32, String> {
+    let name = reference(series.name_ref.as_deref(), "its own name", tab)?;
     if name.min_row != name.max_row || name.min_col != name.max_col {
         return Err(format!(
             "its name reference {} is not one cell, so it names no header row",
@@ -298,18 +378,6 @@ fn header_row(series: &SourceSeries, sheet: &SheetSource, body: Region) -> Resul
         ));
     }
     Ok(name.min_row)
-}
-
-/// The header cell's text as the LOADED workbook will read it, lexed back through the grid's own two
-/// functions. `None` for a FORMULA, whose content and value are two spellings of one cell: the field
-/// would key on the source text and the binding on its result, drawing an empty chart in silence.
-fn field_name(sheet: &SheetSource, res: &Resolution, col: u32, row: u32) -> Option<String> {
-    let cell = sheet.cell(col, row)?;
-    if matches!(cell.value, SourceValue::Formula { .. }) {
-        return None;
-    }
-    let (field, _) = cell_field(&cell.value, res, &sheet.name, row);
-    Some(display_value(&lex_literal(&field).0))
 }
 
 /// The A1 reference a `data.name` states. The `$` is dropped and the sheet qualifier KEPT, so a
@@ -360,27 +428,6 @@ fn reference(text: Option<&str>, what: &str, sheet: &str) -> Result<Region, Stri
     })
 }
 
-/// What `Workbook::content_region` will report for this tab once it is written: the bounding box of
-/// its occupancy, which is what every range file the cut writes unions back to.
-fn content_region(sheet: &SheetSource) -> Option<Region> {
-    let mut found: Option<Region> = None;
-    for row in 0..sheet.rows {
-        for col in 0..sheet.cols {
-            if !sheet.is_occupied(col, row) {
-                continue;
-            }
-            let one = Region {
-                min_col: col,
-                min_row: row,
-                max_col: col,
-                max_row: row,
-            };
-            found = Some(found.map_or(one, |r| r.union(one)));
-        }
-    }
-    found
-}
-
 /// The figure's name: the chart's `<c:title>` where that yields a legal entry stem, else the chart
 /// PART's own stem. A second chart resolving to a taken name falls back to the part name; only if
 /// that collides too is it a named loss — never a silent overwrite.
@@ -422,7 +469,7 @@ fn legal_stem(title: &str) -> Option<String> {
 /// A closed rectangle in 0-based coordinates, which is what `parse_a1` reports and `format_cell`
 /// spells back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Region {
+pub(crate) struct Region {
     min_col: u32,
     min_row: u32,
     max_col: u32,

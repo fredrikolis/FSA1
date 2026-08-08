@@ -1,4 +1,4 @@
-// Concern: frames one sheet's stated region as <dimension>, <cols> and sized <row> | Non-concern: per-cell spelling, the style table | IO: (a Workbook, an Overlay, a sheet) -> sheetN.xml bytes
+// Concern: frames one sheet's stated region as <dimension>, <cols>, sized <row> and its <drawing> | Non-concern: per-cell spelling, the style table | IO: (Workbook, Overlay, sheet) -> sheetN.xml bytes
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -23,8 +23,9 @@ pub(crate) fn emit(
     sheet: u32,
     ss: &mut SharedStrings,
     styles: &StyleTable,
+    drawn: bool,
 ) -> Vec<u8> {
-    emit_inner(wb, overlay, sheet, ss, styles).expect(INFALLIBLE)
+    emit_inner(wb, overlay, sheet, ss, styles, drawn).expect(INFALLIBLE)
 }
 
 fn emit_inner(
@@ -33,6 +34,7 @@ fn emit_inner(
     sheet: u32,
     ss: &mut SharedStrings,
     styles: &StyleTable,
+    drawn: bool,
 ) -> std::io::Result<Vec<u8>> {
     // A `<cols>` run and a style-only block both sit outside the content, so the sheet is framed over the union of what the tab values and what it presents.
     let region = overlay.stated_region(wb, sheet);
@@ -126,6 +128,12 @@ fn emit_inner(
         }
     }
     w.write_event(Event::End(BytesEnd::new("sheetData")))?;
+    // The sheet's ONE drawing, after `<sheetData>` where the schema puts it, and only where the sheet has one: a `<drawing>` naming no relationship opens as a repair prompt.
+    if drawn {
+        let mut drawing = BytesStart::new("drawing");
+        drawing.push_attribute(("r:id", "rId1"));
+        w.write_event(Event::Empty(drawing))?;
+    }
     w.write_event(Event::End(BytesEnd::new("worksheet")))?;
     Ok(w.into_inner())
 }
@@ -202,7 +210,8 @@ mod tests {
         let (wb, overlay) = loaded(files);
         let styles = styles::build(&wb, &overlay);
         let mut ss = SharedStrings::new();
-        String::from_utf8(emit(&wb, &overlay, 0, &mut ss, &styles)).expect("the part is UTF-8")
+        String::from_utf8(emit(&wb, &overlay, 0, &mut ss, &styles, false))
+            .expect("the part is UTF-8")
     }
 
     #[test]

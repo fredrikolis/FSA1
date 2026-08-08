@@ -3,8 +3,9 @@
 
 The **out-of-scope** family of the SER3 round-trip conformance corpus. Each file isolates **exactly
 one** refusal trigger — an **exotic-tail numFmt** GRID7 cannot represent as typed content (a
-value-dependent conditional switch, or a digit/phone mask), or a package part outside the skeleton's
-`ALLOW ∪ DROP` set. `fsa1-cli unpack --strict` must refuse each with a **non-zero exit** and a
+value-dependent conditional switch, or a digit/phone mask), a package part outside the skeleton's
+`ALLOW ∪ DROP` set, or — since `xl/charts/` and `xl/drawings/` moved INTO `ALLOW` when `pack` learned
+to write a chart — a chart that yields no figure, or a drawing anchoring something other than a chart. `fsa1-cli unpack --strict` must refuse each with a **non-zero exit** and a
 **located CORE2 diagnostic naming the offending cell (+ numFmtId + formatCode) or part** (SER3); this is
 asserted by `fsa1-cli/tests/roundtrip.rs`.
 
@@ -14,6 +15,16 @@ The synthesized probes are authored by **openpyxl** (a third-party writer) via t
 re-runnable `../make_refuse.py` — openpyxl emits the numFmt/chart natively, and the drawing/pivotTable
 parts (which openpyxl does not author natively) are injected into the package by the same script. The
 one graduated probe is a real in-repo `fsa1-ingest` fixture. **None is FSA1-generated.**
+
+## What the chart write leg changed here — the two chart probes' TRIGGERS, not their verdicts
+
+`xl/charts/` and `xl/drawings/` are `ALLOW` now: a figure crosses back as a native chart, and the
+drawing is what anchors it to a sheet. Neither probe left the refuse set, because neither is a
+workbook that round-trips — `chart.xlsx`'s series references no rectangle a figure can bind, and
+`drawing.xlsx`'s injected part anchors nothing at all — so each is still refused, and still names the
+same part. What changed is WHY: the trigger is no longer the part's mere presence but the content of
+it that does not cross. A charted workbook that DOES round-trip now belongs in `../accept/`, where
+two of them are.
 
 ## GRID7 reclassification (plan 07 §8) — what LEFT the refuse set
 
@@ -31,8 +42,8 @@ formula is a first-class ACCEPT; see `../accept/`.)
 | `cond_literal.xlsx` | authored by `../make_refuse.py` | a **conditional-switch** numFmt `[<100]0.00;[>=100]0` on the value literal `Exotic!A1` (numFmtId 164) — a value-dependent format the content cannot carry |
 | `mask_literal.xlsx` | authored by `../make_refuse.py` | a **digit/phone mask** `000000000` on the value literal `Exotic!A1` (numFmtId 164) — better modeled as TEXT than a formatted Number |
 | `exotic_formula.xlsx` | authored by `../make_refuse.py` | a **conditional-switch** numFmt `[<100]0;[>=100]0.0` on the **FORMULA** cell `Exotic!A2` (numFmtId 164) — proving the exotic tail refuses a formula too (a catalog concern, not the literal-only precision concern) |
-| `chart.xlsx` | authored by `../make_refuse.py` (openpyxl `BarChart`) | the part **`xl/charts/chart1.xml`** — neither modeled nor regenerable (SER3) |
-| `drawing.xlsx` | authored by `../make_refuse.py` (raw part injected) | the part **`xl/drawings/drawing1.xml`** (SER3) |
+| `chart.xlsx` | authored by `../make_refuse.py` (openpyxl `BarChart`) | the part **`xl/charts/chart1.xml`** carries NO figure — its one series states no `<c:tx>` and no `<c:cat>`, so no rectangle and no header row can be found, and `pack` has nothing to write back (SER3) |
+| `drawing.xlsx` | authored by `../make_refuse.py` (raw part injected) | the part **`xl/drawings/drawing1.xml`** anchors nothing this import reads back, so it is content `pack` does not write back (SER3) |
 | `pivot.xlsx` | authored by `../make_refuse.py` (raw part injected) | the part **`xl/pivotTables/pivotTable1.xml`** (SER3) |
 | `resolution.xlsx` | graduated from `fsa1-ingest/tests/fixtures/resolution.xlsx` | the part **`xl/tables/table1.xml`** (+ defined names `TaxRate`/`AllQOne`) — the tables refuse case no synthesized probe covers |
 

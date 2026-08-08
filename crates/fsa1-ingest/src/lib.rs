@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod block_probe;
+mod chart_restates;
 mod dates;
 mod decompose;
 pub mod error;
@@ -22,6 +23,7 @@ mod xlsx_style;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+pub use chart_restates::chart_restates_figure;
 pub use error::{ErrorKind, IngestError};
 pub use partition::Decomposition;
 pub use warnings::{AxisRef, UnpackCategory, UnpackWarning};
@@ -87,16 +89,30 @@ fn import(
     let mut read_warnings: Vec<UnpackWarning> = Vec::new();
     let book = reader::read_file(src, format_map.as_ref(), &mut read_warnings)?;
     let mut chart_losses: Vec<UnpackWarning> = Vec::new();
-    let charts = match is_xlsx(src) {
-        true => xlsx_chart::read_charts(src)?,
-        false => Vec::new(),
+    let package = match is_xlsx(src) {
+        true => xlsx_chart::read_package(src)?,
+        false => xlsx_chart::Package::default(),
     };
-    let figures = spell_figures(&book, &charts, &mut chart_losses);
-    let carried: Vec<String> = figures.values().flat_map(|f| f.carried.clone()).collect();
+    let (charts, drawings) = (&package.charts, &package.drawings);
+    let figures = spell_figures(&book, charts, &mut chart_losses);
+    for part in &package.unreached {
+        chart_losses.push(UnpackWarning::DrawingNotCarried {
+            drawing: part.clone(),
+            why: "no worksheet drawing reaches it, so it is drawn on no tab".to_string(),
+        });
+    }
+    for drawing in drawings {
+        if let Some(why) = drawing.non_chart_content() {
+            chart_losses.push(UnpackWarning::DrawingNotCarried {
+                drawing: drawing.part.clone(),
+                why,
+            });
+        }
+    }
 
     let mut warnings: Vec<UnpackWarning> = Vec::new();
     if is_xlsx(src) {
-        for part in xlsx_meta::uncarried_parts(src, &carried)? {
+        for part in xlsx_meta::uncarried_parts(src)? {
             warnings.push(UnpackWarning::WorkbookPartNotCarried { part: part.spell() });
         }
     }

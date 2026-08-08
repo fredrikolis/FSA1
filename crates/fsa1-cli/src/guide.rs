@@ -92,14 +92,17 @@ COMMANDS  (the tab and A1 cell/range are PART OF THE PATH: <wb>[/<tab>[/<A1>]])
   fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]   read a .ods/.xlsx into a workbook
                                           (<dst> derives to ./<src-stem>/; --strict refuses a file the
                                           skeleton cannot round-trip identically: a non-default number
-                                          format, an out-of-scope package part, or a dropped size)
+                                          format, an out-of-scope package part, a chart carrying no
+                                          figure, or a dropped size)
                                           --decompose ({DECOMPOSITIONS}) cuts a sheet into range
                                           files: occupancy at the widest fully-empty rows/columns,
                                           appearance over runs of one cell appearance. Default:
                                           occupancy for every source — appearance is only ever
                                           used when named, so an unflagged unpack never moves
-  fsa1-cli pack <dir> [--target xlsx]   serialize a workbook to a fresh ./<basename>.xlsx (inverse of
-                                          unpack)
+  fsa1-cli pack [--strict] <dir>        serialize a workbook to a fresh ./<basename>.xlsx (inverse of
+      [--target xlsx]                     unpack). A figure becomes a native Excel chart where Excel
+                                          states one; one it does not is DROPPED and named, and
+                                          --strict refuses instead of writing without it
 
 START HERE
   fsa1-cli sample ./demo && fsa1-cli render ./demo

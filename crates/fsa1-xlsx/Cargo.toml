@@ -1,4 +1,4 @@
-# Concern: declares the package and its deps, the WRITE-side format libraries included | Non-concern: the read half (fsa1-ingest), calamine here being test-only | IO: none
+# Concern: declares the package and its deps, the WRITE-side format libraries and serde_json | Non-concern: the read half (fsa1-ingest), calamine here being test-only | IO: none
 [package]
 name = "fsa1-xlsx"
 version = "0.1.0"
@@ -11,6 +11,7 @@ fsa1-model = { path = "../fsa1-model" }
 # Pinned to fsa1-ingest's versions, so no new lockfile resolution is introduced.
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 quick-xml = "0.41"
+serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
 calamine = "0.36"

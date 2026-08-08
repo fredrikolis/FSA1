@@ -101,6 +101,13 @@ pub enum UnpackWarning {
         chart: String,
         why: String,
     },
+    /// A drawing part anchoring something other than a chart. `xl/drawings/` is carried for the charts
+    /// it anchors, and a drawing holding a text box, a shape or a picture would otherwise pass as
+    /// nothing lost.
+    DrawingNotCarried {
+        drawing: String,
+        why: String,
+    },
     WorkbookPartNotCarried {
         part: String,
     },
@@ -225,7 +232,9 @@ impl UnpackWarning {
             | UnpackWarning::RowHeightUnowned { .. }
             | UnpackWarning::ColumnWidthUnspellable { .. }
             | UnpackWarning::RowHeightUnspellable { .. } => UnpackCategory::Geometry,
-            UnpackWarning::ChartNotCarried { .. } => UnpackCategory::Chart,
+            UnpackWarning::ChartNotCarried { .. } | UnpackWarning::DrawingNotCarried { .. } => {
+                UnpackCategory::Chart
+            }
             UnpackWarning::WorkbookPartNotCarried { .. } => UnpackCategory::WorkbookPart,
         }
     }
@@ -324,6 +333,9 @@ impl fmt::Display for UnpackWarning {
             ),
             UnpackWarning::ChartNotCarried { sheet, chart, why } => {
                 write!(f, "{chart} on sheet {sheet} carries no figure: {why}")
+            }
+            UnpackWarning::DrawingNotCarried { drawing, why } => {
+                write!(f, "{drawing} is not carried: {why}")
             }
             UnpackWarning::WorkbookPartNotCarried { part } => write!(f, "{part} not carried"),
         }

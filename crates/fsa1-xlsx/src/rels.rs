@@ -1,4 +1,4 @@
-// Concern: _rels/.rels and xl/_rels/workbook.xml.rels — the rId-to-target wiring | Non-concern: the target parts' bytes, the content-type declaration | IO: (a sheet count) -> the part bytes
+// Concern: every _rels part — the package's, the workbook's, a sheet's and a drawing's rId wiring | Non-concern: the target parts' bytes, the content types | IO: (what each points at) -> the bytes
 
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
@@ -19,6 +19,34 @@ const REL_STYLES: &str =
 const REL_SHARED_STRINGS: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings";
 const REL_THEME: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
+const REL_DRAWING: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
+const REL_CHART: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+
+/// A sheet's only relationship: the drawing its `<drawing r:id>` names.
+pub(crate) fn emit_sheet_rels(drawing: usize) -> Vec<u8> {
+    let target = format!("../drawings/drawing{drawing}.xml");
+    emit_rels(&[("rId1", REL_DRAWING, target.as_str())])
+}
+
+/// One relationship per chart the drawing anchors, in the order its anchors state them.
+pub(crate) fn emit_drawing_rels(charts: &[usize]) -> Vec<u8> {
+    let rows: Vec<(String, String)> = charts
+        .iter()
+        .enumerate()
+        .map(|(at, chart)| {
+            (
+                format!("rId{}", at + 1),
+                format!("../charts/chart{chart}.xml"),
+            )
+        })
+        .collect();
+    let borrowed: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|(id, target)| (id.as_str(), REL_CHART, target.as_str()))
+        .collect();
+    emit_rels(&borrowed)
+}
 
 pub(crate) fn emit_package_rels() -> Vec<u8> {
     let rels = [

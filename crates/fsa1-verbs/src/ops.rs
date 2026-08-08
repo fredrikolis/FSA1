@@ -8,6 +8,7 @@ use fsa1_model::{
 };
 
 use crate::address;
+use crate::charts::FigureNotDrawn;
 use crate::present;
 use crate::refusal::{Kind, Refusal, bad_arg, fail, refused};
 
@@ -243,9 +244,20 @@ pub fn unpack(
 pub struct Packed {
     pub dest: PathBuf,
     pub sheets: usize,
+    pub charts: usize,
+    /// One line per figure Excel draws no chart for. Empty is the ordinary case, and distinct from a
+    /// workbook that states no figure at all — which has none either way.
+    pub not_drawn: Vec<FigureNotDrawn>,
 }
 
-pub fn pack(folder: &Path, dest: Option<&Path>, ext: &str) -> Result<Packed, Refusal> {
+/// `strict` refuses rather than writing a workbook whose figures do not all cross, which is the same
+/// bar `unpack --strict` sets on the way in.
+pub fn pack(
+    folder: &Path,
+    dest: Option<&Path>,
+    ext: &str,
+    strict: bool,
+) -> Result<Packed, Refusal> {
     let dest = match dest {
         Some(d) => d.to_path_buf(),
         None => derive_pack_dest(folder, ext)?,
@@ -257,12 +269,37 @@ pub fn pack(folder: &Path, dest: Option<&Path>, ext: &str) -> Result<Packed, Ref
         return Err(fail(Kind::Validation, &msg));
     }
     let overlay = load_overlay(folder)?;
-    fsa1_xlsx::write_xlsx(&wb, &overlay, &dest)
+    let figures = figures_to_draw(folder)?;
+    let (charts, not_drawn) = crate::charts::charts(&wb, &figures);
+    if strict && let Some(loss) = not_drawn.first() {
+        let msg = format!(
+            "cannot strictly pack this workbook: {loss}; simplify the spec to one Excel draws, or \
+             pack without --strict to write the .xlsx with that figure left out"
+        );
+        return Err(fail(Kind::Validation, &msg));
+    }
+    fsa1_xlsx::write_xlsx(&wb, &overlay, &charts, &dest)
         .map(|()| Packed {
             dest,
             sheets: wb.sheet_names().len(),
+            charts: charts.len(),
+            not_drawn,
         })
         .map_err(|e| fail(pack_kind(&e), &e.to_string()))
+}
+
+/// A figure a pack cannot even PARSE is a workbook fault, not a chart Excel has no shape for, so it
+/// refuses here rather than being reported as one figure that did not cross — `check` refuses the
+/// same file for the same reason.
+fn figures_to_draw(path: &Path) -> Result<Figures, Refusal> {
+    match Figures::load_dir(path) {
+        Err(e) => Err(fail(
+            Kind::Io,
+            &format!("cannot read {:?}: {e}", path.display()),
+        )),
+        Ok(Err(diags)) => Err(refused(diags)),
+        Ok(Ok(figures)) => Ok(figures),
+    }
 }
 
 /// The stem only, so the workbook lands in the process CWD rather than beside its source file.

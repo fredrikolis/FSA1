@@ -210,7 +210,7 @@ fn collect_bindings(node: &Json, out: &mut Vec<String>) {
 /// parser and would refuse the right answers, rejecting `A1:A1` and `A:A` because those are illegal
 /// FILE names while both are ordinary references.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Binding {
+pub struct Binding {
     /// `None` where the reference names no tab, which reads against the figure's own.
     pub tab: Option<String>,
     pub rect: Rect,
