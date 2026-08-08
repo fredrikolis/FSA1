@@ -24,7 +24,8 @@ pub fn list() -> Vec<Value> {
             "inputSchema": schema(json!({
                 "source": { "type": "string", "description": "the .xlsx or .ods file to read" },
                 "dest": { "type": "string", "description": "workbook directory to create; derived from the source name when omitted" },
-                "decomposition": { "type": "string", "description": "how a sheet is split into range files" }
+                "decomposition": { "type": "string", "description": "how a sheet is split into range files" },
+                "strict": { "type": "boolean", "description": "refuse rather than unpack a file the workbook cannot carry back identically" }
             }), &["source"])
         }),
         json!({
@@ -33,7 +34,9 @@ pub fn list() -> Vec<Value> {
             "inputSchema": schema(json!({
                 "source": { "type": "string", "description": "the workbook directory to pack" },
                 "dest": { "type": "string", "description": "output .xlsx path; derived from the directory name when omitted" },
-                "strict": { "type": "boolean", "description": "refuse rather than write where a figure reaches no Excel chart" }
+                "strict": { "type": "boolean", "description": "refuse rather than write where a figure reaches no Excel chart" },
+                // Listed from the vocabulary, never by hand: a client should not need a refused call to learn the set.
+                "format": { "type": "string", "enum": fsa1_verbs::PackFormat::choices(), "description": "the format written; xlsx when omitted, and the extension a derived dest takes" }
             }), &["source"])
         }),
         json!({
@@ -121,11 +124,17 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
                     )));
                 }
             };
-            let r = ops::render(&str_arg(args, "target")?, mode, format)?;
+            let r = ops::render(ops::RenderArgs {
+                target: &str_arg(args, "target")?,
+                mode,
+                format,
+            })?;
             Ok(join_notes(r.text, &r.notes))
         }
         "check" => {
-            let diags = ops::check(&str_arg(args, "target")?)?;
+            let diags = ops::check(ops::CheckArgs {
+                target: &str_arg(args, "target")?,
+            })?;
             if diags.is_empty() {
                 return Ok("verdict: clean (0 error, 0 warning)".to_string());
             }
@@ -145,9 +154,14 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
             let target = str_arg(args, "target")?;
             let formula = str_arg(args, "formula")?;
             // An error VALUE is an answer, not a refusal: the formula evaluated and this is what it says.
-            Ok(match ops::eval(&target, &formula)? {
-                FormulaOutcome::Value(v) | FormulaOutcome::Error(v) => v,
-            })
+            Ok(
+                match ops::eval(ops::EvalArgs {
+                    target: &target,
+                    formula: &formula,
+                })? {
+                    FormulaOutcome::Value(v) | FormulaOutcome::Error(v) => v,
+                },
+            )
         }
         "trace" => {
             let dir = match args
@@ -164,7 +178,11 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
                 }
             };
             let depth = args.get("depth").and_then(Value::as_u64).map(|d| d as u32);
-            let node = ops::trace(&str_arg(args, "target")?, dir, depth)?;
+            let node = ops::trace(ops::TraceArgs {
+                target: &str_arg(args, "target")?,
+                dir,
+                depth,
+            })?;
             Ok(present::trace(&node))
         }
         "unpack" => {
@@ -184,7 +202,13 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
                 })?),
                 None => None,
             };
-            let u = ops::unpack(Path::new(&source), dest, decomposition, false)?;
+            let strict = args.get("strict").and_then(Value::as_bool).unwrap_or(false);
+            let u = ops::unpack(ops::UnpackArgs {
+                src: Path::new(&source),
+                dest,
+                decomposition,
+                strict,
+            })?;
             Ok(format!(
                 "unpacked {source} -> {} ({} tab(s), {} range file(s), decomposed by {})",
                 u.dest.display(),
@@ -197,7 +221,22 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
             let source = str_arg(args, "source")?;
             let dest = args.get("dest").and_then(Value::as_str).map(Path::new);
             let strict = args.get("strict").and_then(Value::as_bool).unwrap_or(false);
-            let p = ops::pack(Path::new(&source), dest, "xlsx", strict)?;
+            let format = match args.get("format").and_then(Value::as_str) {
+                // The enum's own FromStr is each format's one spelling, so the surfaces cannot drift.
+                Some(v) => v.parse::<fsa1_verbs::PackFormat>().map_err(|()| {
+                    bad_arg(&format!(
+                        "unknown format {v:?}; choose one of: {}",
+                        fsa1_verbs::PackFormat::choices().join(", ")
+                    ))
+                })?,
+                None => fsa1_verbs::PackFormat::Xlsx,
+            };
+            let p = ops::pack(ops::PackArgs {
+                folder: Path::new(&source),
+                dest,
+                format,
+                strict,
+            })?;
             let text = format!(
                 "packed {source} -> {} ({} sheet(s), {} chart(s) written)",
                 p.dest.display(),

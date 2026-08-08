@@ -9,13 +9,14 @@ use fsa1_model::{
 
 use crate::address;
 use crate::charts::FigureNotDrawn;
+use crate::pack_format::PackFormat;
 use crate::present;
 use crate::refusal::{Kind, Refusal, bad_arg, fail, refused};
 
-/// Which drawer finishes a view. The MCP surface only ever asks for `Table`; `Tree` exists because
-/// the CLI has a verb for it, and both walk the same resolve-and-view path to get there.
+/// Which drawer finishes a view — the identity of the verb that asked, never one of its options, so
+/// it is settled here by [`render`] and [`tree`] and no front end names it.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Presenter {
+enum Presenter {
     Table,
     Tree,
 }
@@ -39,7 +40,9 @@ pub struct Rendered {
     pub empty: bool,
 }
 
-pub fn view_at(
+/// The shared body of [`render`] and [`tree`]: everything the two verbs do the same way, up to the
+/// drawer each one IS.
+fn view_at(
     target: &str,
     mode: Option<RenderMode>,
     presenter: Presenter,
@@ -146,13 +149,47 @@ pub fn view_at(
     Ok(Rendered { text, notes, empty })
 }
 
-pub fn render(target: &str, mode: Option<RenderMode>, format: Format) -> Result<Rendered, Refusal> {
-    view_at(target, mode, Presenter::Table, format, false)
+/// Every parameter `render` has. A struct literal must name every field, so a front end that stops
+/// offering an option stops COMPILING instead of quietly passing a literal in its place — which is
+/// what nothing here deriving, eliding or building a default is for. The same holds of its six
+/// siblings below.
+pub struct RenderArgs<'a> {
+    pub target: &'a str,
+    pub mode: Option<RenderMode>,
+    pub format: Format,
+}
+
+pub fn render(args: RenderArgs<'_>) -> Result<Rendered, Refusal> {
+    view_at(args.target, args.mode, Presenter::Table, args.format, false)
+}
+
+/// Every parameter `tree` has. It carries no `format`: ASCII is the only carrier a nested view is
+/// drawn in.
+pub struct TreeArgs<'a> {
+    pub target: &'a str,
+    pub mode: Option<RenderMode>,
+    pub full: bool,
+}
+
+pub fn tree(args: TreeArgs<'_>) -> Result<Rendered, Refusal> {
+    view_at(
+        args.target,
+        args.mode,
+        Presenter::Tree,
+        Format::Ascii,
+        args.full,
+    )
+}
+
+/// Every parameter `check` has. One field today, so the next one has an obvious home.
+pub struct CheckArgs<'a> {
+    pub target: &'a str,
 }
 
 /// A workbook that will not load is itself the finding, so this reads a `Decomposed` rather than a
 /// `Resolved`: it must still scope and report against a root that never loaded.
-pub fn check(target: &str) -> Result<Vec<Diagnostic>, Refusal> {
+pub fn check(args: CheckArgs<'_>) -> Result<Vec<Diagnostic>, Refusal> {
+    let target = args.target;
     let decomposed = address::decompose(target)?;
     let root_display = decomposed.root.display().to_string();
     let scope = fsa1_model::Scope::new(decomposed.tab, decomposed.region);
@@ -190,9 +227,16 @@ pub fn check(target: &str) -> Result<Vec<Diagnostic>, Refusal> {
     }
 }
 
+/// Every parameter `eval` has.
+pub struct EvalArgs<'a> {
+    pub target: &'a str,
+    pub formula: &'a str,
+}
+
 /// The outcome is returned whole rather than as a string: a formula that yields `#REF!` EVALUATED,
 /// and a front end that scores that as a failure needs to be able to tell it from one that did not.
-pub fn eval(target: &str, formula: &str) -> Result<FormulaOutcome, Refusal> {
+pub fn eval(args: EvalArgs<'_>) -> Result<FormulaOutcome, Refusal> {
+    let EvalArgs { target, formula } = args;
     let resolved = address::resolve(target)?;
     if resolved.workbook.sheet_names().is_empty() {
         let msg = format!("{target:?} has no tabs (a tab is a sub-folder of cell/range files)");
@@ -203,7 +247,15 @@ pub fn eval(target: &str, formula: &str) -> Result<FormulaOutcome, Refusal> {
         .map_err(|diag| refused(vec![diag]))
 }
 
-pub fn trace(target: &str, dir: Direction, depth: Option<u32>) -> Result<TraceNode, Refusal> {
+/// Every parameter `trace` has.
+pub struct TraceArgs<'a> {
+    pub target: &'a str,
+    pub dir: Direction,
+    pub depth: Option<u32>,
+}
+
+pub fn trace(args: TraceArgs<'_>) -> Result<TraceNode, Refusal> {
+    let TraceArgs { target, dir, depth } = args;
     let resolved = address::resolve(target)?;
     if resolved.workbook.sheet_names().is_empty() {
         let msg = format!("{target:?} has no tabs (a tab is a sub-folder of cell/range files)");
@@ -222,12 +274,21 @@ pub struct Unpacked {
     pub report: ImportReport,
 }
 
-pub fn unpack(
-    src: &Path,
-    dest: Option<&Path>,
-    decomposition: Option<Decomposition>,
-    strict: bool,
-) -> Result<Unpacked, Refusal> {
+/// Every parameter `unpack` has.
+pub struct UnpackArgs<'a> {
+    pub src: &'a Path,
+    pub dest: Option<&'a Path>,
+    pub decomposition: Option<Decomposition>,
+    pub strict: bool,
+}
+
+pub fn unpack(args: UnpackArgs<'_>) -> Result<Unpacked, Refusal> {
+    let UnpackArgs {
+        src,
+        dest,
+        decomposition,
+        strict,
+    } = args;
     let dest = match dest {
         Some(d) => d.to_path_buf(),
         None => derive_unpack_dest(src)?,
@@ -250,17 +311,27 @@ pub struct Packed {
     pub not_drawn: Vec<FigureNotDrawn>,
 }
 
+/// Every parameter `pack` has. `dest` is taken verbatim when given; `format` governs only the name
+/// derived when it is not.
+pub struct PackArgs<'a> {
+    pub folder: &'a Path,
+    pub dest: Option<&'a Path>,
+    pub format: PackFormat,
+    pub strict: bool,
+}
+
 /// `strict` refuses rather than writing a workbook whose figures do not all cross, which is the same
 /// bar `unpack --strict` sets on the way in.
-pub fn pack(
-    folder: &Path,
-    dest: Option<&Path>,
-    ext: &str,
-    strict: bool,
-) -> Result<Packed, Refusal> {
+pub fn pack(args: PackArgs<'_>) -> Result<Packed, Refusal> {
+    let PackArgs {
+        folder,
+        dest,
+        format,
+        strict,
+    } = args;
     let dest = match dest {
         Some(d) => d.to_path_buf(),
-        None => derive_pack_dest(folder, ext)?,
+        None => derive_pack_dest(folder, format.name())?,
     };
     let wb = load(folder)?;
     if wb.sheet_names().is_empty() {

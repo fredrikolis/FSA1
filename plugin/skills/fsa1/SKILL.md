@@ -34,8 +34,9 @@ curl -fsSL https://fsa1.sh/install-cli | sh
 
 It installs to `~/.local/bin` and only WARNS — it does not fail — when that is not on your `PATH`. So
 if the bare name `fsa1-cli` does not resolve, invoke `~/.local/bin/fsa1-cli` by its full path. Use the
-`fsa1-cli` column of the table below: three of the six verbs are spelled differently there and cannot
-be guessed from the MCP names.
+`fsa1-cli` column of the table below. The six verb NAMES are the same on both surfaces; four
+arguments are not — `formula`, `direction`, `decomposition` and `format` become `--formula`,
+`--dependents`, `--decompose` and `--target`, and none can be guessed from the MCP name.
 
 ## The model in one paragraph
 
@@ -74,8 +75,8 @@ One table, both paths. Optional arguments are in brackets.
 | `check` | `target` | `fsa1-cli check <path>` |
 | `eval` | `target`, `formula` | `fsa1-cli eval <path> --formula '=<formula>'` |
 | `trace` | `target` (one cell), `direction` (`upstream\|downstream`), `depth` | `fsa1-cli trace <path> [--dependents] [--depth <N>]` |
-| `unpack` | `source`, `dest`, `decomposition` | `fsa1-cli unpack [--decompose <policy>] <src> [<dst>]` |
-| `pack` | `source`, `dest` | `fsa1-cli pack <workbook-dir>` |
+| `unpack` | `source`, `dest`, `decomposition`, `strict` | `fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]` |
+| `pack` | `source`, `dest`, `strict`, `format` (`xlsx`) | `fsa1-cli pack [--strict] [--target xlsx] <workbook-dir> [<dst>]` |
 
 - `render` draws the scope. Bare `<wb>` draws every tab; `<wb>/<Tab>` one tab; `<wb>/<Tab>/A1:D9` a
   region. Default `combined` shows `value ← =formula`.
@@ -87,11 +88,15 @@ One table, both paths. Optional arguments are in brackets.
   all** on the CLI; the downstream direction is `--dependents`. `depth` is `--depth <N>`.
 - `unpack` turns a real spreadsheet (.xlsx or .ods) into an FSA1 tree. The MCP `dest` is the CLI's
   optional positional `<dst>` — not a flag — and `decomposition` is `--decompose <policy>`. Omitted,
-  the destination derives to `./<source-stem>/`. Refuses a non-empty destination.
+  the destination derives to `./<source-stem>/`. Refuses a non-empty destination. `strict` (the CLI's
+  `--strict`) refuses a source the tree cannot carry back identically instead of unpacking it lossily;
+  it defaults to off on both surfaces.
 - `pack` turns an FSA1 tree back into a fresh `.xlsx` (never clobbers; leaves the source untouched).
-  The MCP form takes `dest`; **the CLI has no `--dest`** — the output name is DERIVED as
-  `./<workbook-basename>.xlsx` in the current directory. To put it elsewhere on the CLI path, pack
-  and then move the file.
+  The MCP `dest` is the CLI's optional positional `<dst>` — **not a flag** — and on both surfaces it
+  is used VERBATIM, so its parent directory must already exist (`pack` creates none). Omitted, the
+  output name is DERIVED as `./<workbook-basename>.xlsx` in the current directory. MCP `format` is the
+  CLI's `--target`; `xlsx` is the only value either accepts, and it names the DERIVED extension only.
+  `strict` (the CLI's `--strict`) refuses rather than writing an `.xlsx` that leaves a figure out.
 
 There is no write tool, and none is needed: **a cell is a file**. Create, change and move cells with
 your own file tools, then use `check` or `render` to confirm the workbook still loads.

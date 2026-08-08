@@ -9,6 +9,7 @@ use std::process::ExitCode;
 
 use fsa1_ingest::{Decomposition, UnpackCategory};
 use fsa1_model::{Direction, FormulaOutcome, RenderMode, Workbook};
+use fsa1_verbs::PackFormat;
 
 use crate::output::{
     ErrorCode, emit_error, emit_eval_error_value, emit_eval_value, emit_trace,
@@ -152,19 +153,22 @@ fn cmd_view(rest: &[String], presenter: Presenter) -> u8 {
         ));
     };
 
-    let r = match fsa1_verbs::ops::view_at(
-        &path,
-        mode,
-        match presenter {
-            Presenter::Table => fsa1_verbs::ops::Presenter::Table,
-            Presenter::Tree => fsa1_verbs::ops::Presenter::Tree,
-        },
-        match format {
-            OutputFormat::Ascii => fsa1_verbs::ops::Format::Ascii,
-            OutputFormat::Html => fsa1_verbs::ops::Format::Html,
-        },
-        full,
-    ) {
+    let outcome = match presenter {
+        Presenter::Table => fsa1_verbs::ops::render(fsa1_verbs::ops::RenderArgs {
+            target: &path,
+            mode,
+            format: match format {
+                OutputFormat::Ascii => fsa1_verbs::ops::Format::Ascii,
+                OutputFormat::Html => fsa1_verbs::ops::Format::Html,
+            },
+        }),
+        Presenter::Tree => fsa1_verbs::ops::tree(fsa1_verbs::ops::TreeArgs {
+            target: &path,
+            mode,
+            full,
+        }),
+    };
+    let r = match outcome {
         Ok(r) => r,
         Err(e) => return refused(e),
     };
@@ -199,7 +203,7 @@ fn cmd_check(rest: &[String]) -> u8 {
         return bad_arg("check needs a <path> like ./budget or ./budget/Sheet1/H3");
     };
 
-    match fsa1_verbs::ops::check(&path) {
+    match fsa1_verbs::ops::check(fsa1_verbs::ops::CheckArgs { target: &path }) {
         Ok(diags) => output::emit_diagnostics(&diags),
         Err(e) => refused(e),
     }
@@ -237,7 +241,10 @@ fn cmd_eval(rest: &[String]) -> u8 {
         );
     };
 
-    match fsa1_verbs::ops::eval(&path, &formula) {
+    match fsa1_verbs::ops::eval(fsa1_verbs::ops::EvalArgs {
+        target: &path,
+        formula: &formula,
+    }) {
         Ok(FormulaOutcome::Value(v)) => {
             emit_eval_value(&v);
             0
@@ -283,7 +290,11 @@ fn cmd_trace(rest: &[String]) -> u8 {
         Direction::Upstream
     };
 
-    match fsa1_verbs::ops::trace(&path, dir, depth) {
+    match fsa1_verbs::ops::trace(fsa1_verbs::ops::TraceArgs {
+        target: &path,
+        dir,
+        depth,
+    }) {
         Ok(node) => {
             emit_trace(&node);
             0
@@ -535,7 +546,12 @@ fn cmd_unpack(rest: &[String]) -> u8 {
     };
 
     let src_path = Path::new(&src);
-    match fsa1_verbs::ops::unpack(src_path, dest.as_deref(), decompose, strict) {
+    match fsa1_verbs::ops::unpack(fsa1_verbs::ops::UnpackArgs {
+        src: src_path,
+        dest: dest.as_deref(),
+        decomposition: decompose,
+        strict,
+    }) {
         Ok(u) => {
             let report = u.report;
             let dest = u.dest.display();
@@ -657,12 +673,22 @@ fn render_unpack_report(
     out
 }
 
+fn parse_pack_format(v: &str) -> Result<PackFormat, u8> {
+    v.parse().map_err(|()| {
+        bad_arg(&format!(
+            "unknown --target {v:?}; choose {}",
+            PackFormat::choices().join(", ")
+        ))
+    })
+}
+
 /// Only `.`, `..` and `/` have no stem. A dot-prefixed name (`.xlsx`) has one, so it derives a
 /// directory here and is refused downstream by `import_file`.
-/// `--target` accepts only the one format fsa1-xlsx writes; it exists as the seam for a future one.
+/// A given `<dest-file>` is taken verbatim; `--target` names the format, and so the extension of the
+/// name DERIVED when none is given.
 fn cmd_pack(rest: &[String]) -> u8 {
     let mut positionals: Vec<String> = Vec::new();
-    let mut target = "xlsx".to_string();
+    let mut target = PackFormat::Xlsx;
     let mut strict = false;
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
@@ -670,24 +696,37 @@ fn cmd_pack(rest: &[String]) -> u8 {
         match flag {
             "--strict" => strict = true,
             "--target" => match take_value(inline, &mut it) {
-                Some(v) if v == "xlsx" => target = v,
-                Some(v) => {
+                Some(v) => match parse_pack_format(&v) {
+                    Ok(f) => target = f,
+                    Err(code) => return code,
+                },
+                None => {
                     return bad_arg(&format!(
-                        "only --target xlsx is supported (got {v:?}); ods export is not yet available"
+                        "--target needs a format, one of: {}",
+                        PackFormat::choices().join(", ")
                     ));
                 }
-                None => return bad_arg("--target needs a format, e.g. --target xlsx"),
             },
             f if f.starts_with('-') => return bad_arg(&format!("unknown flag {f:?}")),
             _ => positionals.push(arg.clone()),
         }
     }
-    let folder = match positionals.as_slice() {
-        [folder] => folder.clone(),
-        [] => return bad_arg("pack needs a <workbook-dir>, e.g. fsa1-cli pack ./book"),
-        _ => return bad_arg("pack takes exactly one <workbook-dir> (the output name is derived)"),
+    let (folder, dest): (String, Option<PathBuf>) = match positionals.as_slice() {
+        [folder, dst] => (folder.clone(), Some(PathBuf::from(dst))),
+        [folder] => (folder.clone(), None),
+        [] => {
+            return bad_arg(
+                "pack needs a <workbook-dir>, e.g. fsa1-cli pack ./book, or fsa1-cli pack ./book ./out.xlsx",
+            );
+        }
+        _ => return bad_arg("pack takes <workbook-dir> [<dest-file>]"),
     };
-    match fsa1_verbs::ops::pack(Path::new(&folder), None, &target, strict) {
+    match fsa1_verbs::ops::pack(fsa1_verbs::ops::PackArgs {
+        folder: Path::new(&folder),
+        dest: dest.as_deref(),
+        format: target,
+        strict,
+    }) {
         Ok(p) => {
             let dest = p.dest.display();
             print!(
@@ -695,7 +734,7 @@ fn cmd_pack(rest: &[String]) -> u8 {
                  {}\n\
                  next:\n  \
                  open {dest} in a spreadsheet app, or re-unpack it:\n  \
-                 fsa1-cli unpack {dest}   # read the packed .xlsx back into a workbook\n",
+                 fsa1-cli unpack {dest}   # read it back into a workbook, in the CURRENT directory\n",
                 p.sheets,
                 p.charts,
                 render_pack_report(&p.not_drawn),
@@ -812,7 +851,7 @@ USAGE:
   fsa1-cli tree   <path> [--mode <combined|values|functions>]    # <path>: <wb>[/<tab>[/<A1>]]
   fsa1-cli sample <dir>
   fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]   # <src> is .ods/.xlsx; <dst> derives to ./<src-stem>/
-  fsa1-cli pack   [--strict] <workbook-dir> [--target xlsx]  # serialize a workbook to a fresh ./<basename>.xlsx
+  fsa1-cli pack   [--strict] [--target xlsx] <workbook-dir> [<dst>]  # <dst> derives to ./<basename>.xlsx
   fsa1-cli convert <workbook-dir> [--to posix|windows|auto]  # re-spell range file names for another OS
   fsa1-cli --version | --help | --guide
 
@@ -851,10 +890,11 @@ COMMANDS:
            fills. <dst> is optional — omitted, the workbook is written to ./<src-stem>/ in the CWD.
            Refuses a non-empty destination.
   pack     Serialize an FSA1 workbook back into a single .xlsx file (the inverse of unpack): cell
-           values, formulas, and multiple sheets, in default (General) format. The output name is
-           DERIVED — ./<workbook-basename>.xlsx in the CWD; --target defaults to xlsx (the only format).
-           Derived wholly from the workbook (no cell content on argv). Refuses an already-occupied
-           output (never clobbers) and leaves the source workbook byte-identical.
+           values, formulas, and multiple sheets, in default (General) format. <dst> is OPTIONAL and
+           used verbatim; omitted, the output name is DERIVED — ./<workbook-basename>.xlsx in the CWD.
+           --target defaults to xlsx (the only format), and names the DERIVED extension only.
+           The CONTENT is derived wholly from the workbook (no cell content on argv). Refuses an
+           already-occupied output (never clobbers) and leaves the source workbook byte-identical.
   convert  Re-spell a workbook's range file names between `A1:C1` (POSIX) and `A1-C1` (portable /
            Windows-safe, since `:` is illegal in a Windows filename) so a raw tree authored on one OS
            checks out and loads on the other. Only range file NAMES change; contents, single cells,
@@ -891,7 +931,7 @@ EXIT CODES:
   2   Invalid arguments
   3   Validation error (check found error-severity diagnostics, or a workbook would not load)
   4   Conflict (a never-clobber refusal: sample/unpack <dir> exists and is non-empty, or pack's
-      derived ./<basename>.xlsx already exists)
+      output — the given <dst>, else the derived ./<basename>.xlsx — already exists)
   24  Not found (no such workbook directory, or no such tab)
 
 SEE ALSO:
@@ -1279,18 +1319,21 @@ SEE ALSO:
 const PACK_HELP: &str = r#"fsa1-cli pack — serialize an FSA1 workbook back into a single .xlsx file
 
 USAGE:
-  fsa1-cli pack [--strict] <workbook-dir> [--target xlsx]
+  fsa1-cli pack [--strict] [--target xlsx] <workbook-dir> [<dst>]
 
 DESCRIPTION:
   Serialize an FSA1 workbook (the filesystem spreadsheet) back into one Excel (.xlsx) file — the
   inverse of unpack. Emits the simple core: cell values, formulas, multiple sheets, per-cell display
   formats (GRID7), and the workbook's defined names (SER3). Formula cells carry NO cached value, so the
-  opening spreadsheet recomputes. The output is DERIVED WHOLLY from the source workbook: the command
+  opening spreadsheet recomputes. The CONTENT is DERIVED WHOLLY from the source workbook: the command
   takes no cell content on the command line, and it reads the source READ-ONLY, leaving it byte-identical
-  — it writes nothing under it, .cache/ included. The output name is DERIVED — ./<workbook-basename>.xlsx in the current directory
-  (pack path/to/acme-dcf -> ./acme-dcf.xlsx, basename only). It lands only at a FRESH, not-already-
-  occupied path — an existing file is refused (never clobbered). Pivots, tables and media are not
-  modeled by the skeleton.
+  — it writes nothing under it, .cache/ included.
+
+  <dst> is OPTIONAL and used VERBATIM — the path you name is the file written, whatever its suffix,
+  and its parent directory must already exist (pack creates no directories). Omitted, the output name
+  is DERIVED — ./<workbook-basename>.<target> in the current directory (pack path/to/acme-dcf ->
+  ./acme-dcf.xlsx, basename only). Either way it lands only at a FRESH, not-already-occupied path — an
+  existing file is refused (never clobbered). Pivots, tables and media are not modeled by the skeleton.
 
   A FIGURE (<tab>/<name>.vl.json) becomes a NATIVE Excel chart wherever Excel can state one — a real
   chart that updates when a cell changes, never a picture of one. Whether it can is settled by writing
@@ -1299,33 +1342,38 @@ DESCRIPTION:
   again. No raster is ever emitted.
 
 ARGUMENTS:
-  <workbook-dir>    (required) The FSA1 workbook directory to serialize (tabs = sub-folders). Its
-                    basename names the derived ./<basename>.xlsx output in the current directory.
+  <workbook-dir>    (required) The FSA1 workbook directory to serialize (tabs = sub-folders). With no
+                    <dst>, its basename names the derived ./<basename>.xlsx in the current directory.
+  <dst>             (optional) The output file to write, used verbatim (its parent must already
+                    exist). Omitted, the name derives as above.
 
 OPTIONS:
   --strict          (optional) Refuse rather than write an .xlsx that leaves a figure out, naming the
                     figure and what stopped it. Nothing is written on a refusal. The default writes
                     the .xlsx and REPORTS each dropped figure.
   --target <fmt>    (optional) The output format. Defaults to xlsx, the only format supported today;
-                    any other value is refused. Exists so a future serializer slots in without a
-                    surface change.
+                    any other value is refused, naming the accepted choices. It picks the extension a
+                    DERIVED name takes and never overrides a <dst> you gave. Exists so a future
+                    serializer slots in without a surface change.
 
 EXAMPLES:
   fsa1-cli pack ./book                  # -> ./book.xlsx
+  fsa1-cli pack ./book ./out/report.xlsx   # -> exactly that path (./out must already exist)
   fsa1-cli unpack book.xlsx && fsa1-cli pack ./book   # -> ./book.xlsx
 
 OUTPUT:
-  A terse confirmation on stdout naming the source, the derived destination, the sheet count and the
-  number of charts drawn, followed by one located line per figure Excel draws no chart for.
+  A terse confirmation on stdout naming the source, the destination, the sheet count and the number of
+  charts drawn, followed by one located line per figure Excel draws no chart for.
 
 EXIT CODES:
   0   Success (.xlsx written)
-  1   I/O failure (the destination could not be written)
-  2   Invalid arguments (incl. a <workbook-dir> with no basename, e.g. `.`, `..`, `/`, or a --target
-      other than xlsx)
+  1   I/O failure (the destination could not be written — including a <dst> whose parent is absent)
+  2   Invalid arguments (incl. a <workbook-dir> with no basename, e.g. `.`, `..`, `/`, when <dst> is
+      omitted, or a --target other than xlsx)
   3   Validation error (the workbook would not load, has no tabs to pack, or --strict was given and a
       figure packs to no chart)
-  4   Conflict (the derived ./<basename>.xlsx already exists — refused, nothing written)
+  4   Conflict (the output — the given <dst>, else the derived ./<basename>.xlsx — already exists,
+      refused, nothing written)
   24  Not found (no such workbook directory)
 
 SEE ALSO:

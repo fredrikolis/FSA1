@@ -1,4 +1,4 @@
-// Concern: the --guide text — the on-disk model, filenames, body grammar, dynamic-array call surface | Non-concern: what a function DOES (fsa1-ast), per-command help, the holes (main.rs) | IO: none
+// Concern: the --guide text — the on-disk model, filenames, body grammar, the terse verb index | Non-concern: what a function DOES (fsa1-ast), a verb's FULL help and the holes (main.rs) | IO: none
 
 /// `{DECOMPOSITIONS}` is filled by `main.rs::guide_text` from [`fsa1_ingest::Decomposition::ALL`], as
 /// `unpack --help`'s same hole is: the terse index cannot name a different policy set than
@@ -122,10 +122,12 @@ COMMANDS  (the tab and A1 cell/range are PART OF THE PATH: <wb>[/<tab>[/<A1>]])
                                           appearance over runs of one cell appearance. Default:
                                           occupancy for every source — appearance is only ever
                                           used when named, so an unflagged unpack never moves
-  fsa1-cli pack [--strict] <dir>        serialize a workbook to a fresh ./<basename>.xlsx (inverse of
-      [--target xlsx]                     unpack). A figure becomes a native Excel chart where Excel
-                                          states one; one it does not is DROPPED and named, and
-                                          --strict refuses instead of writing without it
+  fsa1-cli pack [--strict]              serialize a workbook to a fresh .xlsx (inverse of unpack).
+      [--target xlsx] <dir> [<dst>]       <dst> is used verbatim and its parent must already exist;
+                                          omitted, it derives to ./<basename>.xlsx. A figure becomes
+                                          a native Excel chart where Excel states one; one it does
+                                          not is DROPPED and named, and --strict refuses instead of
+                                          writing without it
 
 START HERE
   fsa1-cli sample ./demo && fsa1-cli render ./demo

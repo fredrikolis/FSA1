@@ -1,4 +1,4 @@
-// Concern: drives the built binary over real argv, stdin, stdout and stderr | Non-concern: what a verb computes (fsa1-verbs owns it) | IO: (argv; request lines) -> assertions
+// Concern: drives the built binary over real argv, stdin, stdout and stderr | Non-concern: what a verb computes (fsa1-verbs) | IO: (argv; request lines; fsa1-ingest fixtures) -> assertions + a temp dir
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -331,4 +331,98 @@ fn a_piped_stdin_gets_no_hint_and_stdout_carries_only_frames() {
             serde_json::from_str(line).expect("every stdout line is a frame");
         assert_eq!(v["jsonrpc"], "2.0", "{line}");
     }
+}
+
+/// A scratch directory this test file owns, so a `dest` that is taken VERBATIM has a parent to land
+/// in. Named per test, because two of them run at once.
+fn scratch(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("fsa1-mcp-{tag}-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).expect("create the scratch dir");
+    dir
+}
+
+/// The file `crates/fsa1-cli/tests/cli_convert.rs` proves a strict unpack refuses, reached by path
+/// rather than by a dependency edge: this crate does not read xlsx, it asks the verb layer to.
+fn ingest_fixture(name: &str) -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fsa1-ingest/tests/fixtures")
+        .join(name)
+        .display()
+        .to_string()
+}
+
+/// `strict` is a capability an agent can only reach if the schema offers it AND the handler reads it.
+/// The same source that the strict call must refuse is imported by the call without it, so a `strict`
+/// accepted and then dropped fails here rather than silently converting lossily.
+#[test]
+fn unpack_reads_strict_and_refuses_what_a_lossy_unpack_accepts() {
+    let root = scratch("unpack-strict");
+    let src = ingest_fixture("literals.xlsx");
+    let r = talk(&[
+        &call(
+            "unpack",
+            serde_json::json!({
+                "source": src,
+                "dest": root.join("strict").display().to_string(),
+                "strict": true
+            }),
+        ),
+        &call(
+            "unpack",
+            serde_json::json!({
+                "source": src,
+                "dest": root.join("lossy").display().to_string()
+            }),
+        ),
+    ]);
+    let (strict, lossy) = (text_of(&r[0]), text_of(&r[1]));
+    std::fs::remove_dir_all(&root).ok();
+    assert!(
+        is_error(&r[0]),
+        "a strict unpack of literals.xlsx refuses: {strict}"
+    );
+    assert!(
+        !is_error(&r[1]),
+        "the same source unpacks without strict: {lossy}"
+    );
+}
+
+/// `format` names the one thing `pack` writes, so naming it changes nothing and naming anything else
+/// is refused with the choices — never a silently different file.
+#[test]
+fn packs_format_key_defaults_to_xlsx_and_refuses_any_other() {
+    let fx = Fixture::new("pack-format");
+    let root = scratch("pack-format-out");
+    let dest = |name: &str| root.join(name).display().to_string();
+    let r = talk(&[
+        &call(
+            "pack",
+            serde_json::json!({ "source": fx.path(), "dest": dest("with.xlsx"), "format": "xlsx" }),
+        ),
+        &call(
+            "pack",
+            serde_json::json!({ "source": fx.path(), "dest": dest("without.xlsx") }),
+        ),
+        &call(
+            "pack",
+            serde_json::json!({ "source": fx.path(), "dest": dest("other.ods"), "format": "ods" }),
+        ),
+    ]);
+    let (with, without, other) = (text_of(&r[0]), text_of(&r[1]), text_of(&r[2]));
+    let other_written = root.join("other.ods").exists();
+    std::fs::remove_dir_all(&root).ok();
+
+    assert!(!is_error(&r[0]) && !is_error(&r[1]), "{with}\n{without}");
+    assert_eq!(
+        with.replace("with.xlsx", "OUT"),
+        without.replace("without.xlsx", "OUT"),
+        "an explicit format: xlsx is what an omitted one already means"
+    );
+    assert!(is_error(&r[2]), "format: ods is refused: {other}");
+    assert!(
+        other.contains("unknown format \"ods\"") && other.contains("xlsx"),
+        "the refusal names what was asked for and what is accepted: {other}"
+    );
+    assert!(!other_written, "a refused format writes no file");
 }

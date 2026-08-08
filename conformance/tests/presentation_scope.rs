@@ -202,8 +202,13 @@ fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
     }
     let packed = work.join("packed.xlsx");
     // The VERB, not the writer: grading a pack that skipped the chart leg grades nothing a caller runs.
-    let packed_report = fsa1_verbs::ops::pack(&unpacked, Some(&packed), "xlsx", false)
-        .map_err(|e| format!("pack failed: {}", e.message))?;
+    let packed_report = fsa1_verbs::ops::pack(fsa1_verbs::ops::PackArgs {
+        folder: &unpacked,
+        dest: Some(&packed),
+        format: fsa1_verbs::PackFormat::Xlsx,
+        strict: false,
+    })
+    .map_err(|e| format!("pack failed: {}", e.message))?;
     if !packed_report.not_drawn.is_empty() {
         return Err(format!(
             "pack drew no chart for {:?}",

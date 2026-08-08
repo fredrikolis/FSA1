@@ -555,6 +555,74 @@ fn pack_derives_the_basename_only_discarding_the_folders_path_prefix() {
     );
 }
 
+/// The second positional is the whole point of the `dest` parameter: given, it is the file written,
+/// verbatim and wherever it points; omitted, the derived name is unchanged.
+#[test]
+fn pack_writes_an_explicit_destination_verbatim_and_still_derives_without_one() {
+    let cwd = Fixture::new("pack-dest");
+    let book = pack_workbook(cwd.path(), "book");
+    let explicit = cwd.path().join("out").join("report.xlsx");
+    std::fs::create_dir_all(explicit.parent().unwrap()).expect("create the dest parent");
+
+    let (code, out) = run_in(
+        cwd.path(),
+        &["pack", book.to_str().unwrap(), explicit.to_str().unwrap()],
+    );
+    assert_eq!(code, 0, "an explicit dest exits 0:\n{out}");
+    assert!(
+        explicit.is_file(),
+        "the named path is what was written:\n{out}"
+    );
+    assert!(
+        !cwd.path().join("book.xlsx").exists(),
+        "an explicit dest replaces the derived name, it does not add to it:\n{out}"
+    );
+
+    let (dc, dout) = run_in(cwd.path(), &["pack", book.to_str().unwrap()]);
+    assert_eq!(dc, 0, "the same workbook still derives:\n{dout}");
+    assert!(
+        cwd.path().join("book.xlsx").is_file(),
+        "with no dest the output is still ./book.xlsx in the CWD:\n{dout}"
+    );
+}
+
+/// `pack` creates no directories, so a dest under an absent parent is an I/O refusal that names the
+/// path — the behaviour MCP has always had, now reachable from the CLI too.
+#[test]
+fn pack_refuses_an_explicit_destination_whose_parent_is_absent() {
+    let cwd = Fixture::new("pack-dest-noparent");
+    let book = pack_workbook(cwd.path(), "book");
+    let missing = cwd.path().join("nope").join("report.xlsx");
+    let (code, _, err) = run_err_in(
+        cwd.path(),
+        &["pack", book.to_str().unwrap(), missing.to_str().unwrap()],
+    );
+    assert_eq!(
+        code, 1,
+        "an absent parent is an I/O refusal (exit 1):\n{err}"
+    );
+    assert!(
+        !cwd.path().join("nope").exists() && !cwd.path().join("book.xlsx").exists(),
+        "nothing is created on that refusal:\n{err}"
+    );
+}
+
+/// A third positional has no meaning, and the refusal names the form that does.
+#[test]
+fn pack_refuses_a_third_positional_naming_the_form_it_takes() {
+    let cwd = Fixture::new("pack-arity");
+    let book = pack_workbook(cwd.path(), "book");
+    let (code, _, err) = run_err_in(
+        cwd.path(),
+        &["pack", book.to_str().unwrap(), "a.xlsx", "b.xlsx"],
+    );
+    assert_eq!(code, 2, "three positionals is bad args (exit 2):\n{err}");
+    assert!(
+        err.contains("pack takes <workbook-dir> [<dest-file>]"),
+        "the refusal admits the second positional:\n{err}"
+    );
+}
+
 #[test]
 fn pack_refuses_a_non_xlsx_target() {
     let cwd = Fixture::new("pack-target-bad");
@@ -566,8 +634,8 @@ fn pack_refuses_a_non_xlsx_target() {
         );
         assert_eq!(code, 2, "`--target {bad}` is bad args (exit 2)");
         assert!(
-            err.contains("only --target xlsx is supported"),
-            "the located --target refusal for {bad}:\n{err}"
+            err.contains(&format!("unknown --target {bad:?}; choose xlsx")),
+            "the located --target refusal for {bad}, naming the accepted choices:\n{err}"
         );
     }
     assert!(
