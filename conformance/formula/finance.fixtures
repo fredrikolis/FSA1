@@ -1,4 +1,4 @@
-# Financial batch v1: PMT NPV IRR.
+# Financial batch v1: PMT NPV IRR, extended with XNPV (the irregular-date form).
 # EXPECTED values are authored INDEPENDENTLY of FSA1 by a standalone python3 hand-formula oracle
 # (scratch: finance_oracle.py) that computes the annuity balance equation (PMT), period-1 discounting
 # (NPV), and a Newton root-find (IRR) using the SAME sequential f64 op order the engine uses (an
@@ -16,6 +16,19 @@
 # (value1/(1+rate)^1). IRR is Newton (capped) then a bounded bisection fallback then #NUM! — it can
 # never hang; the all-positive case exercises the no-root #NUM! path. The IRR bit-exact literal is the
 # hand-Newton f64 from guess 0.1, cross-checked against numpy's polynomial roots to ~1e-12.
+#
+# XNPV EXTENSION. Microsoft's published formula: sum(P_i / (1+rate)^((d_i - d_1)/365)) -- Actual/365,
+# anchored at the FIRST date, so the first flow is undiscounted. A `dates` cell is a date argument, so
+# an ISO date STRING reads as its serial exactly as a serial does. XNPV uses a FRACTIONAL exponent
+# (libm pow), which is not bit-exact in general, so the fixture is chosen where it is: 2026-01-01 to
+# 2027-01-01 is 365 days, tenor 365/365 = 1.0 exactly, and rate=1 makes (1+rate)^1 = 2 exactly.
+# EXPECTED from the same standalone python3 model as the date batch (scratch: datetext_oracle.py),
+# NEVER by running FSA1. Its authoring run printed:
+#
+#   serial(2026,1,1)=46023 · serial(2027,1,1)=46388 · span = 365 days
+#   XNPV(1,[-100,60],["2026-01-01","2027-01-01"]) = -70.0   (-100/2^0 + 60/2^1)
+#   XNPV(1,[-100,60],[46023,46388])               = -70.0   (bit-identical to the text form)
+#   XNPV(1,[-100,60],["2026-01-01","banana"])     = #VALUE!
 
 # --- PMT: annuity payment; rate==0 linear; #DIV/0! on a zero denominator ---
 
@@ -100,3 +113,35 @@ cell A2: 200
 cell A3: 300
 formula: =IRR(A1:A3)
 expect: #NUM!
+
+# --- XNPV: Actual/365 discounting over an irregular date column ---
+
+[xnpv-serial-dates]
+funcs: XNPV
+note: tenor (46388-46023)/365 = 1.0 exactly and rate=1 makes 2^1 exact: -100/1 + 60/2 = -70.
+cell A1: -100
+cell A2: 60
+cell B1: 46023
+cell B2: 46388
+formula: =XNPV(1,A1:A2,B1:B2)
+expect: -70
+
+[xnpv-iso-text-dates]
+funcs: XNPV
+note: the SAME cash flows over ISO date TEXT -- the dates argument reads a string as its serial,
+note: so this must be bit-identical to the serial form above.
+cell A1: -100
+cell A2: 60
+cell B1: "2026-01-01"
+cell B2: "2027-01-01"
+formula: =XNPV(1,A1:A2,B1:B2)
+expect: -70
+
+[xnpv-non-date-text-in-dates-is-value-error]
+funcs: XNPV
+cell A1: -100
+cell A2: 60
+cell B1: "2026-01-01"
+cell B2: "banana"
+formula: =XNPV(1,A1:A2,B1:B2)
+expect: #VALUE!

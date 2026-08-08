@@ -15,6 +15,24 @@ pub(crate) fn one_num(ctx: &mut EvalCtx, e: &Expr) -> Result<f64, ErrKind> {
     coerce_num(&scalarize(ctx.eval(e)))
 }
 
+/// [`coerce_num`] widened by the ONE ISO reader, for a DATE-valued position: text a bare `f64` parse
+/// refuses gets read as `yyyy-mm-dd[ hh:mm[:ss]]`, keeping the FRACTIONAL day so a clock survives.
+/// Text that is neither still refuses, with the numeric coercion's own error.
+pub(crate) fn coerce_date_num(v: &Value) -> Result<f64, ErrKind> {
+    match coerce_num(v) {
+        Ok(n) => Ok(n),
+        Err(k) => match scalarize(v.clone()) {
+            Value::Text(t) => parse_datetime_serial(&t).ok_or(k),
+            _ => Err(k),
+        },
+    }
+}
+
+/// [`one_num`] for a DATE-valued argument: the same scalarization, read by [`coerce_date_num`].
+pub(crate) fn one_date_num(ctx: &mut EvalCtx, e: &Expr) -> Result<f64, ErrKind> {
+    coerce_date_num(&scalarize(ctx.eval(e)))
+}
+
 /// The ONE home of the aggregators' direct-vs-in-range asymmetry: a DIRECT boolean or numeric text
 /// coerces and a direct non-numeric text is `#VALUE!`, while an IN-RANGE non-number is ignored.
 pub(crate) fn collect_numbers(ctx: &mut EvalCtx, args: &[Expr]) -> Result<Vec<f64>, ErrKind> {

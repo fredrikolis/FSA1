@@ -81,6 +81,17 @@ The interesting behaviors the seed pins, all from Excel semantics:
   `toordinal − 693594` for dates on/after `1900-03-01`, cross-checked against the well-known anchor
   `44927` = `2023-01-01`) whose authoring-run output is pasted at the head of `date.fixtures`, and
   hand-checked — NEVER by running FSA1.
+- **ISO-date-TEXT extension** (`date.fixtures`, adding `HOUR MINUTE SECOND NETWORKDAYS`). Excel reads
+  a **date STRING** in a date argument as that date's serial, and a `yyyy-mm-dd hh:mm[:ss]` string's
+  clock as the serial's **FRACTIONAL** part; text that is not a date stays `#VALUE!`. The fixtures pin
+  that reading in each ROUTE a date argument travels — `YEAR`/`MONTH`/`DAY` (the whole-day route),
+  `HOUR`/`MINUTE`/`SECOND` (the fraction route, which is why `HOUR("… 13:45")=13` and not `0`), and
+  the `holidays` argument of `NETWORKDAYS`, an argument POSITION a scalar-only reading never reaches.
+  `HOUR(0.5)=12` pins that a bare fraction is a time-of-day, not an out-of-band date serial. Same
+  python3 model, extended (`datetext_oracle.py`), authoring run at the head of `date.fixtures`.
+  **Deliberately NOT pinned**: `YEAR("8/7/2026")`, which Excel answers `2026` and FSA1 refuses. The
+  corpus is the oracle, so a missing locale date parser is a Diverge to FIX, never an expectation
+  authored down to `#VALUE!` to match the engine.
 
 - **Lookup & reference batch** (`lookup.fixtures`, the `XLOOKUP INDEX MATCH VLOOKUP CHOOSE ROW
   COLUMN` family). The EXPECTED values were computed by a standalone python3 oracle that models Excel
@@ -122,6 +133,12 @@ The interesting behaviors the seed pins, all from Excel semantics:
   an array of the same shape — which is what lets a reducer count the cells a predicate selects, the
   reason to ask one over a range at all. Neither scalarizes into a propagated `#VALUE!`.
 
+- **XNPV** (`finance.fixtures`) is Microsoft's published irregular-date sum
+  `Σ P_i/(1+rate)^((d_i−d_1)/365)` — Actual/365, anchored at the FIRST date, so `P_1` is undiscounted.
+  A `dates` cell is a **date argument**, so an ISO date string reads as its serial there too, and the
+  text and serial forms are pinned to the SAME literal. XNPV uses a FRACTIONAL exponent (libm `pow`),
+  not bit-exact in general, so the fixture is chosen where it is: `2026-01-01`→`2027-01-01` is 365
+  days (tenor `1.0` exactly) and `rate=1` makes `2^1` exact, landing on `−70`.
 - **Financial batch** (`finance.fixtures`, the `PMT NPV IRR` family). The EXPECTED values were computed
   by a standalone python3 hand-formula oracle (`finance_oracle.py`, its authoring print pasted at the
   head of `finance.fixtures`) derived FROM the documented cash-flow-time-value math, NOT from FSA1.

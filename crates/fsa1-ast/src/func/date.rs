@@ -63,11 +63,12 @@ fn date_int_arg(ctx: &mut EvalCtx, e: &Expr) -> Result<i64, ErrKind> {
     Ok(n as i64)
 }
 
-/// Evaluate a serial-valued argument (YEAR/MONTH/DAY/EDATE/DATEDIF): coerce, `floor` to the integer day
-/// (matching TEXT's date render), and gate the valid serial band [1, MAX_SERIAL] — a serial before
-/// 1900-01-01 or after 9999-12-31 is #NUM!. A non-coercible value is #VALUE!; an error propagates.
+/// Evaluate a serial-valued argument (YEAR/MONTH/DAY/EDATE/DATEDIF): coerce (ISO date text included,
+/// via [`one_date_num`]), `floor` to the integer day (matching TEXT's date render), and gate the valid
+/// serial band [1, MAX_SERIAL] — a serial before 1900-01-01 or after 9999-12-31 is #NUM!. A
+/// non-coercible value is #VALUE!; an error propagates.
 fn date_serial_arg(ctx: &mut EvalCtx, e: &Expr) -> Result<i64, ErrKind> {
-    let n = one_num(ctx, e)?.floor();
+    let n = one_date_num(ctx, e)?.floor();
     if !(1.0..=MAX_SERIAL as f64).contains(&n) {
         return Err(ErrKind::Num);
     }
@@ -612,8 +613,9 @@ fn leap_day_in_range(s: i64, e: i64) -> bool {
 }
 
 /// Gather the optional `holidays` argument (a scalar, range, or array) into a set of integer date
-/// serials for WORKDAY / NETWORKDAYS. A blank cell is skipped; a non-coercible value is #VALUE!; an
-/// error propagates.
+/// serials for WORKDAY / NETWORKDAYS. Each cell is read by [`coerce_date_num`], so ISO date text is a
+/// holiday here exactly as it is in `start_date`. A blank cell is skipped; a non-coercible value is
+/// #VALUE!; an error propagates.
 fn gather_holidays(ctx: &mut EvalCtx, e: &Expr) -> Result<HashSet<i64>, ErrKind> {
     let mut set = HashSet::new();
     let push = |v: &Value, set: &mut HashSet<i64>| -> Result<(), ErrKind> {
@@ -621,7 +623,7 @@ fn gather_holidays(ctx: &mut EvalCtx, e: &Expr) -> Result<HashSet<i64>, ErrKind>
             Value::Blank => {}
             Value::Error(k) => return Err(*k),
             other => {
-                set.insert(coerce_num(other)?.floor() as i64);
+                set.insert(coerce_date_num(other)?.floor() as i64);
             }
         }
         Ok(())
@@ -712,9 +714,9 @@ fn opt_holidays(ctx: &mut EvalCtx, args: &[Expr], idx: usize) -> Result<HashSet<
 
 /// Whole seconds in `[0, 86400)`, rounded to the nearest second so a value a hair under the next day
 /// rolls to 0. Gated to the same datetime band the date readers use, rather than reading a time off
-/// an out-of-band serial.
+/// an out-of-band serial. Reads ISO date/time text too ([`one_date_num`]), whose fraction IS the clock.
 fn time_of_day_seconds(ctx: &mut EvalCtx, e: &Expr) -> Result<i64, ErrKind> {
-    let n = one_num(ctx, e)?;
+    let n = one_date_num(ctx, e)?;
     if !(0.0..(MAX_SERIAL + 1) as f64).contains(&n) {
         return Err(ErrKind::Num);
     }

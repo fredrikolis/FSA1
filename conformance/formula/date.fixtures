@@ -1,4 +1,5 @@
-# v1 date/time batch: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW.
+# v1 date/time batch: DATE YEAR MONTH DAY EDATE DATEDIF TODAY NOW, extended with the ISO-date-TEXT
+# batch: HOUR MINUTE SECOND NETWORKDAYS.
 #
 # EPOCH: the Excel 1900 date-serial system, WITH Excel's 1900 leap-year bug replicated (serial 60 =
 # the fictional 1900-02-29; serials >= 61 shift back one day, so 44927 = 2023-01-01). The serial<->date
@@ -35,6 +36,23 @@
 #   * DATEDIF "Y"/"M"/"D" are complete years/months/days; "MD"/"YM"/"YD" are the remainders; the unit
 #     folds case; start>end and an unknown unit are #NUM!.
 #   * TODAY floors the pinned clock to an integer serial; NOW keeps the time-of-day fraction.
+#
+# ISO-DATE-TEXT EXTENSION. Excel reads a DATE STRING in a date argument as that date's serial, and a
+# `yyyy-mm-dd hh:mm[:ss]` string's clock as the serial's FRACTIONAL part; text that is not a date is
+# #VALUE!. HOUR/MINUTE/SECOND read that fraction, so they answer off a bare fraction too. NETWORKDAYS
+# counts the days start..end inclusive that are neither Sat/Sun nor a listed holiday, and the holidays
+# argument is a date argument like any other. EXPECTED values from the same standalone python3 model,
+# extended for these (scratch: datetext_oracle.py) — NEVER by running FSA1. Its authoring run printed:
+#
+#   anchor: serial(2023,1,1)=44927 · serial(2026,8,3)=46237 · serial(2026,8,5)=46239
+#           serial(2026,8,7)=46241 · 2026-08-03..07 = Mon Tue Wed Thu Fri
+#   YEAR("2026-08-07")=2026 · MONTH("2026-08-07")=8 · DAY("2026-08-07")=7 · YEAR("banana")=#VALUE!
+#   HOUR("2026-08-07 13:45")=13 · MINUTE("2026-08-07 13:45")=45 · SECOND("2026-08-07 13:45:09")=9
+#   HOUR(0.5)=12 · MINUTE(0.5)=0 · SECOND(0.5)=0
+#   NETWORKDAYS("2026-08-03","2026-08-07")=5 · with holiday "2026-08-05" = 4 · "banana" = #VALUE!
+#
+# NOT pinned here: `YEAR("8/7/2026")`, which Excel answers 2026 and FSA1 refuses. The corpus is the
+# ORACLE, so a locale date parser is a Diverge to be FIXED, never an expectation authored to #VALUE!.
 
 # ---- DATE(year, month, day) ----
 
@@ -201,3 +219,80 @@ expect: 44927.5
 funcs: NOW, TODAY
 formula: =NOW()-TODAY()
 expect: 0.5
+
+# ---- An ISO DATE STRING is a date, in every date argument ----
+
+[year-of-iso-date-text]
+funcs: YEAR
+note: the reported gap -- a date argument reads a `yyyy-mm-dd` string as its serial, as Excel does.
+formula: =YEAR("2026-08-07")
+expect: 2026
+
+[month-of-iso-date-text]
+funcs: MONTH
+formula: =MONTH("2026-08-07")
+expect: 8
+
+[day-of-iso-date-text]
+funcs: DAY
+formula: =DAY("2026-08-07")
+expect: 7
+
+[year-of-non-date-text-is-value-error]
+funcs: YEAR
+note: reading a DATE string widens what a date argument accepts; it coerces nothing else.
+formula: =YEAR("banana")
+expect: #VALUE!
+
+# ---- HOUR / MINUTE / SECOND (the serial's FRACTIONAL part) ----
+
+[hour-of-iso-datetime-text]
+funcs: HOUR
+note: the clock SURVIVES the read -- a whole-day reading of the same string would answer 0.
+formula: =HOUR("2026-08-07 13:45")
+expect: 13
+
+[minute-of-iso-datetime-text]
+funcs: MINUTE
+formula: =MINUTE("2026-08-07 13:45")
+expect: 45
+
+[second-of-iso-datetime-text]
+funcs: SECOND
+formula: =SECOND("2026-08-07 13:45:09")
+expect: 9
+
+[hour-of-a-bare-serial-fraction]
+funcs: HOUR
+note: a fraction below 1 is a time-of-day, NOT an out-of-band date serial: half a day is 12:00.
+formula: =HOUR(0.5)
+expect: 12
+
+[minute-of-a-bare-serial-fraction]
+funcs: MINUTE
+formula: =MINUTE(0.5)
+expect: 0
+
+[second-of-a-bare-serial-fraction]
+funcs: SECOND
+formula: =SECOND(0.5)
+expect: 0
+
+# ---- NETWORKDAYS(start_date, end_date, [holidays]) — the holidays argument is a date argument ----
+
+[networkdays-iso-text-full-workweek]
+funcs: NETWORKDAYS
+note: 2026-08-03..07 is Mon..Fri -- five workdays, the baseline the holiday case is read against.
+formula: =NETWORKDAYS("2026-08-03","2026-08-07")
+expect: 5
+
+[networkdays-iso-text-holiday-excluded]
+funcs: NETWORKDAYS
+note: the Wednesday is excluded, so arg 3 read the string that args 1 and 2 read.
+formula: =NETWORKDAYS("2026-08-03","2026-08-07","2026-08-05")
+expect: 4
+
+[networkdays-non-date-text-holiday-is-value-error]
+funcs: NETWORKDAYS
+formula: =NETWORKDAYS("2026-08-03","2026-08-07","banana")
+expect: #VALUE!

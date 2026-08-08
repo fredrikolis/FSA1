@@ -399,9 +399,9 @@ fn day_tenors(dates: &[f64]) -> Option<Vec<f64>> {
 }
 
 /// Pair an XNPV/XIRR `values` range with its `dates` range: materialize both to blocks ([`block`]),
-/// require equal NON-EMPTY cell counts, and coerce each cell to a number (a date to a whole-day serial
-/// via `floor`). Mismatched lengths or an empty stream is `#NUM!`; a non-numeric cell or a propagated
-/// error surfaces its error.
+/// require equal NON-EMPTY cell counts, and coerce each cell to a number — a `dates` cell through
+/// [`coerce_date_num`], so ISO date text reads as its serial, then `floor` to a whole day. Mismatched
+/// lengths or an empty stream is `#NUM!`; a non-numeric cell or a propagated error surfaces its error.
 fn x_cashflows(
     ctx: &mut EvalCtx,
     values: &Expr,
@@ -416,7 +416,7 @@ fn x_cashflows(
     let mut ds = Vec::with_capacity(dcells.len());
     for (v, d) in vcells.iter().zip(&dcells) {
         cf.push(coerce_num(v)?);
-        ds.push(coerce_num(d)?.floor());
+        ds.push(coerce_date_num(d)?.floor());
     }
     Ok((cf, ds))
 }

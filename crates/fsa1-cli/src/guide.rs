@@ -1,4 +1,4 @@
-// Concern: the --guide text — the on-disk model, filenames, body grammar | Non-concern: per-command help (main.rs owns it), filling the holes (main.rs) | IO: none
+// Concern: the --guide text — the on-disk model, filenames, body grammar, dynamic-array call surface | Non-concern: what a function DOES (fsa1-ast), per-command help, the holes (main.rs) | IO: none
 
 /// `{DECOMPOSITIONS}` is filled by `main.rs::guide_text` from [`fsa1_ingest::Decomposition::ALL`], as
 /// `unpack --help`'s same hole is: the terse index cannot name a different policy set than
@@ -25,6 +25,29 @@ FILE BODY — a TSV grid, one cell per coordinate
   Each field is a literal (Product · 10 · TRUE · #REF!) or an =formula (=B2*C2).
   The grid must fill the declared range exactly (B2:D9 ⇒ 8×3 rows×cols, else dimension error).
   No drag-fill: write one explicit formula per cell (=B2*C2, =B3*C3, …).
+
+FUNCTIONS — the dynamic-array family, whose ARGUMENTS are the part you cannot guess
+  There is NO spill beyond a declared range: name the file the range the result fills exactly, shape
+  and orientation both. =SEQUENCE(3) is A1:A3 — A1:A4 is #SPILL!, A1:C1 is #SPILL!, and a bare A1
+  keeps the first element only.
+  [square brackets] mark an optional argument; an omitted one takes the default stated here.
+  FILTER(array, include, [if_empty])   include is a 1-wide column (or 1-tall row) matching array's
+                                          axis. NO match and NO if_empty is #CALC! — pass if_empty
+                                          ("" for blank) whenever an empty result is legitimate.
+  SORT(array, [index], [order], [by_col])   index=1 is 1-based along the sorted axis; order 1 asc
+                                          / -1 desc and NOTHING else; by_col FALSE sorts rows,
+                                          TRUE sorts columns. SORT keys on a column OF array.
+  SORTBY(array, by1, [order1], by2, [order2], …)   sorts array by key vectors that need NOT be part
+                                          of it, each matching array's axis; order defaults 1 asc.
+                                          This, not SORT, is how you sort by a separate column.
+  UNIQUE(array, [by_col], [exactly_once])   by_col FALSE compares rows; exactly_once TRUE keeps
+                                          only the lines that appear exactly once.
+  SEQUENCE(rows, [cols], [start], [step])   cols/start/step default 1.
+  Others returning an array, NOT a closed list: TRANSPOSE · VSTACK · HSTACK · TAKE · DROP ·
+                                          CHOOSEROWS · CHOOSECOLS · TEXTSPLIT · FREQUENCY, and
+                                          INDEX/XLOOKUP in their whole-row and whole-column forms.
+                                          Size the file from what the call RETURNS, not from here.
+  Every other built-in is spelled and argued as in Excel; check names an unknown one.
 
 PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   The FILENAME is the scoping root — A1:C9.css, a bare A1.css, or an OPEN range A:A.css /
