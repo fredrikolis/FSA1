@@ -1,4 +1,4 @@
-// Concern: spells a source chart as a Vega-Lite figure, and names what cannot cross | Non-concern: reading a chart part (xlsx_chart.rs), a sheet's blocks | IO: (a chart, its sheet) -> (name, body)
+// Concern: spells a source chart as a Vega-Lite figure, and names what cannot cross | Non-concern: reading a chart part (fsa1-xlsx), a sheet's blocks | IO: (a chart, its sheet) -> (name, body)
 //! Excel-to-Vega-Lite is TOTAL over the charts it admits and LOSSY within them: every reason a chart
 //! yields no figure leaves here as a sentence a [`UnpackWarning::ChartNotCarried`] carries, and never
 //! as a silence. A chart that would produce a figure `check` then refuses is one of those reasons —
@@ -12,7 +12,7 @@ use crate::resolve::Resolution;
 use crate::serialize::cell_field;
 use crate::source::{SheetSource, SourceValue};
 use crate::warnings::UnpackWarning;
-use crate::xlsx_chart::{SourceChart, SourceSeries};
+use fsa1_xlsx::{SourceChart, SourceSeries};
 
 /// The dialect the pinned runtime compiles — `vega-manifest.txt` names the version.
 const SCHEMA: &str = "https://vega.github.io/schema/vega-lite/v5.json";
@@ -197,9 +197,7 @@ pub(crate) fn spell(
 fn mark_of(chart: &SourceChart) -> Result<&'static str, String> {
     match chart.plots.as_slice() {
         [] => Err("it states no plot area content at all".to_string()),
-        [one] => {
-            fsa1_xlsx::mark_for(one).ok_or_else(|| format!("a <c:{one}> has no Vega-Lite mark"))
-        }
+        [one] => fsa1_xlsx::mark_for(one).ok_or_else(|| fsa1_xlsx::no_mark_reason(one)),
         many => Err(format!(
             "it combines {} plots ({}) in one plot area, and a combination chart has no one mark",
             many.len(),
@@ -218,11 +216,7 @@ fn layer(
     horizontal_bars: bool,
 ) -> Result<Json, String> {
     if series.literal {
-        return Err(
-            "a series carries its values inline (<c:numLit>) rather than referencing cells, so it \
-             binds no rectangle"
-                .to_string(),
-        );
+        return Err(fsa1_xlsx::inline_values_reason());
     }
     let cat = reference(series.cat.as_deref(), "its categories", table.tab())?;
     let val = reference(series.val.as_deref(), "its values", table.tab())?;

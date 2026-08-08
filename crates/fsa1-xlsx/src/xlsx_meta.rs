@@ -7,13 +7,13 @@ use std::path::Path;
 
 use fsa1_model::{
     CUSTOM_NUMFMT_ID, CurrencySymbol, DatePattern, DateTimePattern, Format, TimePattern,
+    effective_literal_format, is_display_exact,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use zip::ZipArchive;
 
 use crate::error::{ErrorKind, IngestError};
-use crate::serialize::{effective_literal_format, is_display_exact};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawName {

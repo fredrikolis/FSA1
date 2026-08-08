@@ -11,6 +11,18 @@ const NS_SHEET_DRAWING: &str =
 const NS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const INFALLIBLE: &str = "writing XML to an in-memory buffer is infallible";
 
+/// The package path of the FIRST chart part, which is what a caller writing one chart names it by.
+pub const CHART_PART: &str = "xl/charts/chart1.xml";
+
+/// One hand-written bar-chart part, as this crate spells one: a specimen a caller grades its own
+/// chart handling against without first packing a workbook to obtain one.
+pub const BAR_CHART_PART: &str = r#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea><c:barChart>
+        <c:barDir val="col"/><c:ser>
+        <c:tx><c:strRef><c:f>Sheet1!$B$1</c:f></c:strRef></c:tx>
+        <c:cat><c:numRef><c:f>Sheet1!$A$2:$A$4</c:f></c:numRef></c:cat>
+        <c:val><c:numRef><c:f>Sheet1!$B$2:$B$4</c:f></c:numRef></c:val>
+        </c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+
 /// One `<c:ser>`: the two references it plots against each other, and the one cell naming it. Each is
 /// plain A1 — `Sheet1!A2:A4` — because the `$` is Excel's spelling of a reference, not a fact about
 /// the range, and this file is where it is put back on.

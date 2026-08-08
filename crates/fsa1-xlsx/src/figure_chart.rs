@@ -37,6 +37,12 @@ pub fn mark_for(element: &str) -> Option<&'static str> {
         .map(|(mark, _)| *mark)
 }
 
+/// The ONE sentence naming a plot `element` [`mark_for`] has no mark for. The element's own spelling
+/// is this crate's fact, so a reader is handed the sentence rather than composing it.
+pub fn no_mark_reason(element: &str) -> String {
+    format!("a <c:{element}> has no Vega-Lite mark")
+}
+
 /// The keys a spec may state at the top and still be one chart, and the ones a layer inside it may.
 /// `usermeta` is ADVISORY: it may only refine a chart the SPEC has already decided, and is never
 /// consulted for the chart's own shape. Nothing this writer emits is refinable yet, so it refines

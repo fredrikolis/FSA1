@@ -11,7 +11,7 @@ use fsa1_model::{
 use crate::decompose::Block;
 use crate::source::SheetSource;
 use crate::warnings::{Axis, UnpackWarning, unowned};
-use crate::xlsx_style::{
+use fsa1_xlsx::{
     BorderStyle, FillPattern, HorizontalAlign, StyleTable, Underline,
     VerticalAlign as XlsxVerticalAlign, XlsxBorder, XlsxFont, XlsxStyle,
 };
@@ -801,7 +801,7 @@ fn approximated(style: BorderStyle) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::source::{SourceCell, SourceValue, StyleTable};
-    use crate::xlsx_style::{VertAlign, XlsxFill};
+    use fsa1_xlsx::{VertAlign, XlsxFill};
 
     /// One cell wearing `look`, over a workbook whose Normal style is plain Calibri 11.
     fn one_cell(look: XlsxStyle) -> SheetSource {

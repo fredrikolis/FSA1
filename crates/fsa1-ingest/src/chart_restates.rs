@@ -8,11 +8,7 @@ use fsa1_model::{Binding, Figure, Rect, Workbook};
 use serde_json::{Map, Value as Json};
 
 use crate::figure_body::{BookTable, ChartTable, spell};
-use crate::xlsx_chart::parse_chart;
-
-/// The part name a loss would carry. The chart is not in a package yet, so this only feeds the stem
-/// [`spell`] falls back to, which nothing here compares.
-const WRITTEN: &str = "xl/charts/chart1.xml";
+use fsa1_xlsx::{CHART_PART, parse_chart};
 
 /// `Ok` where the chart part `xml` reads back as the figure it was written from, and otherwise the
 /// ONE sentence naming the difference — which is what an author simplifies their spec against.
@@ -23,7 +19,7 @@ pub fn chart_restates_figure(
     figure: &Figure,
 ) -> Result<(), String> {
     let table = BookTable { wb, sheet };
-    let chart = parse_chart(WRITTEN.to_string(), table.tab().to_string(), xml)
+    let chart = parse_chart(CHART_PART.to_string(), table.tab().to_string(), xml)
         .map_err(|e| format!("the chart written from it does not read back: {e}"))?;
     let content = table.content();
     let (_, body) = spell(&chart, &table, content, &[])?;
@@ -112,12 +108,8 @@ mod tests {
         .expect("the tab loads")
     }
 
-    const BAR: &str = r#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea><c:barChart>
-        <c:barDir val="col"/><c:ser>
-        <c:tx><c:strRef><c:f>Sheet1!$B$1</c:f></c:strRef></c:tx>
-        <c:cat><c:numRef><c:f>Sheet1!$A$2:$A$4</c:f></c:numRef></c:cat>
-        <c:val><c:numRef><c:f>Sheet1!$B$2:$B$4</c:f></c:numRef></c:val>
-        </c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+    /// One bar chart part, handed over by the crate that spells one.
+    const BAR: &str = fsa1_xlsx::BAR_CHART_PART;
 
     fn figure(spec: &str) -> Figure {
         Figure::parse("Sheet1/f.vl.json", spec).expect("the spec parses")

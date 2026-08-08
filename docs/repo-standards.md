@@ -27,8 +27,8 @@ AST, and the ones governing what gets frozen in a test. Every principle appears 
 - **Raising a bound to pass a gate.** Not the 200-character annotation, not a comment ratio, not
   a run-length. The bound is the detector; a bigger number hides what it found.
 - **A crate reaching across the firewall.** `fsa1-ast` learning about the filesystem,
-  `fsa1-model` reaching into the AST's internals, or a format crate's types (`calamine`,
-  `zip`) escaping `fsa1-ingest`.
+  `fsa1-model` reaching into the AST's internals, or a format library's types (`zip`,
+  `quick-xml`, `calamine`) escaping the format crate that confines it.
 
 **Formula-AST blockers** (-∞):
 
@@ -117,8 +117,9 @@ fsa1-cli  →  fsa1-model  →  fsa1-ast
 ```
 
 `fsa1-ast` knows nothing of the filesystem. `fsa1-model` consumes it through a narrow trait and
-knows nothing of its internals. `fsa1-ingest` confines every format dependency. `fsa1-cli` is a
-thin shell over the layer below. `docs/architecture.md` holds the detail; a change that inverts
+knows nothing of its internals. A FORMAT crate confines the libraries that read and write it, both
+directions in one place — `fsa1-xlsx` for .xlsx — and the import pipeline asks it rather than
+knowing itself. `fsa1-cli` is a thin shell over the layer below. `docs/architecture.md` holds the detail; a change that inverts
 or short-circuits an arrow is an AUTO-REJECT.
 
 **A charter is a routing instrument, not a whitelist.** A unit's charter states one job at its
@@ -536,7 +537,7 @@ Gate A answers every row.
 | **KISS** | Simplest working solution | Complexity without justification |
 | **YAGNI** | Build for today | Machinery for a hypothetical second case |
 | **SoC** | Every unit owns one job; fractal crate→variable | A unit doing a neighbor's job |
-| **Crate firewall** | `cli → model → ast`; ingest confines formats | An arrow inverted or short-circuited |
+| **Crate firewall** | `cli → model → ast`; a format crate confines its format | An arrow inverted or short-circuited |
 | **Dependency inversion** | Depend on abstractions; point at stability | High-level module depends on low-level detail |
 | **Minimal API** | Expose only what is necessary | Leaking implementation details |
 | **Agent UX** | The agent is the primary user; the surface ratchets forward | A change making an agent's parse or self-repair worse |

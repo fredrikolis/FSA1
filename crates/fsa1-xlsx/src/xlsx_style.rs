@@ -241,7 +241,7 @@ impl StyleTable {
     }
 
     /// What the SOURCE draws over a cell holding no value: a fill of ANY pattern, or any drawn edge,
-    /// `<diagonal>` included. Not the occupancy question ([`crate::scope_block::paints_blank`]) — it
+    /// `<diagonal>` included. Not the occupancy question (`scope_block::paints_blank`) — it
     /// only keeps the coordinate inside the sheet's extent, so a look no rule can carry is still there
     /// to be NAMED as a loss instead of vanishing with its cell. An index outside the table draws none.
     pub fn draws_on_blank(&self, index: u32) -> bool {
@@ -260,14 +260,13 @@ impl StyleTable {
     }
 }
 
-#[cfg(test)]
 impl StyleTable {
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.styles.is_empty()
     }
 
     /// A table with no package to read it from, for tests over the leg that WRITES a style.
-    pub(crate) fn of(styles: Vec<XlsxStyle>, normal_font: XlsxFont) -> StyleTable {
+    pub fn of(styles: Vec<XlsxStyle>, normal_font: XlsxFont) -> StyleTable {
         StyleTable {
             styles,
             normal_font,
@@ -1147,9 +1146,11 @@ fn spell_from<T: Copy + PartialEq>(table: &[(&'static str, T)], value: T) -> &'s
 mod tests {
     use super::*;
 
+    /// The .xlsx corpus `fsa1-ingest/scripts/make_xlsx_fixtures.py` authors, read in place rather than
+    /// copied: one workbook graded by both this reader and the import that drives it.
     fn fixture(name: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures")
+            .join("../fsa1-ingest/tests/fixtures")
             .join(name)
     }
 

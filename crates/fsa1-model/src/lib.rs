@@ -13,6 +13,7 @@ pub mod format;
 pub mod geometry;
 pub mod grid;
 pub mod names;
+pub mod number_literal;
 pub mod overlap;
 pub mod overlay;
 pub mod presentation;
@@ -45,6 +46,7 @@ pub use names::{
     RawNameEntry, is_cell_filename, is_figure_entry, is_presentation_entry, is_tab_layer,
     presentation_stem, quote_sheet,
 };
+pub use number_literal::{display_number_literal, effective_literal_format, is_display_exact};
 pub use overlap::{Rect, detect_overlaps};
 pub use overlay::Overlay;
 pub use presentation::{Presentation, Rule, Target, parse_rules, spell_rules};

@@ -1,11 +1,10 @@
-// Concern: converts a .ods/.xlsx into an FSA1 workbook tree | Non-concern: the CLI, the formula language | IO: (a source, a dest dir) -> a tab tree + an ImportReport
+// Concern: converts a .ods/.xlsx into an FSA1 workbook tree | Non-concern: how either format is spelled (fsa1-xlsx), the CLI, the formula language | IO: (source, dest) -> a tree + a report
 
 #[cfg(test)]
 mod block_probe;
 mod chart_restates;
 mod dates;
 mod decompose;
-pub mod error;
 mod figure_body;
 mod names;
 mod partition;
@@ -16,24 +15,21 @@ mod serialize;
 mod source;
 mod translate;
 mod warnings;
-mod xlsx_chart;
-mod xlsx_meta;
-mod xlsx_style;
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 pub use chart_restates::chart_restates_figure;
-pub use error::{ErrorKind, IngestError};
+pub use fsa1_xlsx::{ErrorKind, IngestError};
 pub use partition::Decomposition;
 pub use warnings::{AxisRef, UnpackCategory, UnpackWarning};
 
 use decompose::StyledCell;
 use figure_body::SheetFigures;
+use fsa1_xlsx::SourceChart;
 use names::emit_names;
 use serialize::sheet_files;
 use source::{SheetSource, SourceBook};
-use xlsx_chart::SourceChart;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportReport {
@@ -78,8 +74,8 @@ fn import(
     // The ONE reading of "strict reaches this source": the contract is the inverse of a faithful `pack`, and `pack` writes .xlsx.
     let strict_xlsx = strict && is_xlsx(src);
     let format_map = if strict_xlsx {
-        xlsx_meta::strict_roundtrip_check(src)?;
-        Some(xlsx_meta::numfmt_map(src)?)
+        fsa1_xlsx::strict_roundtrip_check(src)?;
+        Some(fsa1_xlsx::numfmt_map(src)?)
     } else {
         None
     };
@@ -90,8 +86,8 @@ fn import(
     let book = reader::read_file(src, format_map.as_ref(), &mut read_warnings)?;
     let mut chart_losses: Vec<UnpackWarning> = Vec::new();
     let package = match is_xlsx(src) {
-        true => xlsx_chart::read_package(src)?,
-        false => xlsx_chart::Package::default(),
+        true => fsa1_xlsx::read_package(src)?,
+        false => fsa1_xlsx::Package::default(),
     };
     let (charts, drawings) = (&package.charts, &package.drawings);
     let figures = spell_figures(&book, charts, &mut chart_losses);
@@ -112,13 +108,13 @@ fn import(
 
     let mut warnings: Vec<UnpackWarning> = Vec::new();
     if is_xlsx(src) {
-        for part in xlsx_meta::uncarried_parts(src)? {
+        for part in fsa1_xlsx::uncarried_parts(src)? {
             warnings.push(UnpackWarning::WorkbookPartNotCarried { part: part.spell() });
         }
     }
     // Only the lossy path needs this: it passes `format_map = None` and never learns of a drop.
     if !strict && is_xlsx(src) {
-        for c in xlsx_meta::numfmt_coercions(src)? {
+        for c in fsa1_xlsx::numfmt_coercions(src)? {
             warnings.push(UnpackWarning::NumberFormatCoerced {
                 sheet: c.sheet,
                 cell: c.cell,
@@ -491,7 +487,7 @@ mod tests {
         let loss = UnpackWarning::ChartNotCarried {
             sheet: "Sheet1".to_string(),
             chart: "xl/charts/chart1.xml".to_string(),
-            why: "a <c:radarChart> has no Vega-Lite mark".to_string(),
+            why: fsa1_xlsx::no_mark_reason("radarChart"),
         };
         let err = refuse_dropped_chart(std::slice::from_ref(&loss)).unwrap_err();
         assert_eq!(err.kind, ErrorKind::Invalid);

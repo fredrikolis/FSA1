@@ -1,4 +1,4 @@
-// Concern: IngestError — an ingest failure carrying the sheet and A1 to blame, plus a stable ErrorKind | Non-concern: what is read or written, CLI exit codes | IO: none
+// Concern: IngestError — a READ failure carrying the sheet and A1 to blame, plus a stable ErrorKind | Non-concern: a write failure (ExportError in export.rs), CLI exit codes | IO: none
 
 use std::fmt;
 

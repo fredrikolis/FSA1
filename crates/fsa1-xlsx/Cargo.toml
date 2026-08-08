@@ -1,4 +1,4 @@
-# Concern: declares the package and its deps, the WRITE-side format libraries and serde_json | Non-concern: the read half, which depends on THIS crate rather than the reverse | IO: none
+# Concern: declares the package and its deps, the format libraries and serde_json | Non-concern: what the crate does, the deny edges (.annotated-tree.toml) | IO: none
 [package]
 name = "fsa1-xlsx"
 version = "0.1.0"

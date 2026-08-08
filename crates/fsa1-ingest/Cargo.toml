@@ -1,4 +1,4 @@
-# Concern: declares the package and its deps: the READ-side format libraries, serde_json, and fsa1-xlsx | Non-concern: what the crate does, the deny edges (.annotated-tree.toml) | IO: none
+# Concern: declares the package and its deps: calamine, serde_json, and the fsa1-xlsx crate that spells the format | Non-concern: what the crate does, the deny edges (.annotated-tree.toml) | IO: none
 [package]
 name = "fsa1-ingest"
 version = "0.1.0"
@@ -8,10 +8,13 @@ license.workspace = true
 [dependencies]
 fsa1-ast = { path = "../fsa1-ast" }
 fsa1-model = { path = "../fsa1-model" }
-# The one Vega-Lite mark <-> Excel chart element table lives in the crate that WRITES the element;
-# this reader reads it backwards rather than keeping a twin. Owner-blessed edge, 2026-08-07.
+# How an .xlsx is spelled has ONE home, and it is not here: this crate drives the import PIPELINE and
+# asks fsa1-xlsx for every byte layout, in either direction. Owner-blessed edge, 2026-08-07.
 fsa1-xlsx = { path = "../fsa1-xlsx" }
 calamine = "0.36"
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
-quick-xml = "0.41"
 serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+# Only tests/import_fidelity.rs reaches these: it PATCHES a package's parts to author a fixture the
+# importer then reads. Reading one for real is fsa1-xlsx's job.
+zip = { version = "8.6", default-features = false, features = ["deflate"] }

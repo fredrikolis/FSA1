@@ -8,17 +8,16 @@ use std::path::Path;
 use calamine::{CellErrorType, Data, Reader, Sheets, open_workbook_auto};
 use fsa1_ast::ErrKind;
 use fsa1_ast::a1::format_cell;
-use fsa1_model::Format;
+use fsa1_model::{Format, effective_literal_format, is_display_exact};
 
 use crate::dates::{iso_datetime_to_serial, iso_duration_to_serial};
-use crate::error::{ErrorKind, IngestError};
 use crate::names::DefinedName;
 use crate::resolve::Resolution;
-use crate::serialize::{effective_literal_format, is_display_exact};
 use crate::source::{SheetSource, SourceBook, SourceCell, SourceValue};
 use crate::warnings::{Axis, UnpackWarning, axis_run, unowned};
-use crate::xlsx_meta::{self, NumFmtMap, RawTable};
-use crate::xlsx_style::{self, AxisRun, AxisSize, AxisStyle, StyleTable, Styling};
+use fsa1_xlsx::{
+    AxisRun, AxisSize, AxisStyle, ErrorKind, IngestError, NumFmtMap, RawTable, StyleTable, Styling,
+};
 
 const MAX_SHEET_CELLS: u64 = 4_000_000;
 
@@ -58,7 +57,7 @@ pub fn read_file(
 
     // .ods carries no styling on the read side: it imports values and formulas and nothing else.
     let styling = match ext.as_deref() {
-        Some("xlsx") => Some(xlsx_style::read_styling(path)?),
+        Some("xlsx") => Some(fsa1_xlsx::read_styling(path)?),
         _ => None,
     };
 
@@ -104,7 +103,7 @@ fn build_resolution(
         }
     }
 
-    let meta = xlsx_meta::read_meta(path)?;
+    let meta = fsa1_xlsx::read_meta(path)?;
     let res = resolve_tables(meta.tables, &table_sheet, tables_ok, warnings);
     let mut defined_names = Vec::new();
     for n in meta.names {
@@ -456,13 +455,13 @@ mod tests {
         );
         let err =
             data_to_value(&Data::Error(CellErrorType::GettingData), "S", 0, 0, None).unwrap_err();
-        assert_eq!(err.kind, crate::error::ErrorKind::Invalid);
+        assert_eq!(err.kind, fsa1_xlsx::ErrorKind::Invalid);
     }
 
     #[test]
     fn an_unparseable_iso_date_is_a_located_refusal() {
         let err = data_to_value(&Data::DateTimeIso("nope".into()), "Data", 3, 1, None).unwrap_err();
-        assert_eq!(err.kind, crate::error::ErrorKind::Invalid);
+        assert_eq!(err.kind, fsa1_xlsx::ErrorKind::Invalid);
         assert_eq!(err.sheet.as_deref(), Some("Data"));
         assert_eq!(err.cell.as_deref(), Some("D2"), "col 3, row 1 is D2");
     }
@@ -550,13 +549,13 @@ mod tests {
     fn an_unsupported_extension_is_a_located_refusal_not_a_format_sniff() {
         // The gate fires before any open, so it does not depend on the file existing.
         let err = read_file(std::path::Path::new("book.csv"), None, &mut Vec::new()).unwrap_err();
-        assert_eq!(err.kind, crate::error::ErrorKind::Invalid);
+        assert_eq!(err.kind, fsa1_xlsx::ErrorKind::Invalid);
         assert!(err.message.contains(".ods or .xlsx"), "{}", err.message);
         assert_eq!(
             read_file(std::path::Path::new("noext"), None, &mut Vec::new())
                 .unwrap_err()
                 .kind,
-            crate::error::ErrorKind::Invalid,
+            fsa1_xlsx::ErrorKind::Invalid,
             "a file with no extension is refused too"
         );
     }
@@ -629,16 +628,16 @@ mod tests {
     /// back, and what still SHOWS past it is `draws_on_blank`'s question, already asked and now named.
     #[test]
     fn an_axis_default_is_resolved_inside_the_extent_and_only_a_drawn_one_is_named_past_it() {
-        let painted = crate::xlsx_style::XlsxStyle {
-            fill: crate::xlsx_style::XlsxFill {
-                pattern: crate::xlsx_style::FillPattern::Solid,
+        let painted = fsa1_xlsx::XlsxStyle {
+            fill: fsa1_xlsx::XlsxFill {
+                pattern: fsa1_xlsx::FillPattern::Solid,
                 fg: Some(fsa1_model::Rgb { r: 0, g: 0, b: 0 }),
                 bg: None,
             },
             ..Default::default()
         };
-        let bold = crate::xlsx_style::XlsxStyle {
-            font: crate::xlsx_style::XlsxFont {
+        let bold = fsa1_xlsx::XlsxStyle {
+            font: fsa1_xlsx::XlsxFont {
                 bold: true,
                 ..Default::default()
             },
@@ -646,7 +645,7 @@ mod tests {
         };
         let styles = StyleTable::of(
             vec![Default::default(), painted, bold],
-            crate::xlsx_style::XlsxFont::default(),
+            fsa1_xlsx::XlsxFont::default(),
         );
         let blanket = |value| {
             [AxisRun {
@@ -740,7 +739,7 @@ mod tests {
 
     #[test]
     fn an_unmapped_table_is_dropped_with_a_located_warning() {
-        // An xlsx where calamine and xlsx_meta disagree on a table name is impractical to author.
+        // An xlsx where calamine and fsa1-xlsx's meta reader disagree on a table name is impractical to author.
         let table = |name: &str| RawTable {
             name: name.to_string(),
             ref_str: "A1:B4".to_string(),

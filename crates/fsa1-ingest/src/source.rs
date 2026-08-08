@@ -8,7 +8,7 @@ pub use fsa1_model::Format;
 
 pub use crate::names::DefinedName;
 pub use crate::resolve::Resolution;
-pub use crate::xlsx_style::{MergedRegion, StyleTable, XlsxStyle};
+pub use fsa1_xlsx::{MergedRegion, StyleTable, XlsxStyle};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum SourceValue {

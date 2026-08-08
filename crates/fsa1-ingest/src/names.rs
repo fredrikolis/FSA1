@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use fsa1_ast::a1::{format_cell, parse_a1};
 
-use crate::error::{ErrorKind, IngestError};
 use crate::warnings::UnpackWarning;
+use fsa1_xlsx::{ErrorKind, IngestError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefinedName {

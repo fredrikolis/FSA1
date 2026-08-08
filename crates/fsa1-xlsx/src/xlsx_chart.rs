@@ -1,4 +1,4 @@
-// Concern: reads the marks, series and A1 references a chart states, and what its drawing anchors | Non-concern: spelling a figure body (figure_body.rs) | IO: (a package) -> charts + drawings
+// Concern: reads the marks, series and A1 references a chart states, and what its drawing anchors | Non-concern: spelling a figure body (fsa1-ingest) | IO: (a package) -> charts + drawings
 //! What a chart part STATES, and nothing about what a figure may do with it. The element names are
 //! kept verbatim — `barChart`, `radarChart` — so a chart no figure can hold names itself in the loss.
 
@@ -26,6 +26,14 @@ pub struct SourceSeries {
     /// A `<c:numLit>` / `<c:strLit>` carries the VALUES themselves rather than a reference to them,
     /// so the series names no rectangle at all.
     pub literal: bool,
+}
+
+/// The ONE sentence naming why a [`SourceSeries::literal`] series binds no rectangle. It names the
+/// element the inline values sit in, which is this crate's fact.
+pub fn inline_values_reason() -> String {
+    "a series carries its values inline (<c:numLit>) rather than referencing cells, so it binds no \
+     rectangle"
+        .to_string()
 }
 
 /// One chart part, and the tab whose drawing reaches it.
@@ -221,11 +229,7 @@ fn chart_sheets(
 /// The element path, by LOCAL name, so a package spelling the chart namespace `c:` and one leaving it
 /// the default read identically. `<c:tx>` occurs under a series and under a title, and `<c:title>`
 /// under the chart and under each axis, so every read below is anchored on a path rather than a name.
-pub(crate) fn parse_chart(
-    part: String,
-    sheet: String,
-    xml: &str,
-) -> Result<SourceChart, IngestError> {
+pub fn parse_chart(part: String, sheet: String, xml: &str) -> Result<SourceChart, IngestError> {
     let mut reader = Reader::from_str(xml);
     let mut path: Vec<String> = Vec::new();
     let mut chart = SourceChart {

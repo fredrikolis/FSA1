@@ -14,7 +14,7 @@ fsa1-mcp    // the MCP front end — tool schemas, JSON-RPC on stdio
    → fsa1-verbs  // a verb named by a path, answering a value or a Refusal; neither front end's own
         → fsa1-model   // tabs/ranges/overlap/demand-driven eval/diagnostics — knows no formula grammar, no xlsx
              → fsa1-ast   // the formula language (lex/parse/eval) — knows nothing of the filesystem or xlsx
-fsa1-xlsx           → { fsa1-ast, fsa1-model }   // never depended-on by the core
+fsa1-xlsx           → { fsa1-ast, fsa1-model }   // how an .xlsx is spelled, BOTH ways; depended-on, never depending on a front end
 fsa1-ingest         → fsa1-xlsx   // the import pipeline asks the format crate how xlsx is spelled
 fsa1-html           → fsa1-model   // a rendered view as one standalone HTML document
 ```
@@ -24,11 +24,15 @@ The only allowed dependency direction is `{cli, mcp} → verbs → model → ast
 `ingest → xlsx`. That last one is the owner's ruling of 2026-08-07 — "ingest simply invokes
 the xlsx crate for the details on how to load/pack xlsx" — and it exists so a fact about the
 format has ONE home: the mark-to-chart-element table was hand-kept three times before it.
+**One crate per format, not one per direction.** A format is bidirectional, so splitting it by
+direction gives every fact about it two homes to drift between; `fsa1-xlsx` therefore owns how an
+.xlsx is spelled in either direction, and `fsa1-ingest` owns the import PIPELINE — it names the
+verb, drives the passes, and asks `fsa1-xlsx` for every byte layout.
 A front end is a shell over the verb layer: neither binary is depended on by anything, neither knows
 the other exists, and neither reaches the formula language directly. That is what makes a second one
 cheap — the MCP server is a different envelope around the same verbs, not a second implementation.
-An output format is its own crate: `fsa1-model` owns the filesystem spreadsheet model and `fsa1-cli`
-is a thin argv shell, so neither is where a serializer belongs.
+A foreign format is its own crate: `fsa1-model` owns the filesystem spreadsheet model and `fsa1-cli`
+is a thin argv shell, so neither is where a packer or an unpacker belongs.
 This is enforced mechanically by the `deny` edges in `.annotated-tree.toml`, wired the moment both
 crates in a pair exist (a `deny` pair naming a crate that does not yet exist is a fatal
 `unknown_deny_package`, so the edges land as the crates do). It encodes the owner's hard rule that the

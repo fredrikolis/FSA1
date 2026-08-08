@@ -1,9 +1,10 @@
-// Concern: serializes a loaded workbook, its presentation and its charts into one .xlsx | Non-concern: reading a spreadsheet file, pivots/tables/media | IO: (Workbook, Overlay, charts, dest) -> a .xlsx
+// Concern: how an .xlsx is spelled both ways — packing a workbook into one, reading the facts out of one | Non-concern: the import pipeline, pivots/media | IO: (a workbook) -> .xlsx; (a path) -> facts
 
 mod cell;
 mod chart;
 mod content_types;
 mod doc_props;
+mod error;
 mod export;
 mod figure_chart;
 mod package;
@@ -13,10 +14,27 @@ mod styles;
 mod theme;
 mod workbook;
 mod worksheet;
+mod xlsx_chart;
+mod xlsx_meta;
+mod xlsx_style;
 
-pub use chart::{Chart, chart_xml};
+pub use chart::{BAR_CHART_PART, CHART_PART, Chart, chart_xml};
+pub use error::{ErrorKind, IngestError};
 pub use export::ExportError;
-pub use figure_chart::{chart_for, mark_for};
+pub use figure_chart::{chart_for, mark_for, no_mark_reason};
+pub use xlsx_chart::{
+    Package, SourceChart, SourceDrawing, SourceSeries, inline_values_reason, parse_chart,
+    read_package,
+};
+pub use xlsx_meta::{
+    CoercedCell, NumFmtMap, RawName, RawTable, UncarriedPart, XlsxMeta, numfmt_coercions,
+    numfmt_map, read_meta, strict_roundtrip_check, uncarried_parts,
+};
+pub use xlsx_style::{
+    AxisRun, AxisSize, AxisStyle, BorderStyle, FillPattern, HorizontalAlign, MergedRegion,
+    SheetVisuals, StyleTable, Styling, Underline, VertAlign, VerticalAlign, XlsxBorder, XlsxFill,
+    XlsxFont, XlsxStyle, read_styling,
+};
 
 use fsa1_model::{Overlay, Workbook};
 use std::path::Path;
