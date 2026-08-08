@@ -191,46 +191,20 @@ pub(crate) fn spell(
     Ok((stem, format!("{body}\n")))
 }
 
-/// The mark the chart ELEMENT states. Anything else — a radar, a doughnut, a surface, or two plots
-/// combined in one plot area — is a named loss and no figure.
-fn mark_of(chart: &SourceChart) -> Result<Mark, String> {
+/// The mark the chart ELEMENT states, read backwards out of the one table `fsa1-xlsx` writes the
+/// element from. Anything else — a radar, a doughnut, a surface, or two plots combined in one plot
+/// area — is a named loss and no figure.
+fn mark_of(chart: &SourceChart) -> Result<&'static str, String> {
     match chart.plots.as_slice() {
         [] => Err("it states no plot area content at all".to_string()),
-        [one] => match one.as_str() {
-            "barChart" => Ok(Mark::Bar),
-            "lineChart" => Ok(Mark::Line),
-            "areaChart" => Ok(Mark::Area),
-            "scatterChart" => Ok(Mark::Point),
-            "pieChart" => Ok(Mark::Arc),
-            other => Err(format!("a <c:{other}> has no Vega-Lite mark")),
-        },
+        [one] => {
+            fsa1_xlsx::mark_for(one).ok_or_else(|| format!("a <c:{one}> has no Vega-Lite mark"))
+        }
         many => Err(format!(
             "it combines {} plots ({}) in one plot area, and a combination chart has no one mark",
             many.len(),
             many.join(", ")
         )),
-    }
-}
-
-/// The Vega-Lite marks an Excel chart element maps onto.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mark {
-    Bar,
-    Line,
-    Area,
-    Point,
-    Arc,
-}
-
-impl Mark {
-    fn name(self) -> &'static str {
-        match self {
-            Mark::Bar => "bar",
-            Mark::Line => "line",
-            Mark::Area => "area",
-            Mark::Point => "point",
-            Mark::Arc => "arc",
-        }
     }
 }
 
@@ -240,7 +214,7 @@ fn layer(
     series: &SourceSeries,
     table: &dyn ChartTable,
     content: Option<Region>,
-    mark: Mark,
+    mark: &'static str,
     horizontal_bars: bool,
 ) -> Result<Json, String> {
     if series.literal {
@@ -310,14 +284,14 @@ fn layer(
 
     let mut encoding = Map::new();
     // A scatter states two MEASURES, so its category axis is quantitative like its value axis.
-    let category_type = if mark == Mark::Point {
+    let category_type = if mark == "point" {
         "quantitative"
     } else {
         "nominal"
     };
     match mark {
         // A pie has no axes: the value is the angle and the category is what colours the slice.
-        Mark::Arc => {
+        "arc" => {
             encoding.insert("theta".to_string(), channel(&quantity, "quantitative"));
             encoding.insert("color".to_string(), channel(&category, "nominal"));
         }
@@ -333,7 +307,7 @@ fn layer(
     }
 
     let mut out = Map::new();
-    out.insert("mark".to_string(), Json::String(mark.name().to_string()));
+    out.insert("mark".to_string(), Json::String(mark.to_string()));
     out.insert(
         "data".to_string(),
         Json::Object(Map::from_iter([(

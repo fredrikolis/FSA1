@@ -78,7 +78,13 @@ forbid_orphans = true
 #   ["fsa1-mcp",    "fsa1-ast"]    # WIRED: and neither does a front end
 #   ["fsa1-html",   "fsa1-ast"]    # WIRED: the renderer reads a rendered view, never the formula language
 # The direction that IS allowed: {cli, mcp} -> verbs -> {model, ingest, xlsx, html} -> ast (and ingest/xlsx/html ->
-# model), except fsa1-html, which reaches fsa1-model only. This encodes the owner's hard rule that
+# model), plus fsa1-ingest -> fsa1-xlsx, except fsa1-html, which reaches fsa1-model only. The
+# ingest -> xlsx edge is the owner's ruling of 2026-08-07: "ingest simply invokes the xlsx crate for
+# the details on how to load/pack xlsx". It exists so the Vega-Lite mark <-> Excel chart element
+# mapping is DEFINED ONCE, in the crate that writes the element, and the reader reads that one table
+# backwards instead of hand-keeping a twin (repo-standards.md's "twin hand-kept codec contracts").
+# No deny pair names the edge, and fsa1-xlsx depends on neither fsa1-ingest nor anything that reaches
+# it, so the graph stays a DAG. The allowed direction above encodes the owner's hard rule that
 # the AST impl is swappable behind a narrow boundary AND the FORMAT
 # FIREWALL: what is confined to fsa1-ingest and fsa1-xlsx is a FOREIGN DOCUMENT reader or writer —
 # the libraries that read and write somebody else's spreadsheet package (calamine + zip/xml on the

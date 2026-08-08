@@ -1,4 +1,4 @@
-// Concern: derives the chart a figure states, else why Excel has none | Non-concern: the part's bytes (chart.rs), proving the chart restates the figure | IO: (a Figure, its tab) -> a Chart
+// Concern: derives the chart a figure states, else why Excel has none, and holds the ONE mark-element table | Non-concern: the part's bytes (chart.rs) | IO: (Figure, tab) -> Chart; mark <-> element
 //! The chart type comes from `mark` and `encoding` and from nothing else: a spec whose metadata went
 //! stale would otherwise write a chart contradicting itself, and a hand-authored figure carries none
 //! to consult. This pass derives only the shapes a chart states exactly, because whether the result
@@ -9,9 +9,10 @@ use serde_json::{Map, Value as Json};
 
 use crate::chart::{Chart, ChartSeries, cell};
 
-/// The Vega-Lite mark each Excel plot element draws. The reader holds this pair list backwards, in
-/// another crate the format firewall keeps this one out of; the two are graded against each other on
-/// every pack, so a drift drops a figure and names it rather than writing a chart that lies.
+/// The Vega-Lite mark each Excel plot element draws, DEFINED ONCE here because this crate writes the
+/// element, so the spelling is its fact. It stays private: a caller reads it forward with
+/// [`element_for`] to write a chart and backward with [`mark_for`] to read one, and the two
+/// directions cannot drift because there is only one table to drift from.
 const MARKS: [(&str, &str); 5] = [
     ("bar", "barChart"),
     ("line", "lineChart"),
@@ -19,6 +20,22 @@ const MARKS: [(&str, &str); 5] = [
     ("point", "scatterChart"),
     ("arc", "pieChart"),
 ];
+
+/// The Excel plot element a Vega-Lite `mark` draws as, or `None` where Excel has no chart for it.
+pub(crate) fn element_for(mark: &str) -> Option<&'static str> {
+    MARKS
+        .iter()
+        .find(|(name, _)| *name == mark)
+        .map(|(_, element)| *element)
+}
+
+/// The Vega-Lite mark an Excel plot `element` draws, or `None` where it has none.
+pub fn mark_for(element: &str) -> Option<&'static str> {
+    MARKS
+        .iter()
+        .find(|(_, name)| *name == element)
+        .map(|(mark, _)| *mark)
+}
 
 /// The keys a spec may state at the top and still be one chart, and the ones a layer inside it may.
 /// `usermeta` is ADVISORY: it may only refine a chart the SPEC has already decided, and is never
@@ -122,11 +139,8 @@ fn plot(layer: &Map<String, Json>) -> Result<(&'static str, bool), String> {
         .get("mark")
         .and_then(Json::as_str)
         .ok_or("a layer states no `mark` string")?;
-    let element = MARKS
-        .iter()
-        .find(|(name, _)| *name == mark)
-        .map(|(_, element)| *element)
-        .ok_or_else(|| format!("Excel has no chart for the mark {mark:?}"))?;
+    let element =
+        element_for(mark).ok_or_else(|| format!("Excel has no chart for the mark {mark:?}"))?;
     let (_, _, swapped) = axes(layer, element)?;
     Ok((element, swapped))
 }

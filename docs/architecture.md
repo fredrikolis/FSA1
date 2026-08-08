@@ -15,11 +15,15 @@ fsa1-mcp    // the MCP front end — tool schemas, JSON-RPC on stdio
         → fsa1-model   // tabs/ranges/overlap/demand-driven eval/diagnostics — knows no formula grammar, no xlsx
              → fsa1-ast   // the formula language (lex/parse/eval) — knows nothing of the filesystem or xlsx
 fsa1-xlsx           → { fsa1-ast, fsa1-model }   // never depended-on by the core
+fsa1-ingest         → fsa1-xlsx   // the import pipeline asks the format crate how xlsx is spelled
 fsa1-html           → fsa1-model   // a rendered view as one standalone HTML document
 ```
 
 The only allowed dependency direction is `{cli, mcp} → verbs → model → ast`, plus
-`verbs → { ingest, xlsx, html }`, `xlsx → { ast, model }` and `html → model`.
+`verbs → { ingest, xlsx, html }`, `xlsx → { ast, model }`, `html → model` and
+`ingest → xlsx`. That last one is the owner's ruling of 2026-08-07 — "ingest simply invokes
+the xlsx crate for the details on how to load/pack xlsx" — and it exists so a fact about the
+format has ONE home: the mark-to-chart-element table was hand-kept three times before it.
 A front end is a shell over the verb layer: neither binary is depended on by anything, neither knows
 the other exists, and neither reaches the formula language directly. That is what makes a second one
 cheap — the MCP server is a different envelope around the same verbs, not a second implementation.

@@ -1,4 +1,4 @@
-# Concern: declares the package and its deps: the READ-side format libraries, and the serde_json a figure is spelled through | Non-concern: what the crate does, the write half (fsa1-xlsx) | IO: none
+# Concern: declares the package and its deps: the READ-side format libraries, serde_json, and fsa1-xlsx | Non-concern: what the crate does, the deny edges (.annotated-tree.toml) | IO: none
 [package]
 name = "fsa1-ingest"
 version = "0.1.0"
@@ -8,6 +8,9 @@ license.workspace = true
 [dependencies]
 fsa1-ast = { path = "../fsa1-ast" }
 fsa1-model = { path = "../fsa1-model" }
+# The one Vega-Lite mark <-> Excel chart element table lives in the crate that WRITES the element;
+# this reader reads it backwards rather than keeping a twin. Owner-blessed edge, 2026-08-07.
+fsa1-xlsx = { path = "../fsa1-xlsx" }
 calamine = "0.36"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 quick-xml = "0.41"

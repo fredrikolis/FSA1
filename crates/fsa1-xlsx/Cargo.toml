@@ -1,4 +1,4 @@
-# Concern: declares the package and its deps, the WRITE-side format libraries and serde_json | Non-concern: the read half (fsa1-ingest), calamine here being test-only | IO: none
+# Concern: declares the package and its deps, the WRITE-side format libraries and serde_json | Non-concern: the read half, which depends on THIS crate rather than the reverse | IO: none
 [package]
 name = "fsa1-xlsx"
 version = "0.1.0"

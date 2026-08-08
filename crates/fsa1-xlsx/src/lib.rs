@@ -16,7 +16,7 @@ mod worksheet;
 
 pub use chart::{Chart, chart_xml};
 pub use export::ExportError;
-pub use figure_chart::chart_for;
+pub use figure_chart::{chart_for, mark_for};
 
 use fsa1_model::{Overlay, Workbook};
 use std::path::Path;
