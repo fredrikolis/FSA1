@@ -327,6 +327,23 @@ it is too early to know the right abstraction.
 **Rule of three**: duplicate once, refactor at the third. **A wrong abstraction is worse than
 duplication.**
 
+### Agent instructions match the code
+
+**A file that tells an agent what to CALL is graded against what the code accepts.**
+
+`plugin/skills/fsa1/SKILL.md` and the `--guide` text are read by an agent deciding what to invoke.
+Every command form, flag and argument name in them is a claim about `crates/fsa1-mcp/src/tools.rs`
+and `fsa1-cli`'s argv. A stale claim is not a documentation nit: the agent makes the call, the call
+is refused, and the refusal names a flag the agent was told to use. Nothing degrades gradually here
+— it works or the user watches their agent fail.
+
+So renaming a flag, adding or dropping an argument, or moving a verb between surfaces is not done
+until every agent-facing file that spells it has been read against the change. The surfaces need not
+agree with each other — MCP and the CLI do not today — but each must be described as it IS.
+
+The same bar applies wherever the repo instructs rather than describes: a documented install path
+must be the one that works, and a named default must be the code's default.
+
 ---
 
 ## PART 4: The formula AST
@@ -547,6 +564,7 @@ Gate A answers every row.
 | **Canonical representation** | One internal form, convert at edges | Two representations in the core |
 | **Fail fast** | Errors at the source; guards fail SAFE | Silent fallback masking a problem |
 | **DRY** | Single source of truth | Duplicated logic, or a doc restating a hook |
+| **Agent instructions match the code** | A file telling an agent what to call is graded against what the code accepts | A flag, argument or command form in SKILL.md or `--guide` that the binary does not have |
 | **AST: three layers** | Meaning in the node; provenance in side-channels | A non-meaning fact stored as a node value |
 | **AST: source-free core** | Meaning only; illegal states unrepresentable | Over-unified enum; retained source text |
 | **AST: identity ≠ meaning** | Node id excluded from equality | Synthesized node no longer equals a parsed one |
