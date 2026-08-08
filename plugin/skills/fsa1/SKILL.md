@@ -6,18 +6,36 @@ description: >
   each file's name is the A1 range it fills). Reach for it to unpack an Excel file into an editable
   file tree, render/inspect a workbook directory as a grid, lint it, trace or evaluate formulas, or
   pack a tree back into Excel. Only .xlsx and .ods are read; other spreadsheet formats are refused.
-  The unpack/pack/render/check/eval/trace tools come from this plugin's MCP server; cells are
-  files, so read and edit them with ordinary file tools rather than asking for a write tool.
+  The unpack/pack/render/check/eval/trace verbs come from this plugin's MCP server where it is
+  running, and from the fsa1-cli command otherwise — reach for this skill either way; it says how to
+  get to them. Cells are files, so read and edit them with ordinary file tools rather than asking
+  for a write tool.
 ---
 
-<!-- Concern: teaches an agent when to reach for the FSA1 tools and how to drive them | Non-concern: installing the server (launcher/fsa1-mcp), the format's invariants (docs/format-spec.md) | IO: none -->
+<!-- Concern: teaches an agent how to reach the FSA1 verbs on either host and how to drive them | Non-concern: what a verb computes, the format's invariants (docs/format-spec.md) | IO: none -->
 # FSA1
 
-FSA1 is a spreadsheet engine over a **filesystem** representation of a workbook. This plugin's MCP
-server exposes the six verbs that need the engine — `unpack`, `pack`, `render`, `check`, `eval`,
-`trace`. Everything else is ordinary file work: a cell IS a file, so read one with your file-reading
-tool and change one with your file-editing tool. There is no write tool here and none is needed.
-First call on a new machine may pause briefly while the launcher fetches the native server.
+FSA1 is a spreadsheet engine over a **filesystem** representation of a workbook. Six verbs need the
+engine — `unpack`, `pack`, `render`, `check`, `eval`, `trace`. Everything else is ordinary file work:
+a cell IS a file, so read one with your file-reading tool and change one with your file-editing tool.
+There is no write tool here and none is needed.
+
+## Getting to the verbs
+
+**Look first for the `fsa1` MCP tools.** If tools named `unpack`, `pack`, `render`, `check`, `eval`
+and `trace` are available to you, call them and read no further in this section. A first call on a new
+machine may pause briefly while `npx` fetches the server package.
+
+**If they are absent**, install the command and drive the same six verbs as shell commands:
+
+```bash
+curl -fsSL https://fsa1.sh/install-cli | sh
+```
+
+It installs to `~/.local/bin` and only WARNS — it does not fail — when that is not on your `PATH`. So
+if the bare name `fsa1-cli` does not resolve, invoke `~/.local/bin/fsa1-cli` by its full path. Use the
+`fsa1-cli` column of the table below: three of the six verbs are spelled differently there and cannot
+be guessed from the MCP names.
 
 ## The model in one paragraph
 
@@ -45,21 +63,35 @@ write the cell files directly with ordinary file tools, then use `render` or `ch
 
 ## Tools
 
-Path grammar: `<wb>[/<tab>[/<A1>]]` — the tab and cell/range are PART OF THE PATH, and every tool
-that takes a `target` takes it in this form.
+Path grammar: `<wb>[/<tab>[/<A1>]]` — the tab and cell/range are PART OF THE PATH. Every MCP tool that
+takes a `target` takes it in this form, and on the CLI it is the positional `<path>` argument.
 
-- `render` — `target`, optional `mode` (`combined|values|functions`), `format` (`ascii|html`). Draws
-  the scope. Bare `<wb>` draws every tab; `<wb>/<Tab>` one tab; `<wb>/<Tab>/A1:D9` a region. Default
-  `combined` shows `value ← =formula`.
-- `check` — `target`. Lints overlap, dimension mismatch, cycles and broken references. Scope it to a
-  tab or range to lint only that.
-- `eval` — `target`, `formula`. Evaluates an ad-hoc formula against the workbook, writing nothing. An
-  error value like `#REF!` is the ANSWER, not a failure.
-- `trace` — `target` (exactly one cell), optional `direction` (`upstream|downstream`) and `depth`.
-- `unpack` — `source` (.xlsx or .ods), optional `dest` and `decomposition`. Real spreadsheet → FSA1
-  tree. `dest` defaults to `./<source-stem>/`. Refuses a non-empty destination.
-- `pack` — `source` (a workbook directory), optional `dest`. FSA1 tree → a fresh `.xlsx` (never
-  clobbers; leaves the source untouched).
+One table, both paths. Optional arguments are in brackets.
+
+| verb | MCP arguments | `fsa1-cli` command |
+|---|---|---|
+| `render` | `target`, `mode` (`combined\|values\|functions`), `format` (`ascii\|html`) | `fsa1-cli render <path> [--mode <m>] [--format <f>]` |
+| `check` | `target` | `fsa1-cli check <path>` |
+| `eval` | `target`, `formula` | `fsa1-cli eval <path> --formula '=<formula>'` |
+| `trace` | `target` (one cell), `direction` (`upstream\|downstream`), `depth` | `fsa1-cli trace <path> [--dependents] [--depth <N>]` |
+| `unpack` | `source`, `dest`, `decomposition` | `fsa1-cli unpack [--decompose <policy>] <src> [<dst>]` |
+| `pack` | `source`, `dest` | `fsa1-cli pack <workbook-dir>` |
+
+- `render` draws the scope. Bare `<wb>` draws every tab; `<wb>/<Tab>` one tab; `<wb>/<Tab>/A1:D9` a
+  region. Default `combined` shows `value ← =formula`.
+- `check` lints overlap, dimension mismatch, cycles and broken references. Scope it to a tab or range
+  to lint only that.
+- `eval` evaluates an ad-hoc formula against the workbook, writing nothing. An error value like
+  `#REF!` is the ANSWER, not a failure.
+- `trace` walks exactly one cell's dependency chain. **Upstream is the DEFAULT and has no flag at
+  all** on the CLI; the downstream direction is `--dependents`. `depth` is `--depth <N>`.
+- `unpack` turns a real spreadsheet (.xlsx or .ods) into an FSA1 tree. The MCP `dest` is the CLI's
+  optional positional `<dst>` — not a flag — and `decomposition` is `--decompose <policy>`. Omitted,
+  the destination derives to `./<source-stem>/`. Refuses a non-empty destination.
+- `pack` turns an FSA1 tree back into a fresh `.xlsx` (never clobbers; leaves the source untouched).
+  The MCP form takes `dest`; **the CLI has no `--dest`** — the output name is DERIVED as
+  `./<workbook-basename>.xlsx` in the current directory. To put it elsewhere on the CLI path, pack
+  and then move the file.
 
 There is no write tool, and none is needed: **a cell is a file**. Create, change and move cells with
 your own file tools, then use `check` or `render` to confirm the workbook still loads.
@@ -78,8 +110,9 @@ Hand it back: `pack` the directory to get a fresh `.xlsx`.
 ## Notes & gotchas
 
 - **A refused tool call** answers with `isError` and one line opening `fsa1: <kind>:` — the kinds are
-  `invalid-arguments`, `validation`, `conflict`, `not-found` and `io`. A FINDING is not a refusal:
-  `check` reporting errors and `eval` yielding `#REF!` both succeed.
+  `invalid-arguments`, `validation`, `conflict`, `not-found` and `io`. On the CLI the same refusal is a
+  `fsa1-cli: <message>` line on stderr and a non-zero exit. A FINDING is not a refusal: `check`
+  reporting errors and `eval` yielding `#REF!` both succeed.
 - **`:` vs `-` in file NAMES:** a range file may be named `A1:C1` or `A1-C1`; the reader accepts both
   on every platform, so when you *create* one yourself either works (prefer `A1-C1` if the tree may be
   used on Windows, since `:` cannot be written there). In formulas and path selectors always use `:` —

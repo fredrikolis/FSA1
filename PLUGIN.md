@@ -58,7 +58,8 @@ Linux ships a STATIC musl build, so no glibc version has to agree with a sandbox
 ## Native binaries & platforms
 
 `.github/workflows/plugin-release.yml` builds BOTH front ends on push of a `v*` tag, one pair per
-platform: `fsa1-mcp-<slug>` is what the plugin's launcher fetches, `fsa1-cli-<slug>` is what
+platform: `fsa1-mcp-<slug>` is what the npm job packs into the per-platform packages `npx` resolves,
+`fsa1-cli-<slug>` is what
 `https://fsa1.sh/install-cli` fetches for a user who wants the command in their own shell.
 
 | Slug                    | Covers                          |
@@ -72,9 +73,11 @@ platform: `fsa1-mcp-<slug>` is what the plugin's launcher fetches, `fsa1-cli-<sl
 Which runner builds which asset is the workflow's to say, and only its own: a table here restating
 that goes stale the first time a runner is retired.
 
-The launcher downloads the matching asset by name, so a release is what lets the plugin run on a
-machine **without** a Rust toolchain. Every slug the launcher resolves has a row here; a host with no
-matching asset falls through to building from source, which needs a Rust toolchain it may not have.
+Both front ends come off the Release by asset name — the npm platform packages `npx` resolves are
+built from the `fsa1-mcp-*` assets, and `install-cli` downloads an `fsa1-cli-*` one directly — so a
+release is what lets FSA1 run on a machine **without** a Rust toolchain. Every slug either front end
+resolves has a row here; a host with no matching asset is told to build from source, which needs a
+Rust toolchain it may not have.
 
 > **Windows correctness depends on the range-separator fix** in this repo: FSA1 names range files
 > after A1 ranges (`A1:C1`), and `:` is illegal on NTFS (it silently becomes an alternate data
@@ -97,8 +100,8 @@ by hand here; run the CLI check on a machine that has `claude` installed before 
    ```bash
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
-   Confirm the five assets appear on the Release and that it is marked **Latest** (the launcher pulls
-   `releases/latest/download/...`).
+   Confirm the five assets appear on the Release and that it is marked **Latest**
+   (`website/public/install-cli` pulls `releases/latest/download/...`).
 3. Submit via the in-app form:
    - claude.ai — https://claude.ai/settings/plugins/submit
    - Console — https://platform.claude.com/plugins/submit

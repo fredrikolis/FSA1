@@ -69,8 +69,7 @@ jobs:
         run: bash .githooks/pre-commit.selftest.sh
 
       - name: installers resolve the asset names plugin-release publishes
-        # Exercises only the release-download branch: the launcher's cache, bundled and dev-build
-        # branches, FSA1_VERSION, and the wget path are not covered.
+        # Exercises only the release-download branch: FSA1_VERSION and the wget path are not covered.
         run: |
           set -uo pipefail
           rc=0
@@ -84,8 +83,8 @@ jobs:
           got() { :>"$W/u"; env -i PATH="$W/b:/usr/bin:/bin" HOME="$W/plug" S=$2 M=$3 U="$W/u" \
             CLAUDE_PLUGIN_ROOT="$W/plug" CLAUDE_PLUGIN_DATA="$W/plug" FSA1_INSTALL_DIR="$W/dest" \
             "./$1" >/dev/null 2>&1; echo $? >"$W/e"; sed -n 's|.*/||p' "$W/u" | head -1; }
-          # Each installer is proved against the family it actually fetches: install-cli hands a
-          # user the command, the launcher hands a Claude host the MCP server.
+          # install-cli is proved against the family it actually fetches — the fsa1-cli assets, the
+          # command a user runs in their own shell.
           printf '%s\n' "linux-x86_64 Linux x86_64" "linux-aarch64 Linux aarch64" \
             "macos-x86_64 Darwin x86_64" "macos-aarch64 Darwin arm64" \
             "windows-x86_64.exe MINGW64_NT-10.0 x86_64" > "$W/t"

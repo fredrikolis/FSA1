@@ -1,5 +1,5 @@
 # Concern: turns a v* tag into Release assets, refusing one whose declared versions disagree | Non-concern: picking which asset a machine needs | IO: (a v* tag) -> release assets
-# The launcher downloads by asset name, so a Release is what makes the plugin work on a machine with
+# Both front ends are fetched by asset name, so a Release is what makes FSA1 work on a machine with
 # no Rust toolchain. Built with the toolchain pinned in rust-toolchain.toml.
 name: plugin-release
 
@@ -71,8 +71,8 @@ jobs:
             asset: fsa1-cli-linux-x86_64-musl
             mcp_asset: fsa1-mcp-linux-x86_64-musl
             ext: ""
-          # The launcher resolves linux-aarch64 too (Apple-silicon containers, ARM cloud sandboxes);
-          # without this asset those hosts fall all the way through to building from source.
+          # linux-aarch64 covers Apple-silicon containers and ARM cloud sandboxes; without this
+          # asset those hosts are left building from source.
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             asset: fsa1-cli-linux-aarch64
@@ -117,7 +117,7 @@ jobs:
         if: endsWith(matrix.target, '-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      # Both front ends ship: the launcher fetches `mcp_asset`, and website/public/install-cli
+      # Both front ends ship: the npm job below packs `mcp_asset`, and website/public/install-cli
       # fetches `asset` for anyone who wants the command in their own shell.
       # fsa1-cli -> fsa1-verbs -> fsa1-html, whose build.rs embeds this bundle: without it every
       # target builds nothing and the tag ships no assets at all.
@@ -127,7 +127,7 @@ jobs:
       - name: Build both front ends (release)
         run: cargo build --release -p fsa1-cli -p fsa1-mcp --target ${{ matrix.target }}
 
-      # Normalize the artifact name to the asset the launcher expects.
+      # Normalize the artifact name to the asset the Release publishes.
       - name: Stage artifact (unix)
         if: matrix.ext == ''
         run: |
