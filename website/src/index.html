@@ -204,6 +204,17 @@ h2 .also{
 }
 h2 code{ font-family:var(--mono); font-size:.86em; letter-spacing:0; }
 
+/* ---------- the figures ---------- */
+/* A Vega figure is always dark: one spec, no theme branch, and on a light page it
+   reads as the panel it is. The colours are the site's own accent, format and css
+   swatches, hardcoded rather than read from the cascade — light-dark() does not
+   resolve inside a spec, because Vega hands the string to SVG, not to CSS. */
+.figlede{ color:var(--dim); margin:-14px 0 22px; max-width:62ch; }
+.figlede code{ font-family:var(--mono); font-size:.9em; color:var(--l-css); }
+.figwin{ background:#161b22; }
+.figwin .fig{ display:flex; justify-content:center; padding:10px 4px; }
+.figwin .fig svg{ max-width:100%; height:auto; }
+
 /* ---------- 1 · the hero ---------- */
 /* anchored to the top of the page, not floated in the viewport */
 .hero{ padding:clamp(12px,2.2vw,30px) 0 clamp(64px,8vw,96px); }
@@ -735,6 +746,20 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
   </section>
 
   <!-- 3 ------------------------------------------------------- -->
+  <section>
+    <p class="kicker">[ FSA1 figures ]</p>
+    <h2>A figure is a file.</h2>
+    <p class="figlede">Every chart below is a <code>.vl.json</code> beside the cells, bound to
+    <code>Orders!A1:D4</code>. Change a cell and the figure follows — it draws what the sheet computes,
+    not a copy of it.</p>
+    <div class="window figwin"><div class="loop" id="figloop">
+      <div class="frame on"><div class="fig" data-spec='{"title":"Orders/total.vl.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"layer":[{"mark":{"type":"bar","cornerRadiusEnd":3,"color":"#4fd4a8","opacity":0.9}},{"mark":{"type":"text","dy":-8,"color":"#9aa4b2","fontSize":11},"encoding":{"text":{"field":"Total","type":"quantitative"}}}],"encoding":{"x":{"field":"Item","type":"nominal","axis":{"labelAngle":0,"title":null}},"y":{"field":"Total","type":"quantitative","title":"Total","axis":{"grid":true}}}}'></div></div>
+      <div class="frame"><div class="fig" data-spec='{"title":"Orders/price-vs-qty.vl.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"layer":[{"mark":{"type":"point","filled":true,"size":260,"opacity":0.95},"encoding":{"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"top-right","title":null}}}},{"mark":{"type":"text","dy":-16,"color":"#9aa4b2","fontSize":10},"encoding":{"text":{"field":"Item","type":"nominal"}}}],"encoding":{"x":{"field":"Price","type":"quantitative","title":"Price","scale":{"zero":true},"axis":{"grid":true}},"y":{"field":"Qty","type":"quantitative","title":"Qty","scale":{"zero":true},"axis":{"grid":true}}}}'></div></div>
+      <div class="frame"><div class="fig" data-spec='{"title":"Orders/share.vl.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"mark":{"type":"arc","innerRadius":52,"outerRadius":84,"stroke":"#161b22","strokeWidth":2},"encoding":{"theta":{"field":"Total","type":"quantitative","stack":true},"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"right","title":null}},"tooltip":[{"field":"Item","type":"nominal"},{"field":"Total","type":"quantitative"}]}}'></div></div>
+    </div></div>
+  </section>
+
+  <!-- 4 ------------------------------------------------------- -->
   <section id="advantages">
     <p class="kicker">[ FSA1 advantages ]</p>
     <ul class="claims">
@@ -859,6 +884,9 @@ Edit("Orders/C2:C4", old="10", new="12")</div>
 
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
 <script>
 /* Three loops, one driver. Each cross-fades siblings on a fixed
    interval; the boxes have fixed heights in CSS, so a swap never
@@ -996,6 +1024,23 @@ Edit("Orders/C2:C4", old="10", new="12")</div>
   cycle(document.querySelectorAll("#anatloop .frame"), 3400);
 
   cycle(document.querySelectorAll("#writeloop .frame"), 1900);
+
+  /* The figures draw before anything measures them: `fit` pins the box to the tallest
+     frame, and a frame holding an unrendered chart measures as empty. So embed all
+     three, wait for every one, then fit and only then start the cycle. */
+  var figs = [].slice.call(document.querySelectorAll("#figloop .fig"));
+  if (figs.length && window.vegaEmbed) {
+    Promise.all(figs.map(function (el) {
+      return vegaEmbed(el, JSON.parse(el.dataset.spec), {
+        actions: false,
+        renderer: "svg"
+      }).catch(function () {});
+    })).then(function () {
+      var loop = document.getElementById("figloop");
+      fit(loop);
+      cycle(document.querySelectorAll("#figloop .frame"), 4200);
+    });
+  }
 
   /* click-to-copy the install line */
   var btn = document.getElementById("install"),
