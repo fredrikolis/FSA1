@@ -43,7 +43,7 @@ One directive per line; `#` comments and blank lines are ignored.
     file: <tab>/<entry-name>
     |<a line of that entry's contents, verbatim>
 
-A `file:` entry is a range file, a `<range>.css` sidecar or a `<name>.vl.json` figure; all three are
+A `file:` entry is a range file, a `<range>.css` sidecar or a `<name>.json` figure; all three are
 listed alike, in the `<tab>/<name>` order the grader sorts by, which puts a range file directly ahead
 of its own sidecar.
 Every content line is `|`-prefixed, which is what makes an empty grid line distinguishable from
@@ -166,18 +166,27 @@ than mechanism:
 | `chart_line_two_series` | two series sharing one category column cross as a TWO-layer spec with two `data` objects |
 | `chart_radar_unsupported` | a radar has no Vega-Lite mark, so it yields NO figure and one named loss — and the unpack still completes |
 
-### What the pack leg does NOT grade
+### What the pack leg grades
 
-The second unpack — `unpack(pack(unpack(x)))` — is compared over every entry EXCEPT a `.vl.json`. A
-figure is not appearance, and `pack` writes no chart back: reading a chart in is plan 14 and writing
-one out is plan 15, so a figure has nothing on the way out to survive as. The first leg still grades
-every figure byte against the frozen expectation; only the pack leg abstains, and only from figures.
+The second unpack — `unpack(pack(unpack(x)))` — is compared over EVERY entry, figures included.
+`presentation_oracle.py`'s `read_tree` excludes nothing, and it has not needed to since plan 15 gave
+`pack` a chart to write: `chart_bar_one_series` reproduces its figure identically on the second leg.
+This paragraph previously said the pack leg abstained from figures, which was true while a figure
+had nothing on the way out to survive as, and false from the moment one did.
 
 ## Corpus history
 
 Every entry records a fixture ADDED, an expectation CORRECTED, or the whole corpus RE-DERIVED under a
 changed encoding, and why. No expectation here has been corrected: the corrections column stays empty
 until a reading is shown to have been wrong.
+
+- **The two chart readings re-derived** — a figure's entry name lost its `.vl`: `FIGURE_SUFFIX`
+  became `.json`, so ANY `.json` entry of a tab is a figure and the format names no vendor in a
+  filename (plan 23). This is not a correction: no reading was wrong. Both re-derivations are the
+  identity on their CONTENT — every `|`-prefixed line of `chart_bar_one_series.expected` and
+  `chart_line_two_series.expected` is unchanged, character for character. What changed in the frozen
+  text is the two `file:` lines alone: each drops the `.vl` ahead of its `.json`. The `file:`
+  ordering is unaffected: the stems are unchanged and each tab holds one figure.
 
 - **All 15 scoped readings re-derived a second time** — the scoping root moved out of the file's body
   into its NAME: the tab's one `@presentation.css` became one `<root>.css` sidecar, holding the same

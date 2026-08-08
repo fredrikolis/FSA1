@@ -40,7 +40,7 @@ real spreadsheet application, and graduated here unchanged; the reference values
 
 | File | Graduated from | What it exercises |
 |---|---|---|
-| `chart_bar_one_series.xlsx` | `conformance/presentation/fixtures/chart_bar_one_series.xlsx` (openpyxl `BarChart`) | a one-series bar chart over `Sheet1!A1:B4`, titled — the read leg makes it a `.vl.json`, the write leg makes it a `<c:barChart>` again |
+| `chart_bar_one_series.xlsx` | `conformance/presentation/fixtures/chart_bar_one_series.xlsx` (openpyxl `BarChart`) | a one-series bar chart over `Sheet1!A1:B4`, titled — the read leg makes it a `.json`, the write leg makes it a `<c:barChart>` again |
 | `chart_line_two_series.xlsx` | `conformance/presentation/fixtures/chart_line_two_series.xlsx` (openpyxl `LineChart`) | two series, hence two layers, each binding its own rectangle and each written back as its own `<c:ser>` |
 
 Both are openpyxl-authored, so FSA1 authors no byte it is graded against here either. They are the

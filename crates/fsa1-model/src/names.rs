@@ -149,7 +149,7 @@ pub fn is_presentation_entry(name: &str) -> bool {
 }
 
 /// The suffix that makes an entry a figure.
-pub const FIGURE_SUFFIX: &str = ".vl.json";
+pub const FIGURE_SUFFIX: &str = ".json";
 
 /// The NAME a figure is stated under, or `None` for any other entry. A figure's stem is a name and
 /// never a range, so it takes no part in the cascade and collides with no cell.

@@ -21,11 +21,30 @@ pub fn sample_workbook() -> Vec<(PathBuf, String)> {
         ),
         (PathBuf::from("Orders/A5"), file("Total")),
         (PathBuf::from("Orders/D5"), file("=SUM(D2:D4)")),
+        (
+            PathBuf::from("Orders/Line total by product.json"),
+            file(FIGURE),
+        ),
         (PathBuf::from("Summary/A1:B1"), file("Metric\tValue")),
         (PathBuf::from("Summary/A2"), file("Total Revenue")),
         (PathBuf::from("Summary/B2"), file("=Orders!D5")),
     ]
 }
+
+/// The tutorial's one figure: a `.json` entry of a tab is a figure, and the `$schema` is what says
+/// which JSON — the filename no longer does. It binds `A1:D4`, the header row plus the three order
+/// rows `sample_workbook` already writes, so the chart is of the table beside it.
+const FIGURE: &str = r#"{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": "Line total by product",
+  "data": { "name": "A1:D4" },
+  "mark": "bar",
+  "encoding": {
+    "x": { "field": "Product", "type": "nominal" },
+    "y": { "field": "Line Total", "type": "quantitative" }
+  }
+}
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -37,7 +56,8 @@ mod tests {
 
     /// The tutorial is the first thing a new user runs, so it has to be writable wherever they are.
     /// The table is canonical `:` on every host, so each range needs a `-` spelling naming the same
-    /// region, which is what a Windows run writes instead.
+    /// region, which is what a Windows run writes instead. A FIGURE entry is skipped: its stem is a
+    /// name, not a range, so it carries no separator to re-spell on any host.
     #[test]
     fn every_tutorial_range_has_a_windows_legal_spelling() {
         for (rel, _) in sample_workbook() {
@@ -45,6 +65,9 @@ mod tests {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .expect("a file name");
+            if crate::is_figure_entry(name) {
+                continue;
+            }
             let here = crate::parse_filename(name).expect("the table is well-formed");
             if here.declared_shape.rows == 1 && here.declared_shape.cols == 1 {
                 continue; // a single cell carries no separator to re-spell
@@ -93,6 +116,22 @@ mod tests {
         assert_eq!(wb.value_at(0, 0, 0), Value::Text("Product".to_string())); // Orders!A1 header
 
         assert_eq!(display_value(&wb.value_at(0, 3, 4)), "110");
+
+        // The tutorial's figure is what answers, on disk, what a tab's `.json` entry is.
+        let figures = crate::Figures::load_dir(&base)
+            .expect("filesystem read ok")
+            .expect("the sample figure must parse");
+        let found: Vec<&str> = figures.all().map(|(_, f)| f.name.as_str()).collect();
+        assert_eq!(found, vec!["Orders/Line total by product.json"]);
+        let bound = figures.in_tab("Orders")[0]
+            .expand(&wb, 0)
+            .expect("the sample figure's binding resolves");
+        let rows = bound
+            .get("datasets")
+            .and_then(|d| d.get("A1:D4"))
+            .and_then(|r| r.as_array())
+            .expect("the bound spec carries its dataset");
+        assert_eq!(rows.len(), 3, "three order rows under the header");
 
         std::fs::remove_dir_all(&base).ok();
     }

@@ -10,7 +10,7 @@ use fsa1_xlsx::Chart;
 /// a cell changes and not being editable, and an agent given a sentence can simplify its spec instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FigureNotDrawn {
-    /// As it locates — `<tab>/<name>.vl.json` — so the loss anchors on the file an author edits.
+    /// As it locates — `<tab>/<name>.json` — so the loss anchors on the file an author edits.
     pub figure: String,
     pub why: String,
 }

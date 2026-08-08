@@ -235,7 +235,7 @@ impl Code {
                 "apply the rewrite the message names: index 1 is `:first-child` and the last index `:last-child`, an axis of extent 1 carries no selector of its own, rules run all, then rows, then columns, then cells ascending, declarations are alphabetical"
             }
             Code::FigureInRoot => {
-                "move the `<name>.vl.json` into the tab folder whose ranges it binds; a figure names no coordinate at the workbook root"
+                "move the `<name>.json` into the tab folder whose ranges it binds; a figure names no coordinate at the workbook root"
             }
             Code::FigureSyntax => {
                 "correct the file so it is one JSON object holding a Vega-Lite spec (balance braces and brackets, quote every key, drop trailing commas)"

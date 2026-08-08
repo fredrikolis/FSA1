@@ -1458,11 +1458,11 @@ fn a_malformed_sidecar_reaches_only_the_verbs_that_read_presentation() {
 fn a_root_level_figure_is_a_located_refusal() {
     let fx = Fixture::new("figure-root");
     fx.file("Sheet1", "A1", "1");
-    std::fs::write(fx.path().join("stray.vl.json"), "{\"mark\":\"bar\"}").expect("write");
+    std::fs::write(fx.path().join("stray.json"), "{\"mark\":\"bar\"}").expect("write");
     let (code, out) = run(&["check", &fx.path().display().to_string()]);
     assert_ne!(code, 0, "{out}");
     assert!(out.contains("figure-in-root"), "{out}");
-    assert!(out.contains("stray.vl.json"), "{out}");
+    assert!(out.contains("stray.json"), "{out}");
 }
 
 /// `check` LINTS a figure: its refusals are findings, and the workbook's own values still load.
@@ -1471,7 +1471,7 @@ fn check_lints_a_figure_without_denying_the_workbook_its_values() {
     let fx = Fixture::new("figure-lint");
     fx.file("Sheet1", "A1:B2", "x\ty\n1\t2");
     std::fs::write(
-        fx.path().join("Sheet1/broken.vl.json"),
+        fx.path().join("Sheet1/broken.json"),
         "{\"data\":{\"name\":\"A1:B9\"},\"mark\":\"bar\"}",
     )
     .expect("write");
@@ -1479,7 +1479,7 @@ fn check_lints_a_figure_without_denying_the_workbook_its_values() {
     let (code, out) = run(&["check", &root]);
     assert_ne!(code, 0, "{out}");
     assert!(out.contains("figure-binding"), "{out}");
-    assert!(out.contains("Sheet1/broken.vl.json"), "{out}");
+    assert!(out.contains("Sheet1/broken.json"), "{out}");
     // The values are untouched by a figure's fault: the grid still renders.
     let (rcode, rout) = run(&["render", &format!("{root}/Sheet1/A1")]);
     assert_eq!(rcode, 0, "{rout}");

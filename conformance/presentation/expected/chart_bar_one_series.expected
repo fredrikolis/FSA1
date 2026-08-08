@@ -3,7 +3,7 @@ file: Sheet1/A1:B4
 |North	12
 |South	9
 |East	15
-file: Sheet1/Units by region.vl.json
+file: Sheet1/Units by region.json
 |{
 |  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
 |  "title": "Units by region",

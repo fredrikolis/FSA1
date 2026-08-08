@@ -174,7 +174,7 @@ fn a_figured_document_carries_the_runtime_once_and_fetches_nothing() {
     let spec = r#"{"data":{"name":"A1:B2"},"mark":"bar"}"#;
     let html = figured(
         &[("A1:B2", "x\ty\n3\t4")],
-        &[("Sheet1/one.vl.json", spec), ("Sheet1/two.vl.json", spec)],
+        &[("Sheet1/one.json", spec), ("Sheet1/two.json", spec)],
     );
     assert_eq!(html.matches("<figure").count(), 2, "one element per figure");
     assert_eq!(
@@ -204,10 +204,7 @@ fn a_figured_document_carries_the_runtime_once_and_fetches_nothing() {
 fn a_cell_cannot_close_the_spec_script_it_rides_in() {
     let html = figured(
         &[("A1:A2", "h\n</script><img src=x>")],
-        &[(
-            "Sheet1/f.vl.json",
-            r#"{"data":{"name":"A1:A2"},"mark":"bar"}"#,
-        )],
+        &[("Sheet1/f.json", r#"{"data":{"name":"A1:A2"},"mark":"bar"}"#)],
     );
     assert!(
         !html.contains("<img src=x>"),

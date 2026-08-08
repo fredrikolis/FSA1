@@ -102,7 +102,7 @@ impl ChartTable for BookTable<'_> {
 /// census calling a carried chart "not carried".
 #[derive(Clone, Debug, Default)]
 pub struct SheetFigures {
-    /// `(<name>.vl.json, the spec)`, written beside the tab's range files.
+    /// `(<name>.json, the spec)`, written beside the tab's range files.
     pub files: Vec<(String, String)>,
     pub carried: Vec<String>,
 }
@@ -559,7 +559,7 @@ mod tests {
         let (out, warnings) = run(&s, &[c]);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(out.carried, vec!["xl/charts/chart1.xml".to_string()]);
-        assert_eq!(out.files[0].0, "chart1.vl.json");
+        assert_eq!(out.files[0].0, "chart1.json");
         let spec = spec_of(&out, 0);
         assert_eq!(spec["mark"], "bar");
         assert_eq!(spec["data"]["name"], "Sheet1!A1:B4");
@@ -729,11 +729,7 @@ mod tests {
         let names: Vec<&str> = out.files.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(
             names,
-            vec![
-                "Units by region.vl.json",
-                "chart2.vl.json",
-                "chart3.vl.json"
-            ]
+            vec!["Units by region.json", "chart2.json", "chart3.json"]
         );
     }
 }

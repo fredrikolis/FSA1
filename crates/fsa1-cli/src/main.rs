@@ -369,6 +369,10 @@ fn cmd_sample(rest: &[String]) -> u8 {
          fsa1-cli render {path} --mode functions   # show the formulas, not their values\n  \
          fsa1-cli check  {path}                    # lint it (clean)\n  \
          fsa1-cli eval   {path} --formula '=Orders!D5'  # evaluate a cell (110)\n  \
+         fsa1-cli render {path} --format html      # draw it, figure included\n\
+         \n\
+         Orders/Line total by product.json is a FIGURE: a Vega-Lite spec whose data.name binds an\n\
+         A1 range. Any <name>.json in a tab folder is one.\n\
          then edit a cell file and re-render\n"
     );
     0
@@ -1191,9 +1195,10 @@ USAGE:
   fsa1-cli sample <dir>
 
 DESCRIPTION:
-  Write the canonical tutorial workbook (two tabs, a header row, per-row formulas, a SUM, and a
-  cross-sheet reference) into <dir>. The one command that writes to disk. Refuses to overwrite a
-  non-empty directory (never clobbers).
+  Write the canonical tutorial workbook (two tabs, a header row, per-row formulas, a SUM, a
+  cross-sheet reference, and a figure — the `.json` entry of a tab that holds a Vega-Lite spec) into
+  <dir>. The one command that writes to disk. Refuses to overwrite a non-empty directory (never
+  clobbers).
 
 ARGUMENTS:
   <dir>             (required) The directory to write into (created if absent; must be empty if it exists).
@@ -1335,7 +1340,7 @@ DESCRIPTION:
   ./acme-dcf.xlsx, basename only). Either way it lands only at a FRESH, not-already-occupied path — an
   existing file is refused (never clobbered). Pivots, tables and media are not modeled by the skeleton.
 
-  A FIGURE (<tab>/<name>.vl.json) becomes a NATIVE Excel chart wherever Excel can state one — a real
+  A FIGURE (<tab>/<name>.json) becomes a NATIVE Excel chart wherever Excel can state one — a real
   chart that updates when a cell changes, never a picture of one. Whether it can is settled by writing
   the chart and reading it back: a spec that survives that round trip ships, and one that does not is
   DROPPED with one named loss saying what stopped it, so an author can simplify the spec and pack

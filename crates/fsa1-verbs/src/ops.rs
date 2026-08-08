@@ -431,7 +431,7 @@ pub fn load_overlay(path: &Path) -> Result<Overlay, Refusal> {
 }
 
 /// The THIRD load, off the same directory: a verb that DRAWS a figure asks for it, and every other
-/// one never opens a `.vl.json` at all. Unlike [`load_overlay`] a refusal here is a NOTE, because a
+/// one never opens a `.json` at all. Unlike [`load_overlay`] a refusal here is a NOTE, because a
 /// figure is ADDITIVE: a sidecar that will not parse changes what every cell wears, while a figure
 /// that will not parse costs the document that figure and nothing else. `check` grades one.
 pub fn load_figures(path: &Path) -> Result<(Figures, Vec<String>), Refusal> {

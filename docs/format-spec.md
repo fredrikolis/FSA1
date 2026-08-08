@@ -64,14 +64,14 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 > cement, not a contract.
 
 - **Tree layout** — the workbook directory, a tab per folder, a file per range, a `.css` sidecar per
-  styled region, a `<name>.vl.json` per figure, and what nesting means.
+  styled region, a `<name>.json` per figure, and what nesting means.
 - **Filename grammar** — the closed A1 range in canonical spelling (uppercase column, no leading-zero
   row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, and no whole-column `A:A`, which a
   RANGE file may not name because a grid fills its range exactly), the
   defined-name entry form, the presentation sidecar's `<range>.css`, whose stem is that same
   range grammar EXTENDED by the open forms a sidecar alone may name (`A:A`, `A:C`, `1:1`, `2:5`),
   whose host separator is a range file's — or the suffix alone, naming no range — and the figure's
-  `<name>.vl.json`, whose stem is a NAME rather than a range, so it takes no part in the cascade and
+  `<name>.json`, whose stem is a NAME rather than a range, so it takes no part in the cascade and
   collides with no cell.
 - **Cell encoding** — TSV; the file is its grid with no header or metadata line; first line is
   the first row; one field per coordinate; an empty field is Blank; the `\t` / `\n` / `\\` escapes.
@@ -84,7 +84,8 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
   file beside it. Those selectors, the properties, their one canonical spelling, and the contention
   between sidecars — where two roots reach one coordinate the smaller area wins, property by
   property, ties settled by canonical filename order.
-- **Figures** — a `<name>.vl.json` entry of a tab, holding a Vega-Lite spec whose every `data.name`
+- **Figures** — a `<name>.json` entry of a tab — ANY of them, the extension being spent on figures
+  alone — holding a Vega-Lite spec whose every `data.name`
   is an A1 reference into the workbook: an optional `<tab>!` prefix, then one corner or two joined by
   `:`. A reference, not a filename, so a 1x1 `A1:A1` is admissible and a whole-column `A:A` is not.
   The range resolves to a table whose FIRST ROW is the field names and whose cells contribute their

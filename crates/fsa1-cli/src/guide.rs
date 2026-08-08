@@ -63,7 +63,9 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   faults; render --format html carries it into the document's CSS, and pack carries it into
   the .xlsx as fonts, fills, borders, alignment, column widths and row heights.
 
-FIGURES — <tab>/<name>.vl.json, a Vega-Lite spec bound to the tab's ranges
+FIGURES — <tab>/<name>.json, a Vega-Lite spec bound to the tab's ranges
+  Any <name>.json entry of a tab is a figure (the stem is the name, so a bare .json is not
+  one); a figure is the only JSON a workbook holds.
   The STEM is a name, never a range, so it collides with no cell and takes no part in the
   cascade. Bind data through Vega-Lite's own named data: "data": {"name": "A1:D4"}, or
   "Orders!A1:D4" across tabs. A binding is a REFERENCE — one corner or two joined by ":",

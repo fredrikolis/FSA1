@@ -1,5 +1,5 @@
 // Concern: a figure's Vega-Lite spec, the ranges it binds and the document they complete | Non-concern: finding them on disk (figures.rs), drawing one | IO: (name, text) -> Figure; (&Workbook) -> a spec
-//! `datasets` is optional in the Vega-Lite schema, so a `<name>.vl.json` on disk is already
+//! `datasets` is optional in the Vega-Lite schema, so a `<name>.json` on disk is already
 //! schema-valid and complete — merely UNBOUND. Expansion is pure addition of one top-level key, and
 //! the file an author reads is the file they wrote.
 
@@ -19,7 +19,7 @@ const DATASETS: &str = "datasets";
 /// One figure: the entry it was read from, and the spec that entry holds.
 #[derive(Clone, Debug)]
 pub struct Figure {
-    /// As it LOCATES — `<tab>/<name>.vl.json` — so every refusal anchors on the file an author edits.
+    /// As it LOCATES — `<tab>/<name>.json` — so every refusal anchors on the file an author edits.
     pub name: String,
     pub spec: Json,
 }
@@ -29,10 +29,15 @@ impl Figure {
     /// that survive the read: a parsed [`Json`] keeps none.
     pub fn parse(name: &str, text: &str) -> Result<Figure, Diagnostic> {
         match serde_json::from_str::<Json>(text) {
-            Ok(spec) => Ok(Figure {
-                name: name.to_string(),
-                spec,
-            }),
+            Ok(spec) => {
+                Self::states_a_chart(&spec).map_err(|why| {
+                    Diagnostic::new(Code::FigureSyntax, Loc::file(name), format!("{name} {why}"))
+                })?;
+                Ok(Figure {
+                    name: name.to_string(),
+                    spec,
+                })
+            }
             Err(e) => Err(Diagnostic::new(
                 Code::FigureSyntax,
                 // serde_json reports column 0 where the fault is the input's end; a Loc is 1-based.
@@ -40,6 +45,26 @@ impl Figure {
                 format!("{name} does not hold a JSON spec: {e}"),
             )),
         }
+    }
+
+    /// Refuses a `.json` that parses but states no chart: with the extension spent on figures, an
+    /// ordinary JSON file in a tab folder is expected input, and accepting one hands Vega a document
+    /// it cannot draw. Every Vega-Lite top-level spec carries one of these keys — the grammar's own
+    /// set of spec kinds — so requiring one refuses a non-spec without refusing any spec.
+    fn states_a_chart(spec: &Json) -> Result<(), &'static str> {
+        const KINDS: [&str; 8] = [
+            "mark", "layer", "facet", "concat", "hconcat", "vconcat", "repeat", "spec",
+        ];
+        let Some(root) = spec.as_object() else {
+            return Err("is not one JSON object, so it states no Vega-Lite spec");
+        };
+        if KINDS.iter().any(|k| root.contains_key(*k)) {
+            return Ok(());
+        }
+        Err(
+            "states no mark, layer, facet, concat, repeat or spec, so it draws nothing; \
+             a tab's .json is a Vega-Lite figure",
+        )
     }
 
     /// Every `data.name` the spec states, not just the top-level one: Vega-Lite allows a `data` per
@@ -283,7 +308,7 @@ mod tests {
     /// The tab a figure sits in, and the figure itself parsed against it.
     fn bind(files: &[(&str, &str)], spec: &str) -> Result<Json, Vec<Diagnostic>> {
         let wb = Workbook::from_tabs(&[("Sheet1", files)]).expect("the tab loads");
-        Figure::parse("Sheet1/f.vl.json", spec)
+        Figure::parse("Sheet1/f.json", spec)
             .map_err(|d| vec![d])?
             .expand(&wb, 0)
     }
@@ -337,7 +362,7 @@ mod tests {
         );
         assert_eq!(d.code, Code::FigureBinding);
         assert!(d.message.contains("whole column"), "{}", d.message);
-        assert_eq!(d.loc, Loc::file("Sheet1/f.vl.json"));
+        assert_eq!(d.loc, Loc::file("Sheet1/f.json"));
     }
 
     /// A binding fault carries `Loc::file` and nothing finer: a parsed `Json` keeps no source
@@ -349,7 +374,7 @@ mod tests {
             r#"{"data":{"name":"A1:D99"},"mark":"bar"}"#,
         );
         assert_eq!(d.code, Code::FigureBinding);
-        assert_eq!(d.loc, Loc::file("Sheet1/f.vl.json"));
+        assert_eq!(d.loc, Loc::file("Sheet1/f.json"));
     }
 
     /// An object cannot key on nothing, and a duplicate would silently drop a column.
@@ -361,7 +386,7 @@ mod tests {
                 r#"{"data":{"name":"A1:C2"},"mark":"bar"}"#,
             );
             assert_eq!(d.code, Code::FigureBinding, "{grid:?}");
-            assert_eq!(d.loc, Loc::file("Sheet1/f.vl.json"), "{grid:?}");
+            assert_eq!(d.loc, Loc::file("Sheet1/f.json"), "{grid:?}");
         }
     }
 
@@ -399,10 +424,10 @@ mod tests {
     /// A JSON parse failure is the one figure fault with a position to carry, so it carries one.
     #[test]
     fn a_body_that_is_not_json_is_refused_on_its_line_and_column() {
-        let d = Figure::parse("Sheet1/f.vl.json", "{\n  \"mark\": bar\n}")
-            .expect_err("this is not JSON");
+        let d =
+            Figure::parse("Sheet1/f.json", "{\n  \"mark\": bar\n}").expect_err("this is not JSON");
         assert_eq!(d.code, Code::FigureSyntax);
-        assert_eq!(d.loc, Loc::body("Sheet1/f.vl.json", 2, 11));
+        assert_eq!(d.loc, Loc::body("Sheet1/f.json", 2, 11));
     }
 
     /// The tab prefix, and the tab a workbook does not hold.
@@ -414,7 +439,7 @@ mod tests {
         ])
         .expect("both tabs load");
         let figure = Figure::parse(
-            "Sheet1/f.vl.json",
+            "Sheet1/f.json",
             r#"{"data":{"name":"Orders!A1:B2"},"mark":"bar"}"#,
         )
         .expect("it parses");
@@ -424,7 +449,7 @@ mod tests {
             serde_json::json!([{"x": 7, "y": 8}]),
         );
         let missing = Figure::parse(
-            "Sheet1/f.vl.json",
+            "Sheet1/f.json",
             r#"{"data":{"name":"Ghost!A1:B2"},"mark":"bar"}"#,
         )
         .expect("it parses");
@@ -437,7 +462,7 @@ mod tests {
     fn a_figure_entry_is_neither_a_cell_nor_a_defined_name() {
         let wb = Workbook::from_tabs(&[(
             "Sheet1",
-            &[("A1", "1"), ("sales.vl.json", "{\"mark\":\"bar\"}")],
+            &[("A1", "1"), ("sales.json", "{\"mark\":\"bar\"}")],
         )])
         .expect("the figure is skipped, not refused");
         let names = wb.name_table().names();

@@ -122,6 +122,11 @@ Hand it back: `pack` the directory to get a fresh `.xlsx`.
   on every platform, so when you *create* one yourself either works (prefer `A1-C1` if the tree may be
   used on Windows, since `:` cannot be written there). In formulas and path selectors always use `:` —
   that is platform-independent. The `fsa1-cli` command (https://fsa1.sh) has a `convert` verb that re-spells an existing tree.
+- **A `.json` file in a tab folder is a FIGURE.** The extension is spent on figures alone, so any
+  `<tab>/<name>.json` is read as a Vega-Lite chart spec and `check` lints it — do not park unrelated
+  JSON inside a workbook. To author one, write the spec with a `"data": {"name": "A1:D4"}` binding
+  (an A1 reference, optionally `<tab>!`-prefixed, naming a rectangle the tab fills whose first row is
+  the field names); the stem is a NAME, never a range, so it collides with no cell.
 - `unpack` prints a **fidelity report** of anything the conversion changed; it is not an error, but
   read it. `pack` and the never-clobber commands refuse to overwrite existing files.
 - Every tool answers with one block of text: the grid, the table, the value or the trace.

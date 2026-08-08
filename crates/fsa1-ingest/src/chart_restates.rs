@@ -112,7 +112,7 @@ mod tests {
     const BAR: &str = fsa1_xlsx::BAR_CHART_PART;
 
     fn figure(spec: &str) -> Figure {
-        Figure::parse("Sheet1/f.vl.json", spec).expect("the spec parses")
+        Figure::parse("Sheet1/f.json", spec).expect("the spec parses")
     }
 
     /// The membership test in both directions over ONE chart part: the figure it was written from

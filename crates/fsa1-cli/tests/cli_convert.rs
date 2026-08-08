@@ -665,7 +665,7 @@ fn figure_workbook(cwd: &Path, basename: &str, spec: &str) -> PathBuf {
         "Region\tUnits\nNorth\t12\nSouth\t9\nEast\t15",
     )
     .expect("write the table");
-    std::fs::write(tab.join("sales.vl.json"), spec).expect("write the figure");
+    std::fs::write(tab.join("sales.json"), spec).expect("write the figure");
     cwd.join(basename)
 }
 
@@ -704,7 +704,7 @@ fn pack_drops_a_figure_excel_cannot_draw_and_strict_refuses_it() {
     );
     assert!(out.contains("0 chart(s) written"), "{out}");
     assert!(out.contains("pack fidelity report (1 figure(s))"), "{out}");
-    assert!(out.contains("Sheet1/sales.vl.json"), "{out}");
+    assert!(out.contains("Sheet1/sales.json"), "{out}");
     assert!(
         out.contains("\"boxplot\""),
         "the loss names the mark:\n{out}"

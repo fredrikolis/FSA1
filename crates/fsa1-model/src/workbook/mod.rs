@@ -828,7 +828,7 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
         if Workbook::is_reserved_entry(&name) {
             continue;
         }
-        // A figure is skipped with the sidecars: its stem is a NAME, so the name arm below would otherwise claim it and its `.vl` suffix would die as a corner alias.
+        // A figure is skipped with the sidecars: its stem is a NAME, so the name arm below would otherwise claim it and its `.json` suffix would die as part of that name.
         if ft.is_file() && (is_presentation_entry(&name) || is_figure_entry(&name)) {
             continue;
         }

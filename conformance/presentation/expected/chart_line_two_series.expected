@@ -3,7 +3,7 @@ file: Sheet1/A1:C4
 |Jan	1	2
 |Feb	3	4
 |Mar	5	6
-file: Sheet1/Alpha against Beta.vl.json
+file: Sheet1/Alpha against Beta.json
 |{
 |  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
 |  "title": "Alpha against Beta",

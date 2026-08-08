@@ -15,7 +15,7 @@ than "the corpus". Three families:
   * a STYLE fixture asserts what `unpack` must emit as the range file's trailing ``@scope`` block, and
     that packing it back preserves that block;
   * a ``warn_*`` fixture asserts a single SER3 warning and the ABSENCE of the ``nothing lost`` line;
-  * a ``chart_*`` fixture asserts the ``.vl.json`` figure a chart crosses as, or the named loss it
+  * a ``chart_*`` fixture asserts the ``.json`` figure a chart crosses as, or the named loss it
     costs where none can. ``openpyxl.chart`` authors every one, as openpyxl authors every other byte.
 
 Anchors shared with the expectations, so a reviewer can cross-read the two: the Normal font of an

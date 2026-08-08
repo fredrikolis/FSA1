@@ -17,7 +17,7 @@ pub struct Figures {
 
 impl Figures {
     /// The outer `io::Result` reports a filesystem failure and the inner one the figures' own
-    /// refusals, exactly as [`Workbook::load_dir`] splits them. A ROOT-level `.vl.json` is not read
+    /// refusals, exactly as [`Workbook::load_dir`] splits them. A ROOT-level `.json` is not read
     /// here: the workbook load is what refuses it, and this pass must not refuse it twice.
     pub fn load_dir(root: &Path) -> std::io::Result<Result<Figures, Vec<Diagnostic>>> {
         let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
@@ -38,7 +38,19 @@ impl Figures {
                     continue;
                 }
                 let located = format!("{tab}/{name}");
-                match Figure::parse(&located, &std::fs::read_to_string(f.path())?) {
+                // Located, not propagated: `?` would refuse the whole workbook naming its root, so one stray binary called `<name>.json` would take the grid down with it.
+                let text = match std::fs::read_to_string(f.path()) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        diags.push(Diagnostic::new(
+                            Code::FigureSyntax,
+                            Loc::file(&located),
+                            format!("{located} cannot be read as text: {e}"),
+                        ));
+                        continue;
+                    }
+                };
+                match Figure::parse(&located, &text) {
                     Ok(figure) => found.push(figure),
                     Err(d) => diags.push(d),
                 }
