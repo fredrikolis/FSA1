@@ -1432,12 +1432,7 @@ fn a_malformed_sidecar_reaches_only_the_verbs_that_read_presentation() {
         "check names the fault and where it is:\n{out}"
     );
 
-    // The ASCII table reads the sidecar for its axis runs alone: a figure's cover is measured in them.
-    for verb in [
-        vec!["render", root, "--format", "html"],
-        vec!["render", root],
-        vec!["pack", root],
-    ] {
+    for verb in [vec!["render", root, "--format", "html"], vec!["pack", root]] {
         let (code, out) = run(&verb);
         assert_eq!(
             code, 3,
@@ -1445,8 +1440,10 @@ fn a_malformed_sidecar_reaches_only_the_verbs_that_read_presentation() {
         );
     }
 
+    // The ASCII table opens the sidecar for AXIS RUNS alone, and this fixture holds no figure whose cover needs measuring in them -- so it opens none.
     let cell = at(&fx, "Sheet1/B1");
     for verb in [
+        vec!["render", root],
         vec!["eval", root, "--formula", "=B1"],
         vec!["tree", root],
         vec!["trace", cell.as_str()],
@@ -1467,6 +1464,38 @@ fn a_root_level_figure_is_a_located_refusal() {
     assert_ne!(code, 0, "{out}");
     assert!(out.contains("figure-in-root"), "{out}");
     assert!(out.contains("stray.json"), "{out}");
+}
+
+/// The one tree the range form turns from ACCEPTED into a refusal: `Q4.json` states its own
+/// placement in its name, so `Q4.css` beside it is a second, contradicting answer. A name-form
+/// figure takes the same sidecar and is clean, so the refusal is the FORM's and not the pairing's.
+#[test]
+fn a_sidecar_over_a_range_named_figure_is_a_located_clash() {
+    let spec = "{\"data\":{\"name\":\"A1:B1\"},\"mark\":\"bar\"}";
+    let placement = "  figure { anchor: A1:B2 }\n";
+
+    let fx = Fixture::new("figure-sidecar-clash");
+    fx.file("Sheet1", "A1", "1")
+        .file("Sheet1", "B1", "2")
+        .file("Sheet1", "Q4.json", spec)
+        .file("Sheet1", "Q4.css", placement);
+    let (code, out) = run(&["check", fx.path().to_str().unwrap()]);
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("figure-sidecar-clash"), "{out}");
+    assert!(out.contains("Sheet1/Q4.css"), "{out}");
+    assert!(
+        out.contains("Q4") && out.contains("Q4.json"),
+        "the message names the range the figure fills and the figure that fills it:\n{out}"
+    );
+
+    // The same sidecar over a NAME-form figure is the accepted pairing.
+    let ok = Fixture::new("figure-sidecar-named");
+    ok.file("Sheet1", "A1", "1")
+        .file("Sheet1", "B1", "2")
+        .file("Sheet1", "Chart1.json", spec)
+        .file("Sheet1", "Chart1.css", placement);
+    let (ok_code, ok_out) = run(&["check", ok.path().to_str().unwrap()]);
+    assert_eq!(ok_code, 0, "a name-form figure takes a sidecar:\n{ok_out}");
 }
 
 /// `check` LINTS a figure: its refusals are findings, and the workbook's own values still load.

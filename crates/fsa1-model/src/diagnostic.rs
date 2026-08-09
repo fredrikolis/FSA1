@@ -41,6 +41,7 @@ pub enum Code {
     FigureSyntax,
     FigureBinding,
     FigurePlacement,
+    FigureSidecarClash,
     UnclaimedSidecar,
 }
 
@@ -74,6 +75,7 @@ impl Code {
         Code::FigureSyntax,
         Code::FigureBinding,
         Code::FigurePlacement,
+        Code::FigureSidecarClash,
         Code::UnclaimedSidecar,
     ];
 
@@ -107,6 +109,7 @@ impl Code {
             Code::FigureSyntax => "figure-syntax",
             Code::FigureBinding => "figure-binding",
             Code::FigurePlacement => "figure-placement",
+            Code::FigureSidecarClash => "figure-sidecar-clash",
             Code::UnclaimedSidecar => "unclaimed-sidecar",
         }
     }
@@ -163,6 +166,9 @@ impl Code {
             }
             Code::FigurePlacement => {
                 "a figure's placement sidecar holds one `figure` rule stating where on the sheet it sits"
+            }
+            Code::FigureSidecarClash => {
+                "a figure named for a range states its own placement, so it takes no sidecar"
             }
             Code::UnclaimedSidecar => {
                 "a sidecar naming no range places the figure of the same stem, so its tab must hold one"
@@ -258,6 +264,9 @@ impl Code {
             Code::FigurePlacement => {
                 "write the file as one rule, `  figure { <property>: <value>; ... }` on one line with a closing newline, declaring `anchor`, `height`, `left`, `top`, `width` alphabetically and once each; \
                  `anchor` is required and is a cell (`D2`) or a range (`D2:K17`), and only a cell anchor takes the four lengths, each a non-negative `px`/`in`/`cm`/`pt`"
+            }
+            Code::FigureSidecarClash => {
+                "delete the sidecar, or rename the figure to a NAME (`Chart1.json`) if its placement needs the sub-cell offsets only a sidecar states"
             }
             Code::UnclaimedSidecar => {
                 "rename the sidecar to the figure it places -- `<figure>.css` beside `<figure>.json` in the same tab folder -- or delete it; a sidecar whose stem names no range and no figure states nothing"
@@ -438,7 +447,7 @@ mod tests {
     fn registry_is_self_consistent() {
         assert_eq!(
             Code::ALL.len(),
-            29,
+            30,
             "every Code variant must be listed in ALL"
         );
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();

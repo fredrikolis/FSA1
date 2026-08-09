@@ -1,4 +1,4 @@
-// Concern: finds a workbook's figures on disk and holds them per tab | Non-concern: a spec's own grammar or its binding (figure.rs), drawing one | IO: dir -> Figures
+// Concern: finds a workbook's figures on disk, holds them per tab, and answers where each one sits | Non-concern: what a name MEANS (names.rs), a spec's grammar or binding | IO: dir -> Figures
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -6,7 +6,8 @@ use std::path::Path;
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::figure::{Binding, Figure};
 use crate::names::{
-    CssEntry, FIGURE_SUFFIX, PRESENTATION_SUFFIX, css_entry, figure_stems, is_figure_entry,
+    CssEntry, FIGURE_SUFFIX, PRESENTATION_SUFFIX, css_entry, figure_occupancy, figure_range,
+    figure_stems, is_figure_entry,
 };
 use crate::placement::Placement;
 use crate::workbook::Workbook;
@@ -66,6 +67,10 @@ impl Figures {
                     continue;
                 }
                 let located = format!("{tab}/{name}");
+                // Before the body is read, because the range form's placement is its NAME's: a spec that does not parse still sits exactly where it is named.
+                if let Some(rect) = figure_occupancy(&name) {
+                    placements.insert(located.clone(), Placement::Cells(rect));
+                }
                 // Located, not propagated: `?` would refuse the whole workbook naming its root, so one stray binary called `<name>.json` would take the grid down with it.
                 let text = match std::fs::read_to_string(path) {
                     Ok(text) => text,
@@ -92,6 +97,19 @@ impl Figures {
                         format!(
                             "{located} names no range, so it places the figure {stem}{FIGURE_SUFFIX} \
                              -- and this tab holds none"
+                        ),
+                    ));
+                    continue;
+                }
+                // A range-form figure already states its placement, so a sidecar over it has nothing left to say and is a refusal rather than a second answer.
+                if let Some(rect) = figure_range(&stem) {
+                    diags.push(Diagnostic::new(
+                        Code::FigureSidecarClash,
+                        Loc::file(&located),
+                        format!(
+                            "{stem}{FIGURE_SUFFIX} is named for the range {} it fills, so {located} \
+                             contradicts it; delete the sidecar, or rename the figure to a name",
+                            rect.label()
                         ),
                     ));
                     continue;

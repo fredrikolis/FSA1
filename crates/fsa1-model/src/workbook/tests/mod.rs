@@ -169,6 +169,33 @@ fn load_surfaces_overlap_and_bad_files() {
 }
 
 #[test]
+fn a_range_named_figure_occupies_its_range_and_a_name_named_one_occupies_nothing() {
+    let overlaps = |files: &[(&str, &str)]| -> Vec<Diagnostic> {
+        match Workbook::from_tabs(&[("Sheet1", files)]) {
+            Ok(_) => Vec::new(),
+            Err(d) => d.into_iter().filter(|d| d.code == Code::Overlap).collect(),
+        }
+    };
+
+    let cell_and_figure = overlaps(&[("E4", "x"), ("D2:K17.json", "{}")]);
+    assert_eq!(cell_and_figure.len(), 1, "{cell_and_figure:?}");
+    assert!(
+        cell_and_figure[0].message.contains("E4")
+            && cell_and_figure[0].message.contains("D2:K17.json"),
+        "{cell_and_figure:?}"
+    );
+
+    // The name form floats, so the same cell is clean beside it.
+    assert!(
+        overlaps(&[("E4", "x"), ("Chart1.json", "{}")]).is_empty(),
+        "a name-form figure occupies nothing"
+    );
+
+    let two_figures = overlaps(&[("D2:K17.json", "{}"), ("K17:L20.json", "{}")]);
+    assert_eq!(two_figures.len(), 1, "{two_figures:?}");
+}
+
+#[test]
 fn an_unparseable_formula_is_a_located_error_cell_not_a_whole_file_refusal() {
     let wb = load_one_tab(
         "Sheet1",

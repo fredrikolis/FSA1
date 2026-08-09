@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use fsa1_ingest::{Decomposition, ImportReport};
 use fsa1_model::{
-    Axis, Diagnostic, Direction, Figures, FormulaOutcome, Overlay, Rect, RenderMode, TraceNode,
-    ViewScope, view,
+    Axis, Diagnostic, Direction, Figures, FormulaOutcome, Overlay, Placement, Rect, RenderMode,
+    TraceNode, ViewScope, view,
 };
 
 use crate::address;
@@ -58,17 +58,19 @@ fn view_at(
         return Err(fail(Kind::Validation, &msg));
     }
     let wb = &resolved.workbook;
-    // HTML DRAWS presentation and the ASCII table measures a figure's cover in the same axis runs; `tree` opens no figure, so it opens no overlay either.
-    let overlay = match (format, presenter) {
-        (Format::Html, _) | (Format::Ascii, Presenter::Table) => {
-            Some(load_overlay(&resolved.root)?)
-        }
-        (Format::Ascii, Presenter::Tree) => None,
-    };
     // Gated on the PRESENTER, not the format: `tree` reaches this same function and draws no figure, so it must not open one, exactly as `eval` and `trace` never do.
     let (figures, mut notes) = match presenter {
         Presenter::Table => load_figures(&resolved.root)?,
         Presenter::Tree => (Figures::default(), Vec::new()),
+    };
+    let needs_axes = figures
+        .all()
+        .any(|(_, f)| matches!(figures.placement(f), Some(Placement::Box { .. })));
+    // HTML DRAWS presentation; ASCII draws none and opens the sidecar only to MEASURE, which a cover stated in CELLS does not need.
+    let overlay = match (format, presenter) {
+        (Format::Html, _) => Some(load_overlay(&resolved.root)?),
+        (Format::Ascii, Presenter::Table) if needs_axes => Some(load_overlay(&resolved.root)?),
+        (Format::Ascii, _) => None,
     };
     // A page draws VALUES and shows a formula in its bar, so a `--mode` has nothing left to pick.
     let mode = match (format, mode) {
@@ -106,17 +108,22 @@ fn view_at(
     // Where each figure sits, in CELLS, named so the note below reads the rectangle it just built. Only the ASCII table marks: HTML draws the figure itself, and `tree` has no coordinate plane to occlude.
     let mut placed: Vec<(u32, String, Rect)> = Vec::new();
     if let (Presenter::Table, Format::Ascii) = (presenter, format) {
-        let overlay = overlay
-            .as_ref()
-            .expect("the ASCII table loaded the overlay above");
         for (s, tab) in wb.sheet_names().iter().enumerate() {
             let s = s as u32;
             let tab_figures = figures.in_tab(tab);
             if tab_figures.is_empty() {
                 continue;
             }
-            let cols = Axis::columns(&overlay.column_widths(wb, s));
-            let rows = Axis::rows(&overlay.row_heights(wb, s));
+            // Where no overlay was opened, the runs are EMPTY rather than absent -- `Axis::columns(&[])` is the default ruler, every cell its default width, and not a ruler of zero-sized cells.
+            let (cols, rows) = overlay.as_ref().map_or_else(
+                || (Axis::columns(&[]), Axis::rows(&[])),
+                |o| {
+                    (
+                        Axis::columns(&o.column_widths(wb, s)),
+                        Axis::rows(&o.row_heights(wb, s)),
+                    )
+                },
+            );
             for figure in tab_figures {
                 if let Some(placement) = figures.placement(figure) {
                     placed.push((s, figure.name.clone(), placement.cover(&cols, &rows)));

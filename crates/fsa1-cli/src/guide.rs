@@ -63,11 +63,16 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   faults; render --format html carries it into the document's CSS, and pack carries it into
   the .xlsx as fonts, fills, borders, alignment, column widths and row heights.
 
-FIGURES — <tab>/<name>.json, a Vega-Lite spec bound to the tab's ranges
-  Any <name>.json entry of a tab is a figure (the stem is the name, so a bare .json is not
-  one); a figure is the only JSON a workbook holds.
-  The STEM is a name, never a range, so it collides with no cell and takes no part in the
-  cascade. Bind data through Vega-Lite's own named data: "data": {"name": "A1:D4"}, or
+FIGURES — <tab>/<stem>.json, a Vega-Lite spec bound to the tab's ranges
+  Any .json entry of a tab with a non-empty stem is a figure, and a figure is the only JSON
+  a workbook holds. Its stem states one of TWO forms.
+  RANGE form — a stem spelling a canonical closed range inside Excel's grid (D2:K17, Q4) IS
+  this form, so a chart named Q4 is placed at Q4 and not called Q4. The name is the
+  placement: the figure FILLS that range and RESERVES it, colliding with any cell file or
+  other figure reaching it, and it takes no .css — one beside it is figure-sidecar-clash.
+  NAME form — any other stem (Chart1, sales1, notes2024). It reserves nothing and floats;
+  an optional <name>.css states where it sits, in EMU, down to sub-cell offsets.
+  Bind data through Vega-Lite's own named data: "data": {"name": "A1:D4"}, or
   "Orders!A1:D4" across tabs. A binding is a REFERENCE — one corner or two joined by ":",
   so A1:A1 is legal and a whole column A:A is refused. Every data.name in the spec binds,
   one per layer included, and each must name a rectangle the tab fills.

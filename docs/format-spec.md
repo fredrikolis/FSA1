@@ -38,7 +38,7 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 
 ## FS — the workbook on disk
 
-- **FS1 · the filesystem is the workbook.** A workbook's content is exactly what its file tree holds — a tab per folder, per file the A1 range it fills, the name it declares, the presentation it states over that range or, naming no range, over the tab, or the figure it states over the ranges it binds, and nothing besides — and enters only by an author writing that tree: fsa1-cli reads an existing workbook, derives a new file only where none exists, and never takes cell content from its own invocation.
+- **FS1 · the filesystem is the workbook.** A workbook's content is exactly what its file tree holds — a tab per folder, per file the A1 range it fills, the name it declares, the presentation it states over that range or, naming no range, over the tab, or the figure it states over the ranges it binds and fills over the range its own name states, where it states one, and nothing besides — and enters only by an author writing that tree: fsa1-cli reads an existing workbook, derives a new file only where none exists, and never takes cell content from its own invocation.
 - **FS3 · tooling coexists with content.** A workbook reserves a named set of tree entries for tooling, and no cell's value derives from any of them.
 - **FS5 · every value exists at a coordinate some file declares.** (would violate FS1)
 - **FS6 · every coordinate takes its content from at most one file.** (would violate FS1)
@@ -64,17 +64,19 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 > cement, not a contract.
 
 - **Tree layout** — the workbook directory, a tab per folder, a file per range, a `.css` sidecar per
-  styled region, a `<name>.json` per figure, a `<name>.css` sidecar per PLACED figure, and what
-  nesting means.
+  styled region, a `<range>.json` per figure that fills a range, a `<name>.json` per figure that does
+  not, a `<name>.css` sidecar per PLACED one of those, and what nesting means.
 - **Filename grammar** — the closed A1 range in canonical spelling (uppercase column, no leading-zero
   row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, and no whole-column `A:A`, which a
   RANGE file may not name because a grid fills its range exactly), the
   defined-name entry form, the presentation sidecar's `<range>.css`, whose stem is that same
   range grammar EXTENDED by the open forms a sidecar alone may name (`A:A`, `A:C`, `1:1`, `2:5`),
   whose host separator is a range file's, or the suffix alone naming no range, or a stem that is a
-  FIGURE's name — the placement sidecar — and the figure's
-  `<name>.json`, whose stem is a NAME rather than a range, so it takes no part in the cascade and
-  collides with no cell. Which kind a `.css` is is settled by its TAB, not by its spelling: a stem
+  FIGURE's name — the placement sidecar — and the figure's own
+  `<stem>.json`, whose stem is a NAME *or* a canonical closed range inside Excel's grid. The name
+  form takes no part in the cascade and collides with no cell; the RANGE form fills the range it
+  spells and collides with any file reaching it, and a `.css` beside one is a refusal rather than a
+  placement, that figure having stated its own. Which kind a `.css` is is settled by its TAB, not by its spelling: a stem
   with a `<stem>.json` beside it is that figure's placement (so `Chart1.css` beside `Chart1.json`
   places a figure and never roots a cascade), and only where the tab holds no such figure does the
   name decide — a range root, else a refusal, never a defined name.
@@ -90,19 +92,24 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
   between sidecars — where two roots reach one coordinate the smaller area wins, property by
   property, ties settled by canonical filename order. A FIGURE's sidecar is outside that cascade
   entirely: it names no root, reaches no coordinate, and contends with nothing.
-- **Figures** — a `<name>.json` entry of a tab — ANY of them, the extension being spent on figures
-  alone — holding a Vega-Lite spec whose every `data.name`
+- **Figures** — a `.json` entry of a tab with a non-empty stem — ANY of them, the extension being
+  spent on figures alone — holding a Vega-Lite spec whose every `data.name`
   is an A1 reference into the workbook: an optional `<tab>!` prefix, then one corner or two joined by
   `:`. A reference, not a filename, so a 1x1 `A1:A1` is admissible and a whole-column `A:A` is not.
   The range resolves to a table whose FIRST ROW is the field names and whose cells contribute their
   VALUES, and the bound document is the file's own spec plus one `datasets` key. The spec itself
-  carries no position: where the figure sits is stated beside it, in a `<name>.css` holding one
-  `figure` rule whose `anchor` is a cell (a fixed box, sized by `left`, `top`, `width`, `height`) or
-  a range (the cells it fills, sized with them). A figure with no sidecar is placed by the writer.
+  carries no position, so the STEM states which of two forms the figure takes and where it sits. The
+  RANGE form is the declarative one: the filename is the placement and the size, and the figure fills
+  exactly the cells it names. The NAME form floats, and where it sits is stated beside it, in a
+  `<name>.css` holding one `figure` rule whose `anchor` is a cell (a fixed box, sized by `left`,
+  `top`, `width`, `height`) or a range (the cells it fills, sized with them) — the arbitrary EMU
+  position, with sub-cell offsets, that an imported chart carries and no range expresses. A name-form
+  figure with no sidecar is placed by the writer.
 - **In-cell content** — literal forms (number, `TRUE`/`FALSE`, the seven author-writable error
   spellings, `'`-prefixed text), the `=formula` form, and the trailing `~<code>` display-format marker.
 - **Coverage and overlap** — the grid fills its declared range exactly, or is a single `=formula`
-  whose array value does; every coordinate takes its content from at most one file.
+  whose array value does; every coordinate takes its content from at most one file. A range-named
+  figure occupies its range though it contributes no content, so it collides like any other file.
 - **Reserved entries** — the tree names reserved for tooling, which never contribute a cell value.
 - **Formula language** — the function set, and the Excel-compatibility claim with its declared
   divergences.

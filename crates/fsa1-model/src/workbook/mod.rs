@@ -24,8 +24,8 @@ use fsa1_ast::{
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::grid::{Cell as GridCell, Grid};
 use crate::names::{
-    NameRepr, NameScope, NameTable, RawNameEntry, is_cell_filename, is_figure_entry,
-    is_presentation_entry,
+    NameRepr, NameScope, NameTable, RawNameEntry, figure_occupancy, is_cell_filename,
+    is_figure_entry, is_presentation_entry,
 };
 use crate::overlap::{Rect, detect_overlaps};
 use crate::{ParsedFile, figure_in_root, parse_file, presentation_in_grid};
@@ -111,13 +111,20 @@ impl Tab {
 type FileId = (u32, usize);
 
 /// One tab's tree as the reader classified it: its range files as `(name, text)`. A sidecar is
-/// classified and then dropped, presentation reaching no [`Workbook`] (VAL1).
+/// classified and then dropped, presentation reaching no [`Workbook`] (VAL1); a figure is dropped
+/// too, but a RANGE-form one leaves its `(entry name, rectangle)` in `occupied`, read from the name
+/// alone, so the range it fills still collides.
 struct TabInput {
     name: String,
     files: Vec<(String, String)>,
+    occupied: Vec<(String, Rect)>,
 }
 
-type TabParts = (Vec<(String, String)>, Vec<RawNameEntry>);
+type TabParts = (
+    Vec<(String, String)>,
+    Vec<RawNameEntry>,
+    Vec<(String, Rect)>,
+);
 
 /// `(sheet index, zero-based col, zero-based row)`. Every grid cell is a DISTINCT computation, so
 /// the graph and the caches are keyed per cell, never per file.
@@ -306,10 +313,11 @@ impl Workbook {
                 continue;
             }
             if ft.is_dir() {
-                let (files, names) = read_tab_dir(root, &entry_name, &entry.path())?;
+                let (files, names, occupied) = read_tab_dir(root, &entry_name, &entry.path())?;
                 tabs.push(TabInput {
                     name: entry_name,
                     files,
+                    occupied,
                 });
                 raw_names.extend(names);
             } else if is_presentation_entry(&entry_name) {
@@ -342,9 +350,13 @@ impl Workbook {
         let mut raw_names = Vec::new();
         for (tab_name, files) in tabs {
             let mut cells = Vec::new();
+            let mut occupied = Vec::new();
             for (fname, contents) in files {
-                // A sidecar is classified FIRST, exactly as on disk: its stem holds a range separator, so the cell arm would otherwise take it and its name would die as malformed.
+                // A sidecar is classified FIRST, exactly as on disk: its stem holds a range separator, so the cell arm would otherwise take it and its name would die as malformed. A range-form figure leaves the rectangle its NAME states, `contents` untouched.
                 if is_presentation_entry(&fname) || is_figure_entry(&fname) {
+                    if let Some(rect) = figure_occupancy(&fname) {
+                        occupied.push((fname, rect));
+                    }
                     continue;
                 }
                 if is_cell_filename(&fname) {
@@ -360,6 +372,7 @@ impl Workbook {
             cell_tabs.push(TabInput {
                 name: tab_name,
                 files: cells,
+                occupied,
             });
         }
         Workbook::from_dir_parts(cell_tabs, raw_names)
@@ -376,6 +389,7 @@ impl Workbook {
             let TabInput {
                 name: tab_name,
                 files,
+                occupied,
             } = tab;
             let mut loaded = Vec::new();
             let mut regions: Vec<(String, Rect)> = Vec::new();
@@ -400,6 +414,8 @@ impl Workbook {
                     Err(d) => diags.extend(d),
                 }
             }
+            // After the cell files, so a colliding pair reads `<cell>  and  <figure>.json`.
+            regions.extend(occupied);
             diags.extend(detect_overlaps(&tab_name, &regions));
             out_tabs.push(Tab::new(tab_name.clone(), loaded));
         }
@@ -811,10 +827,12 @@ impl Workbook {
 
 /// Entries are sorted, for a deterministic load order. Three entry kinds are told apart HERE, and a
 /// sidecar is tested for first: its stem holds a range separator, so the cell arm below would
-/// otherwise take `A1:C3.css` and refuse it as a malformed range name. Its CONTENT is never read.
+/// otherwise take `A1:C3.css` and refuse it as a malformed range name. A dropped entry's CONTENT is
+/// never read, a range-form figure's occupied rectangle coming from its NAME alone.
 fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabParts> {
     let mut files = Vec::new();
     let mut names = Vec::new();
+    let mut occupied = Vec::new();
     let mut scratch = Vec::new();
     let mut file_entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     file_entries.sort_by_key(|e| e.file_name());
@@ -828,8 +846,11 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
         if Workbook::is_reserved_entry(&name) {
             continue;
         }
-        // A figure is skipped with the sidecars: its stem is a NAME, so the name arm below would otherwise claim it and its `.json` suffix would die as part of that name.
+        // A figure is skipped with the sidecars: it states no cell, and the name arm below would otherwise claim its stem and let the `.json` suffix die as part of that name. A range-form one still leaves the rectangle its name fills, for `detect_overlaps`.
         if ft.is_file() && (is_presentation_entry(&name) || is_figure_entry(&name)) {
+            if let Some(rect) = figure_occupancy(&name) {
+                occupied.push((name, rect));
+            }
             continue;
         }
         if ft.is_file() && is_cell_filename(&name) {
@@ -845,7 +866,7 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
             names.push(entry);
         }
     }
-    Ok((files, names))
+    Ok((files, names, occupied))
 }
 
 /// `None` for an A1-shaped regular file, which is a cell, for a presentation sidecar, or for an

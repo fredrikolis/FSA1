@@ -1,6 +1,7 @@
 // Concern: what an entry's NAME means — a range, a sidecar, a figure, a defined name — and what it resolves to | Non-concern: finding the entries on disk, evaluating | IO: (entries) -> NameTable
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
+use crate::overlap::Rect;
 use fsa1_ast::a1::parse_a1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,11 +194,32 @@ pub fn is_presentation_entry(name: &str) -> bool {
 /// The suffix that makes an entry a figure.
 pub const FIGURE_SUFFIX: &str = ".json";
 
-/// The NAME a figure is stated under, or `None` for any other entry. A figure's stem is a name and
-/// never a range, so it takes no part in the cascade and collides with no cell.
+/// The STEM a figure is stated under, or `None` for any other entry. The stem is a name or a range
+/// -- [`figure_range`] is what sorts the two -- and the range form is the one that collides with a
+/// cell. Neither takes part in the cascade.
 pub(crate) fn figure_stem(name: &str) -> Option<&str> {
     let stem = name.strip_suffix(FIGURE_SUFFIX)?;
     (!stem.is_empty()).then_some(stem)
+}
+
+/// Excel's grid, zero-based: the last column `XFD` and the last row 1,048,576.
+const MAX_COL: u32 = 16_383;
+const MAX_ROW: u32 = 1_048_575;
+
+/// Which of the two FORMS a figure's stem states: `Some(rect)` for the declarative range form, whose
+/// filename IS its placement, `None` for the name form. The STRICT test the forms sort by --
+/// [`is_cell_filename`] and `parse_a1` are looser and are not it. The grid bound is what the grammar
+/// cannot do: `XFE1` is in-grammar one column past the last, and the bound alone makes it a name.
+pub(crate) fn figure_range(stem: &str) -> Option<Rect> {
+    let region = crate::filename::parse_filename(stem).ok()?.region;
+    (region.max_col <= MAX_COL && region.max_row <= MAX_ROW).then_some(region)
+}
+
+/// What an ENTRY occupies: the rectangle a range-form figure's name states, `None` for a name-form
+/// figure -- which floats -- and for anything that is not a figure at all. The one derivation every
+/// loader shares, so a tree's occupancy cannot differ by which loader walked it.
+pub(crate) fn figure_occupancy(name: &str) -> Option<Rect> {
+    figure_range(figure_stem(name)?)
 }
 
 /// Asked BEFORE the defined-name branch, which would otherwise claim the stem as a name.
@@ -1262,5 +1284,39 @@ mod tests {
             "{d:?}"
         );
         assert!(t.names().iter().all(|n| n.ident != "r"));
+    }
+
+    #[test]
+    fn the_range_form_is_a_canonical_in_grid_range_and_nothing_looser() {
+        for stem in ["D2:K17", "Q4", "A1-B2", "XFD1048576"] {
+            assert!(figure_range(stem).is_some(), "{stem} is the range form");
+        }
+        for stem in [
+            "Chart1",
+            "sales1",
+            "notes2024",
+            "A:A",
+            "XFE1",
+            "A1048577",
+            "a1",
+            "A01",
+            "A1:A1",
+            "G8:A3",
+            "Units",
+        ] {
+            assert!(figure_range(stem).is_none(), "{stem} is the name form");
+        }
+    }
+
+    #[test]
+    fn occupancy_is_the_range_form_under_its_suffix_and_nothing_else() {
+        assert_eq!(
+            figure_occupancy("D2:K17.json"),
+            figure_range("D2:K17"),
+            "a range-form figure occupies what its name states"
+        );
+        for name in ["Chart1.json", ".json", "D2:K17", "D2:K17.css"] {
+            assert!(figure_occupancy(name).is_none(), "{name} occupies nothing");
+        }
     }
 }
