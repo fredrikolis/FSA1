@@ -1,6 +1,7 @@
-// Concern: xl/charts/chartN.xml and the drawing anchoring it to a sheet | Non-concern: which figure becomes one, the rels and content types | IO: (Chart) -> chart bytes; (count, region) -> drawing
+// Concern: xl/charts/chartN.xml and the drawing anchoring it to a sheet | Non-concern: which figure becomes one, the rels and content types | IO: (Chart) -> chart bytes; (placements, axes) -> drawing
 
 use fsa1_ast::a1::format_cell;
+use fsa1_model::{Axis, Placement};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
@@ -43,6 +44,8 @@ pub struct Chart {
     /// `<c:barDir val="bar">`, the horizontal bar that swaps the axes. Only a bar chart has one.
     pub(crate) horizontal: bool,
     pub(crate) series: Vec<ChartSeries>,
+    /// Where the figure said it sits, or `None` for one that said nothing and is derived a spot.
+    pub(crate) placement: Option<Placement>,
 }
 
 impl Chart {
@@ -209,22 +212,32 @@ fn pin(corner: &str) -> String {
     }
 }
 
-/// One sheet's whole drawing: one anchor per chart, each holding the graphic frame that names the
-/// chart part through the drawing's own `rIdN`. Nothing else is anchored — which is what lets the
-/// reader call the part carried.
-pub(crate) fn emit_drawing(count: usize, base_col: u32) -> Vec<u8> {
+/// One sheet's whole drawing: one anchor per chart, in the order `placements` gives them, each
+/// holding the graphic frame that names the chart part through the drawing's own `rIdN`. Nothing
+/// else is anchored — which is what lets the reader call the part carried. Both stated forms emit a
+/// `<xdr:twoCellAnchor>`; `oneCellAnchor` and `absoluteAnchor` are never written.
+pub(crate) fn emit_drawing(
+    placements: &[Option<Placement>],
+    base_col: u32,
+    cols: &Axis,
+    rows: &Axis,
+) -> Vec<u8> {
     let mut w = Writer::new(Vec::new());
     decl(&mut w);
     let mut root = BytesStart::new("xdr:wsDr");
     root.push_attribute(("xmlns:xdr", NS_SHEET_DRAWING));
     root.push_attribute(("xmlns:a", NS_DRAWING));
     start(&mut w, root);
-    for at in 0..count {
-        // Stacked down the first free column, so two charts on one sheet never sit on top of each other.
-        let top = (at * 16) as u32;
-        start(&mut w, BytesStart::new("xdr:twoCellAnchor"));
-        write_anchor(&mut w, "xdr:from", base_col, top);
-        write_anchor(&mut w, "xdr:to", base_col + 8, top + 15);
+    for (at, placement) in placements.iter().enumerate() {
+        let mut anchor = BytesStart::new("xdr:twoCellAnchor");
+        // A fixed box keeps its size when a column resizes, which is exactly what `oneCell` states.
+        if matches!(placement, Some(Placement::Box { .. })) {
+            anchor.push_attribute(("editAs", "oneCell"));
+        }
+        start(&mut w, anchor);
+        let (from, to) = corners(placement.as_ref(), at, base_col, cols, rows);
+        write_anchor(&mut w, "xdr:from", from);
+        write_anchor(&mut w, "xdr:to", to);
         write_frame(&mut w, at);
         empty(&mut w, "xdr:clientData", &[]);
         end(&mut w, "xdr:twoCellAnchor");
@@ -233,12 +246,60 @@ pub(crate) fn emit_drawing(count: usize, base_col: u32) -> Vec<u8> {
     w.into_inner()
 }
 
-fn write_anchor(w: &mut Writer<Vec<u8>>, tag: &str, col: u32, row: u32) {
-    start(w, BytesStart::new(tag));
-    for (part, value) in [("xdr:col", col), ("xdr:colOff", 0)] {
-        text(w, part, &value.to_string());
+/// One anchor's two ends as (col, colOff, row, rowOff). `to` is EXCLUSIVE, exactly as the derived
+/// form writes it: `base_col + 8` spans eight columns, so a range anchor's far corner is one past
+/// the last cell it fills.
+fn corners(
+    placement: Option<&Placement>,
+    at: usize,
+    base_col: u32,
+    cols: &Axis,
+    rows: &Axis,
+) -> (Anchor, Anchor) {
+    match placement {
+        // Stacked down the first free column, so two charts on one sheet never sit on top of each other.
+        None => {
+            let top = (at * 16) as u32;
+            (
+                Anchor(base_col, 0, top, 0),
+                Anchor(base_col + 8, 0, top + 15, 0),
+            )
+        }
+        Some(Placement::Cells(rect)) => (
+            Anchor(rect.min_col, 0, rect.min_row, 0),
+            Anchor(rect.max_col + 1, 0, rect.max_row + 1, 0),
+        ),
+        Some(Placement::Box {
+            at: (col, row),
+            left,
+            top,
+            w,
+            h,
+        }) => {
+            let (x, y) = (cols.edge(*col) + left, rows.edge(*row) + top);
+            let (from_col, from_col_off) = cols.locate(x);
+            let (from_row, from_row_off) = rows.locate(y);
+            let (to_col, to_col_off) = cols.locate(x + w);
+            let (to_row, to_row_off) = rows.locate(y + h);
+            (
+                Anchor(from_col, from_col_off, from_row, from_row_off),
+                Anchor(to_col, to_col_off, to_row, to_row_off),
+            )
+        }
     }
-    for (part, value) in [("xdr:row", row), ("xdr:rowOff", 0)] {
+}
+
+/// One end of an anchor: its column and sub-column offset, then its row and sub-row offset.
+struct Anchor(u32, i64, u32, i64);
+
+fn write_anchor(w: &mut Writer<Vec<u8>>, tag: &str, Anchor(col, col_off, row, row_off): Anchor) {
+    start(w, BytesStart::new(tag));
+    for (part, value) in [
+        ("xdr:col", i64::from(col)),
+        ("xdr:colOff", col_off),
+        ("xdr:row", i64::from(row)),
+        ("xdr:rowOff", row_off),
+    ] {
         text(w, part, &value.to_string());
     }
     end(w, tag);
@@ -340,6 +401,7 @@ mod tests {
             element,
             horizontal: false,
             series: vec![series()],
+            placement: None,
         };
         let pie = chart_xml(&chart("pieChart"));
         assert!(!pie.contains("axId"), "{pie}");

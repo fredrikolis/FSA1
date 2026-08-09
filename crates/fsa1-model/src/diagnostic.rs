@@ -40,6 +40,8 @@ pub enum Code {
     FigureInRoot,
     FigureSyntax,
     FigureBinding,
+    FigurePlacement,
+    UnclaimedSidecar,
 }
 
 impl Code {
@@ -71,6 +73,8 @@ impl Code {
         Code::FigureInRoot,
         Code::FigureSyntax,
         Code::FigureBinding,
+        Code::FigurePlacement,
+        Code::UnclaimedSidecar,
     ];
 
     pub fn code_str(self) -> &'static str {
@@ -102,6 +106,8 @@ impl Code {
             Code::FigureInRoot => "figure-in-root",
             Code::FigureSyntax => "figure-syntax",
             Code::FigureBinding => "figure-binding",
+            Code::FigurePlacement => "figure-placement",
+            Code::UnclaimedSidecar => "unclaimed-sidecar",
         }
     }
 
@@ -154,6 +160,12 @@ impl Code {
             Code::FigureSyntax => "a figure's body must parse as JSON",
             Code::FigureBinding => {
                 "a figure's data name must be an A1 reference this workbook resolves to a table its first row can key"
+            }
+            Code::FigurePlacement => {
+                "a figure's placement sidecar holds one `figure` rule stating where on the sheet it sits"
+            }
+            Code::UnclaimedSidecar => {
+                "a sidecar naming no range places the figure of the same stem, so its tab must hold one"
             }
         }
     }
@@ -242,6 +254,13 @@ impl Code {
             }
             Code::FigureBinding => {
                 "write each `data.name` as an A1 reference -- one corner (`A1`) or two joined by `:` (`A1:D4`), optionally prefixed `<tab>!` -- naming a rectangle the workbook fills, whose FIRST ROW is a full set of distinct field names"
+            }
+            Code::FigurePlacement => {
+                "write the file as one rule, `  figure { <property>: <value>; ... }` on one line with a closing newline, declaring `anchor`, `height`, `left`, `top`, `width` alphabetically and once each; \
+                 `anchor` is required and is a cell (`D2`) or a range (`D2:K17`), and only a cell anchor takes the four lengths, each a non-negative `px`/`in`/`cm`/`pt`"
+            }
+            Code::UnclaimedSidecar => {
+                "rename the sidecar to the figure it places -- `<figure>.css` beside `<figure>.json` in the same tab folder -- or delete it; a sidecar whose stem names no range and no figure states nothing"
             }
         }
     }
@@ -419,7 +438,7 @@ mod tests {
     fn registry_is_self_consistent() {
         assert_eq!(
             Code::ALL.len(),
-            27,
+            29,
             "every Code variant must be listed in ALL"
         );
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();

@@ -143,9 +143,51 @@ pub fn is_tab_layer(name: &str) -> bool {
     name == PRESENTATION_SUFFIX
 }
 
-/// Either kind — what a loader asks when it wants every entry that states presentation.
+/// What a `.css` entry states in the tab it sits in: the tab's own layer, the range root a rooted
+/// sidecar is named for, or the figure beside it. [`CssEntry::Unrooted`] is the placement half —
+/// what it says about the figure is [`crate::Figures`]'s question, not this one's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CssEntry<'a> {
+    TabLayer,
+    Root(&'a str),
+    Unrooted(&'a str),
+}
+
+/// The tab's figure stems — the `<stem>` of every `<stem>.json` beside the entry being classified.
+/// Held as a set because a tab's listing is walked once and asked of many times.
+pub type FigureStems = std::collections::BTreeSet<String>;
+
+/// The three kinds, or `None` for a name that is no `.css` at all. TAB-AWARE, and it must be:
+/// [`parse_a1`] is deliberately lenient, so `Chart1`, `Q4` and `A1-B2` all read as ranges by NAME
+/// while `unpack` writes `chart1.json` routinely. A `.css` whose stem has a `<stem>.json` SIBLING is
+/// that figure's placement whatever the stem spells; only without one does the name decide.
+pub fn css_entry<'a>(name: &'a str, figures: &FigureStems) -> Option<CssEntry<'a>> {
+    let stem = name.strip_suffix(PRESENTATION_SUFFIX)?;
+    Some(if stem.is_empty() {
+        CssEntry::TabLayer
+    } else if figures.contains(stem) {
+        CssEntry::Unrooted(stem)
+    } else if is_cell_filename(stem) {
+        CssEntry::Root(stem)
+    } else {
+        CssEntry::Unrooted(stem)
+    })
+}
+
+/// The stems of every figure in one tab's listing — what [`css_entry`] is asked against.
+pub fn figure_stems<'a>(names: impl IntoIterator<Item = &'a str>) -> FigureStems {
+    names
+        .into_iter()
+        .filter_map(figure_stem)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Every kind — what a loader asks when it wants every entry that states presentation. Name-only,
+/// because the SUFFIX alone settles it: which kind a `.css` is takes a tab, but that it states
+/// presentation does not.
 pub fn is_presentation_entry(name: &str) -> bool {
-    is_tab_layer(name) || presentation_stem(name).is_some()
+    name.strip_suffix(PRESENTATION_SUFFIX).is_some()
 }
 
 /// The suffix that makes an entry a figure.
@@ -760,6 +802,51 @@ mod tests {
                 target_cell: cell.to_string(),
             },
         }
+    }
+
+    /// The three kinds, so a `.css` naming no range is a kind of its own rather than a defined name.
+    #[test]
+    fn every_css_entry_classifies_by_its_stem() {
+        let none = FigureStems::new();
+        assert_eq!(css_entry(".css", &none), Some(CssEntry::TabLayer));
+        assert_eq!(css_entry("A1:B2.css", &none), Some(CssEntry::Root("A1:B2")));
+        assert_eq!(css_entry("A:A.css", &none), Some(CssEntry::Root("A:A")));
+        assert_eq!(css_entry("Q4.css", &none), Some(CssEntry::Root("Q4")));
+        assert_eq!(
+            css_entry("Units.css", &none),
+            Some(CssEntry::Unrooted("Units"))
+        );
+        assert_eq!(
+            css_entry("sales.css", &none),
+            Some(CssEntry::Unrooted("sales"))
+        );
+        assert_eq!(css_entry("Units.json", &none), None);
+    }
+
+    /// The SIBLING decides, not the spelling: `parse_a1` is lenient, so `Chart1`, `Q4` and `A1-B2`
+    /// all read as ranges by name — and `unpack` writes `chart1.json` for every imported chart.
+    #[test]
+    fn a_css_beside_its_figure_is_that_figures_placement_whatever_the_stem_looks_like() {
+        let figures = figure_stems(["Chart1.json", "Q4.json", "A1-B2.json", "sales1.json"]);
+        for stem in ["Chart1", "Q4", "A1-B2", "sales1"] {
+            assert_eq!(
+                css_entry(&format!("{stem}.css"), &figures),
+                Some(CssEntry::Unrooted(stem)),
+                "{stem}.css sits beside {stem}.json"
+            );
+        }
+        // The tab layer is the suffix alone, so no figure can claim it.
+        assert_eq!(css_entry(".css", &figures), Some(CssEntry::TabLayer));
+        // And a root the tab holds no figure for still reads as one.
+        assert_eq!(
+            css_entry("D5:E6.css", &figures),
+            Some(CssEntry::Root("D5:E6"))
+        );
+        assert_eq!(
+            css_entry("Q4.css", &figure_stems(["Other.json"])),
+            Some(CssEntry::Root("Q4")),
+            "with no Q4.json beside it the name decides, exactly as before",
+        );
     }
 
     #[test]

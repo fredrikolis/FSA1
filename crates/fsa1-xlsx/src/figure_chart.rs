@@ -1,10 +1,10 @@
-// Concern: derives the chart a figure states, else why Excel has none, and holds the ONE mark-element table | Non-concern: the part's bytes (chart.rs) | IO: (Figure, tab) -> Chart; mark <-> element
+// Concern: derives the chart a figure states, else why Excel has none, and holds the ONE mark table | Non-concern: the part's bytes (chart.rs) | IO: (Figure, tab, placement) -> Chart; mark <-> element
 //! The chart type comes from `mark` and `encoding` and from nothing else: a spec whose metadata went
 //! stale would otherwise write a chart contradicting itself, and a hand-authored figure carries none
 //! to consult. This pass derives only the shapes a chart states exactly, because whether the result
 //! is the figure it came from is settled by reading the chart back, never by a second opinion here.
 
-use fsa1_model::{Binding, Figure, Rect, Workbook, quote_sheet};
+use fsa1_model::{Binding, Figure, Placement, Rect, Workbook, quote_sheet};
 use serde_json::{Map, Value as Json};
 
 use crate::chart::{Chart, ChartSeries, cell};
@@ -52,7 +52,12 @@ const LAYER_KEYS: [&str; 3] = ["mark", "data", "encoding"];
 
 /// The chart `figure` states over tab `sheet`, or the ONE sentence naming what Excel has no chart
 /// for — which is what an author simplifies their spec against.
-pub fn chart_for(wb: &Workbook, sheet: u32, figure: &Figure) -> Result<Chart, String> {
+pub fn chart_for(
+    wb: &Workbook,
+    sheet: u32,
+    figure: &Figure,
+    placement: Option<&Placement>,
+) -> Result<Chart, String> {
     let root = figure
         .spec
         .as_object()
@@ -102,6 +107,7 @@ pub fn chart_for(wb: &Workbook, sheet: u32, figure: &Figure) -> Result<Chart, St
         element,
         horizontal,
         series,
+        placement: placement.copied(),
     })
 }
 

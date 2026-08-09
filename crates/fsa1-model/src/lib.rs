@@ -16,6 +16,7 @@ pub mod names;
 pub mod number_literal;
 pub mod overlap;
 pub mod overlay;
+pub mod placement;
 pub mod presentation;
 pub mod render;
 pub mod sample;
@@ -42,13 +43,14 @@ pub use grid::{
     Cell, Grid, deserialize_tsv, encode_field, lex_literal, load_error_value, split_format_marker,
 };
 pub use names::{
-    FIGURE_SUFFIX, Name, NameRepr, NameScope, NameTable, NameTarget, PRESENTATION_SUFFIX,
-    RawNameEntry, is_cell_filename, is_figure_entry, is_presentation_entry, is_tab_layer,
-    presentation_stem, quote_sheet,
+    CssEntry, FIGURE_SUFFIX, FigureStems, Name, NameRepr, NameScope, NameTable, NameTarget,
+    PRESENTATION_SUFFIX, RawNameEntry, css_entry, figure_stems, is_cell_filename, is_figure_entry,
+    is_presentation_entry, is_tab_layer, presentation_stem, quote_sheet,
 };
 pub use number_literal::{display_number_literal, effective_literal_format, is_display_exact};
 pub use overlap::{Rect, detect_overlaps};
 pub use overlay::Overlay;
+pub use placement::{Axis, Placement};
 pub use presentation::{Presentation, Rule, Target, parse_rules, spell_rules};
 pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, combined_cell, display_value,

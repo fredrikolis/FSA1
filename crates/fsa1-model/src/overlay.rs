@@ -1,4 +1,4 @@
-// Concern: holds a tab's default layer and its blocks, and answers what a coordinate or axis wears | Non-concern: a rule's grammar (presentation.rs), one block's resolve (style.rs) | IO: dir -> Overlay
+// Concern: holds a tab's default layer and its blocks, and answers what a coordinate or axis wears | Non-concern: a rule's grammar (presentation.rs), a figure's sidecar (figures.rs) | IO: dir -> Overlay
 //! Presentation is off the engine's load path: a [`crate::Workbook`] cannot reach a sidecar, so a
 //! value derives from content and references alone (VAL1) as a SHAPE rather than an assertion. The
 //! resolvers take the workbook because the gap rule is the grid's: a coordinate no block reaches but
@@ -11,7 +11,7 @@ use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::filename::{parse_filename, parse_root};
 use crate::geometry::{AxisRun, declared_heights, declared_widths};
-use crate::names::{is_presentation_entry, is_tab_layer, presentation_stem};
+use crate::names::{CssEntry, css_entry, figure_stems, is_tab_layer, presentation_stem};
 use crate::overlap::Rect;
 use crate::presentation::{Presentation, parse_rules};
 use crate::style::{CellStyle, resolve};
@@ -62,10 +62,16 @@ impl Overlay {
             .map(|(tab, files)| {
                 let mut sidecars = Vec::new();
                 let mut content = None;
+                // The whole tab's figures first: a `.css` beside `<stem>.json` is that figure's placement whatever its stem spells, and the listing is in no useful order.
+                let figures = figure_stems(files.iter().map(|(name, _)| *name));
                 for (name, text) in *files {
-                    match is_presentation_entry(name) {
-                        true => sidecars.push(((*name).to_string(), (*text).to_string())),
-                        false => content = Rect::union(content, range_of(name)),
+                    // An `Unrooted` is dropped here and in `read_sidecar_dir`, so it never reaches `read_sidecars` and never becomes a block: `figures.rs` alone judges it.
+                    match css_entry(name, &figures) {
+                        Some(CssEntry::TabLayer | CssEntry::Root(_)) => {
+                            sidecars.push(((*name).to_string(), (*text).to_string()));
+                        }
+                        Some(CssEntry::Unrooted(_)) => {}
+                        None => content = Rect::union(content, range_of(name)),
                     }
                 }
                 ((*tab).to_string(), sidecars, content)
@@ -198,6 +204,7 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
     for (tab, entries, content) in tabs {
         let (layer, sidecars): (Vec<_>, Vec<_>) = entries
             .into_iter()
+            // The layer is the SUFFIX alone, so it needs no tab: only the two callers above, which have already dropped every `Unrooted`, separate a root from a placement.
             .partition(|(name, _)| is_tab_layer(name));
         let default = layer.into_iter().next().and_then(|(name, text)| {
             let located = format!("{tab}/{name}");
@@ -241,15 +248,22 @@ fn read_sidecar_dir(dir: &Path) -> std::io::Result<TabEntries> {
     let mut content = None;
     let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(|e| e.file_name());
+    // The listing is settled BEFORE anything is classified: `Chart1.css` sorts before `Chart1.json`, so the sibling that makes it a placement is not yet in hand mid-walk.
+    let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
     for entry in entries {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !entry.file_type()?.is_file() {
-            continue;
+        if entry.file_type()?.is_file() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            files.push((name, entry.path()));
         }
-        if is_presentation_entry(&name) {
-            out.push((name, std::fs::read_to_string(entry.path())?));
-        } else {
-            content = Rect::union(content, range_of(&name));
+    }
+    let figures = figure_stems(files.iter().map(|(name, _)| name.as_str()));
+    for (name, path) in files {
+        match css_entry(&name, &figures) {
+            Some(CssEntry::TabLayer | CssEntry::Root(_)) => {
+                out.push((name, std::fs::read_to_string(path)?));
+            }
+            Some(CssEntry::Unrooted(_)) => {}
+            None => content = Rect::union(content, range_of(&name)),
         }
     }
     Ok((out, content))
@@ -562,6 +576,20 @@ mod tests {
                 end: 0,
                 size: Chars(12.0)
             }],
+        );
+    }
+
+    /// A figure's placement sidecar names no range, so it is no block and no coordinate wears it:
+    /// the cascade never sees it, and `figures.rs` alone judges it.
+    #[test]
+    fn a_figures_sidecar_is_no_block_of_the_cascade() {
+        let (wb, overlay) = over(&[("A1", "1"), ("Units.css", "  figure { anchor: D2 }\n")]);
+        assert!(overlay.blocks(&wb, 0).is_empty());
+        assert_eq!(overlay.stated_region(&wb, 0), Some(Rect::cell(0, 0)));
+        assert_eq!(
+            overlay.cell_style(&wb, 0, 0, 0),
+            Some(CellStyle::default()),
+            "A1 is covered by its range file and by nothing else",
         );
     }
 

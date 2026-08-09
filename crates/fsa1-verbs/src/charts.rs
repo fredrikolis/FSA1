@@ -34,7 +34,7 @@ pub(crate) fn charts(wb: &Workbook, figures: &Figures) -> (Vec<Chart>, Vec<Figur
     for (sheet, tab) in wb.sheet_names().iter().enumerate() {
         let sheet = sheet as u32;
         for figure in figures.in_tab(tab) {
-            match chart_of(wb, sheet, figure) {
+            match chart_of(wb, sheet, figure, figures.placement(figure)) {
                 Ok(chart) => drawn.push(chart),
                 Err(why) => losses.push(FigureNotDrawn {
                     figure: figure.name.clone(),
@@ -46,8 +46,13 @@ pub(crate) fn charts(wb: &Workbook, figures: &Figures) -> (Vec<Chart>, Vec<Figur
     (drawn, losses)
 }
 
-fn chart_of(wb: &Workbook, sheet: u32, figure: &fsa1_model::Figure) -> Result<Chart, String> {
-    let chart = fsa1_xlsx::chart_for(wb, sheet, figure)?;
+fn chart_of(
+    wb: &Workbook,
+    sheet: u32,
+    figure: &fsa1_model::Figure,
+    placement: Option<&fsa1_model::Placement>,
+) -> Result<Chart, String> {
+    let chart = fsa1_xlsx::chart_for(wb, sheet, figure, placement)?;
     fsa1_ingest::chart_restates_figure(&fsa1_xlsx::chart_xml(&chart), wb, sheet, figure)?;
     Ok(chart)
 }

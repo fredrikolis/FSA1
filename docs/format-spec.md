@@ -64,15 +64,20 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 > cement, not a contract.
 
 - **Tree layout** — the workbook directory, a tab per folder, a file per range, a `.css` sidecar per
-  styled region, a `<name>.json` per figure, and what nesting means.
+  styled region, a `<name>.json` per figure, a `<name>.css` sidecar per PLACED figure, and what
+  nesting means.
 - **Filename grammar** — the closed A1 range in canonical spelling (uppercase column, no leading-zero
   row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, and no whole-column `A:A`, which a
   RANGE file may not name because a grid fills its range exactly), the
   defined-name entry form, the presentation sidecar's `<range>.css`, whose stem is that same
   range grammar EXTENDED by the open forms a sidecar alone may name (`A:A`, `A:C`, `1:1`, `2:5`),
-  whose host separator is a range file's — or the suffix alone, naming no range — and the figure's
+  whose host separator is a range file's, or the suffix alone naming no range, or a stem that is a
+  FIGURE's name — the placement sidecar — and the figure's
   `<name>.json`, whose stem is a NAME rather than a range, so it takes no part in the cascade and
-  collides with no cell.
+  collides with no cell. Which kind a `.css` is is settled by its TAB, not by its spelling: a stem
+  with a `<stem>.json` beside it is that figure's placement (so `Chart1.css` beside `Chart1.json`
+  places a figure and never roots a cascade), and only where the tab holds no such figure does the
+  name decide — a range root, else a refusal, never a defined name.
 - **Cell encoding** — TSV; the file is its grid with no header or metadata line; first line is
   the first row; one field per coordinate; an empty field is Blank; the `\t` / `\n` / `\\` escapes.
 - **Presentation** — a `<range>.css` sidecar, its FILENAME naming the A1 range in absolute
@@ -83,13 +88,17 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
   the extent of a bare `td` follow; the file holds rules directly and no prelude, and needs no range
   file beside it. Those selectors, the properties, their one canonical spelling, and the contention
   between sidecars — where two roots reach one coordinate the smaller area wins, property by
-  property, ties settled by canonical filename order.
+  property, ties settled by canonical filename order. A FIGURE's sidecar is outside that cascade
+  entirely: it names no root, reaches no coordinate, and contends with nothing.
 - **Figures** — a `<name>.json` entry of a tab — ANY of them, the extension being spent on figures
   alone — holding a Vega-Lite spec whose every `data.name`
   is an A1 reference into the workbook: an optional `<tab>!` prefix, then one corner or two joined by
   `:`. A reference, not a filename, so a 1x1 `A1:A1` is admissible and a whole-column `A:A` is not.
   The range resolves to a table whose FIRST ROW is the field names and whose cells contribute their
-  VALUES, and the bound document is the file's own spec plus one `datasets` key.
+  VALUES, and the bound document is the file's own spec plus one `datasets` key. The spec itself
+  carries no position: where the figure sits is stated beside it, in a `<name>.css` holding one
+  `figure` rule whose `anchor` is a cell (a fixed box, sized by `left`, `top`, `width`, `height`) or
+  a range (the cells it fills, sized with them). A figure with no sidecar is placed by the writer.
 - **In-cell content** — literal forms (number, `TRUE`/`FALSE`, the seven author-writable error
   spellings, `'`-prefixed text), the `=formula` form, and the trailing `~<code>` display-format marker.
 - **Coverage and overlap** — the grid fills its declared range exactly, or is a single `=formula`
