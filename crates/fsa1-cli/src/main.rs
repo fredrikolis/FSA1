@@ -607,8 +607,8 @@ const SECTIONS: [(UnpackCategory, &str, &str); 8] = [
     ),
     (
         UnpackCategory::Geometry,
-        "column widths and row heights dropped",
-        "column widths, row heights",
+        "column widths, row heights and figure positions dropped",
+        "column widths, row heights, figure positions",
     ),
     (UnpackCategory::Chart, "charts not carried", "charts"),
     (

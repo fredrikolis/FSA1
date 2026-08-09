@@ -101,6 +101,13 @@ pub enum UnpackWarning {
         chart: String,
         why: String,
     },
+    /// A figure whose source anchor states a position no `.css` spells exactly. `why` names what was
+    /// approximated: `pack` writes the sidecar back, so the chart lands somewhere else.
+    FigurePlacementApproximated {
+        sheet: String,
+        figure: String,
+        why: String,
+    },
     /// A drawing part anchoring something other than a chart. `xl/drawings/` is carried for the charts
     /// it anchors, and a drawing holding a text box, a shape or a picture would otherwise pass as
     /// nothing lost.
@@ -231,7 +238,8 @@ impl UnpackWarning {
             UnpackWarning::ColumnWidthUnowned { .. }
             | UnpackWarning::RowHeightUnowned { .. }
             | UnpackWarning::ColumnWidthUnspellable { .. }
-            | UnpackWarning::RowHeightUnspellable { .. } => UnpackCategory::Geometry,
+            | UnpackWarning::RowHeightUnspellable { .. }
+            | UnpackWarning::FigurePlacementApproximated { .. } => UnpackCategory::Geometry,
             UnpackWarning::ChartNotCarried { .. } | UnpackWarning::DrawingNotCarried { .. } => {
                 UnpackCategory::Chart
             }
@@ -334,6 +342,9 @@ impl fmt::Display for UnpackWarning {
             UnpackWarning::ChartNotCarried { sheet, chart, why } => {
                 write!(f, "{chart} on sheet {sheet} carries no figure: {why}")
             }
+            UnpackWarning::FigurePlacementApproximated { sheet, figure, why } => {
+                write!(f, "{sheet}/{figure}: {why}")
+            }
             UnpackWarning::DrawingNotCarried { drawing, why } => {
                 write!(f, "{drawing} is not carried: {why}")
             }
@@ -430,6 +441,11 @@ mod tests {
                 sheet: "S".into(),
                 row: 7,
                 height: "900".into(),
+            },
+            UnpackWarning::FigurePlacementApproximated {
+                sheet: "S".into(),
+                figure: "Units by region".into(),
+                why: "w".into(),
             },
         ] {
             assert_eq!(w.category(), UnpackCategory::Geometry);

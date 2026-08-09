@@ -50,8 +50,8 @@ pub use names::{
 pub use number_literal::{display_number_literal, effective_literal_format, is_display_exact};
 pub use overlap::{Rect, detect_overlaps};
 pub use overlay::Overlay;
-pub use placement::{Axis, Placement};
-pub use presentation::{Presentation, Rule, Target, parse_rules, spell_rules};
+pub use placement::{Axis, DEFAULT_H_EMU, DEFAULT_W_EMU, Placement};
+pub use presentation::{Presentation, Rule, Target, parse_rules, spell_rules, spell_sidecar};
 pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, combined_cell, display_value,
     parse_viewport, render, viewport_cell_count,

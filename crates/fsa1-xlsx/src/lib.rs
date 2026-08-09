@@ -23,8 +23,8 @@ pub use error::{ErrorKind, IngestError};
 pub use export::ExportError;
 pub use figure_chart::{chart_for, mark_for, no_mark_reason};
 pub use xlsx_chart::{
-    Package, SourceChart, SourceDrawing, SourceSeries, inline_values_reason, parse_chart,
-    read_package,
+    Package, SourceAnchor, SourceChart, SourceDrawing, SourceSeries, inline_values_reason,
+    parse_chart, read_package,
 };
 pub use xlsx_meta::{
     CoercedCell, NumFmtMap, RawName, RawTable, UncarriedPart, XlsxMeta, numfmt_coercions,

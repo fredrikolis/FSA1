@@ -71,7 +71,8 @@ FIGURES — <tab>/<stem>.json, a Vega-Lite spec bound to the tab's ranges
   placement: the figure FILLS that range and RESERVES it, colliding with any cell file or
   other figure reaching it, and it takes no .css — one beside it is figure-sidecar-clash.
   NAME form — any other stem (Chart1, sales1, notes2024). It reserves nothing and floats;
-  an optional <name>.css states where it sits, in EMU, down to sub-cell offsets.
+  an optional <name>.css states where it sits, in EMU, down to sub-cell offsets. An imported
+  chart carries its source position in one; a position no anchor spells exactly is reported.
   Bind data through Vega-Lite's own named data: "data": {"name": "A1:D4"}, or
   "Orders!A1:D4" across tabs. A binding is a REFERENCE — one corner or two joined by ":",
   so A1:A1 is legal and a whole column A:A is refused. Every data.name in the spec binds,

@@ -11,7 +11,6 @@ use crate::chart::{self, Chart};
 use crate::package::{self, Part};
 use crate::shared_strings::SharedStrings;
 use crate::{content_types, doc_props, rels, styles, theme, workbook, worksheet};
-use fsa1_model::Axis;
 
 /// Why [`crate::write_xlsx`] refused, or failed, to produce the `.xlsx`.
 #[derive(Debug)]
@@ -106,7 +105,7 @@ fn build_parts(workbook: &Workbook, overlay: &Overlay, charts: &[Chart]) -> Vec<
         Part::new("docProps/core.xml", doc_props::emit_core()),
         Part::new("docProps/app.xml", doc_props::emit_app()),
     ]);
-    parts.extend(chart_parts(workbook, overlay, charts, &drawings));
+    parts.extend(chart_parts(workbook, charts, &drawings));
     parts
 }
 
@@ -136,12 +135,7 @@ fn drawings(charts: &[Chart], sheet_count: usize) -> Vec<Drawing> {
 
 /// The chart parts, their drawings, and the two `_rels` that wire a sheet to a drawing and a drawing
 /// to its charts. A workbook stating no figure emits none of them and packs exactly as it did.
-fn chart_parts(
-    workbook: &Workbook,
-    overlay: &Overlay,
-    charts: &[Chart],
-    drawings: &[Drawing],
-) -> Vec<Part> {
+fn chart_parts(workbook: &Workbook, charts: &[Chart], drawings: &[Drawing]) -> Vec<Part> {
     let mut parts = Vec::new();
     for (at, chart) in charts.iter().enumerate() {
         parts.push(Part::new(
@@ -162,8 +156,6 @@ fn chart_parts(
             chart::emit_drawing(
                 &placements,
                 chart::anchor_column(workbook.content_region(drawing.sheet)),
-                &Axis::columns(&overlay.column_widths(workbook, drawing.sheet)),
-                &Axis::rows(&overlay.row_heights(workbook, drawing.sheet)),
             ),
         ));
         parts.push(Part::new(

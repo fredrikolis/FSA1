@@ -43,9 +43,9 @@ One directive per line; `#` comments and blank lines are ignored.
     file: <tab>/<entry-name>
     |<a line of that entry's contents, verbatim>
 
-A `file:` entry is a range file, a `<range>.css` sidecar or a `<name>.json` figure; all three are
-listed alike, in the `<tab>/<name>` order the grader sorts by, which puts a range file directly ahead
-of its own sidecar.
+A `file:` entry is a range file, a `<range>.css` sidecar, a `<name>.json` figure or the `<name>.css`
+stating where that figure sits; all four are listed alike, in the `<tab>/<name>` order the grader
+sorts by, which puts a range file directly ahead of its own sidecar.
 Every content line is `|`-prefixed, which is what makes an empty grid line distinguishable from
 nothing at all. A sidecar ends in a newline, so its last content line is a bare `|`. A fixture with
 no `warning:` line must print `unpack fidelity: nothing lost`; a fixture with one must not. A fixture
@@ -179,6 +179,19 @@ had nothing on the way out to survive as, and false from the moment one did.
 Every entry records a fixture ADDED, an expectation CORRECTED, or the whole corpus RE-DERIVED under a
 changed encoding, and why. No expectation here has been corrected: the corrections column stays empty
 until a reading is shown to have been wrong.
+
+- **The two chart readings re-derived a second time** — a figure now carries the POSITION its source
+  chart stated, as a `.css` beside its `.json`, where `unpack` previously kept the spec and dropped
+  the placement (plan 37). This is not a correction: no reading was wrong, and both re-derivations are
+  the identity on every line already frozen. Each fixture's `xl/drawings/drawing1.xml` holds exactly
+  one `<oneCellAnchor>` whose `<from>` is `<col>3</col>` (`chart_bar_one_series`) or `<col>4</col>`
+  (`chart_line_two_series`), `<row>1</row>`, both offsets `0`, and whose size is
+  `<ext cx="5400000" cy="2700000"/>` — which is D2 and E2, a zero `left`/`top`, and exactly the 15cm
+  by 7.5cm box `placement.rs` defaults to, so every property but the anchor is omitted and each new
+  entry reads `  figure { anchor: D2 }` / `  figure { anchor: E2 }`. Neither fixture gains a
+  `warning:` line: a `oneCellAnchor` IS what a fixed box means, so nothing is approximated. No fixture
+  was added or regenerated — the approximating anchor forms are unit-tested where they parse instead,
+  because regenerating churns all 25 LFS objects.
 
 - **The two chart readings re-derived** — a figure's entry name lost its `.vl`: `FIGURE_SUFFIX`
   became `.json`, so ANY `.json` entry of a tab is a figure and the format names no vendor in a

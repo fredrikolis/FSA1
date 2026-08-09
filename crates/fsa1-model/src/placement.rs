@@ -1,10 +1,11 @@
-// Concern: where a figure sits on the sheet, in its own EMU geometry, and the cells that geometry covers | Non-concern: writing an anchor | IO: (text) -> Placement; (runs, cell) <-> EMU; (runs) -> Rect
+// Concern: where a figure sits, in EMU, and the cells it covers | Non-concern: the OOXML anchor (fsa1-xlsx), the rule text | IO: (text) <-> Placement; (runs, cell) <-> EMU; (runs) -> Rect
 
 use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::geometry::AxisRun;
 use crate::overlap::Rect;
-use fsa1_ast::a1::parse_a1;
+use crate::presentation::{self, RuleFault};
+use fsa1_ast::a1::{format_cell, parse_a1};
 
 /// English Metric Units per length unit, the four exact ratios OOXML is defined in.
 const PX: f64 = 9525.0;
@@ -18,12 +19,11 @@ pub const DEFAULT_COL_EMU: i64 = 64 * 9525;
 pub const DEFAULT_ROW_EMU: i64 = 15 * 12700;
 
 /// A figure with no `width`/`height`: 15cm by 7.5cm, Excel's own default chart box.
-const DEFAULT_W_EMU: i64 = 5_400_000;
-const DEFAULT_H_EMU: i64 = 2_700_000;
+pub const DEFAULT_W_EMU: i64 = 5_400_000;
+pub const DEFAULT_H_EMU: i64 = 2_700_000;
 
-/// The five properties a placement rule may declare, alphabetical — the canonical order every
-/// sidecar is held to, RE-STATED here because `presentation.rs`'s own order check is private and
-/// these five are no part of the declaration vocabulary a cell's rules draw on.
+/// The five properties a placement rule may declare — no part of the declaration vocabulary a
+/// cell's rules draw on, which is why this file states its own.
 const PROPERTIES: [&str; 5] = ["anchor", "height", "left", "top", "width"];
 
 /// Where one figure sits. The `anchor`'s SHAPE is the mode: a range fills those cells and resizes
@@ -46,7 +46,15 @@ impl Placement {
     /// `located` is the sidecar as it locates — `<tab>/<figure>.css` — so every refusal anchors on
     /// the file an author edits.
     pub fn parse(located: &str, text: &str) -> Result<Placement, Diagnostic> {
-        let declarations = read_rule(located, text)?;
+        let body = text.strip_suffix('\n').unwrap_or(text);
+        // The SHAPE of the rule is graded before what it declares, so a wrong selector is refused for being one rather than for a property that would be fine under `figure`.
+        let (selector, inner) = presentation::split_rule(text)
+            .map_err(|fault| refuse(located, fault_message(&fault)))?;
+        if selector != "figure" {
+            return Err(refuse(located, malformed(body)));
+        }
+        let declarations = presentation::read_declarations(inner, &PROPERTIES)
+            .map_err(|fault| refuse(located, fault_message(&fault)))?;
         let mut anchor = None;
         let (mut left, mut top, mut w, mut h) = (None, None, None, None);
         for (property, value) in &declarations {
@@ -98,6 +106,44 @@ impl Placement {
         }
     }
 
+    /// [`Placement::parse`] read backward, as DATA: the properties this placement declares, in the
+    /// alphabetical order a sidecar is held to. A `Cells` always spells BOTH corners, since a `D2`
+    /// parses back as a box; a default `width`/`height` and a zero `left`/`top` are omitted.
+    pub fn declarations(&self) -> Vec<(&'static str, String)> {
+        match *self {
+            Placement::Cells(rect) => vec![(
+                "anchor",
+                format!(
+                    "{}:{}",
+                    format_cell(rect.min_col, rect.min_row),
+                    format_cell(rect.max_col, rect.max_row)
+                ),
+            )],
+            Placement::Box {
+                at,
+                left,
+                top,
+                w,
+                h,
+            } => {
+                let mut declared = vec![("anchor", format_cell(at.0, at.1))];
+                if h != DEFAULT_H_EMU {
+                    declared.push(("height", spell_length(h)));
+                }
+                if left != 0 {
+                    declared.push(("left", spell_length(left)));
+                }
+                if top != 0 {
+                    declared.push(("top", spell_length(top)));
+                }
+                if w != DEFAULT_W_EMU {
+                    declared.push(("width", spell_length(w)));
+                }
+                declared
+            }
+        }
+    }
+
     /// The cells this placement occupies, which a drawer that cannot draw a figure marks instead.
     /// The `- 1` EMU is why a box ending on a boundary does not claim the next column, and `.max`
     /// is why a zero-length box still covers its own cell. Every step SATURATES: `length` takes any
@@ -132,75 +178,38 @@ enum Anchor {
     At(u32, u32),
 }
 
-/// The file is ONE rule, spelled as every sidecar's is: two-space indent, a space inside each brace,
-/// `; ` between declarations, no trailing `;`, one closing newline. Anything else is a second
-/// spelling of one appearance, which is the very thing a sidecar has none of.
-fn read_rule<'a>(located: &str, text: &'a str) -> Result<Vec<(&'a str, &'a str)>, Diagnostic> {
-    let malformed = |found: &str| {
-        refuse(
-            located,
-            format!(
-                "a placement sidecar holds one rule, spelled \
-                 `  figure {{ <property>: <value>; ... }}` and closed by a newline; found {found:?}"
-            ),
-        )
-    };
-    let body = text.strip_suffix('\n').ok_or_else(|| malformed(text))?;
-    if body.contains('\n') {
-        return Err(malformed(text));
+/// The placement vocabulary for one [`RuleFault`], every other sidecar reading the same grammar in
+/// its own words.
+fn fault_message(fault: &RuleFault) -> String {
+    match fault {
+        RuleFault::Malformed(found) => malformed(found),
+        RuleFault::TrailingSeparator => {
+            "declarations are separated by `; `, and a rule never ends on one".to_string()
+        }
+        RuleFault::NotADeclaration(segment) => {
+            format!("a declaration is `<property>: <value>`; found {segment:?}")
+        }
+        RuleFault::NonCanonical(segment) => {
+            format!("non-canonical declaration {segment:?}: one space follows the `:`")
+        }
+        RuleFault::UnknownProperty(property) => format!(
+            "`{property}` is no placement property; a figure states {}",
+            PROPERTIES.join(", ")
+        ),
+        RuleFault::Duplicate(property) => {
+            format!("`{property}` is declared twice in one rule; give it one declaration")
+        }
+        RuleFault::OutOfOrder { before, after } => {
+            format!("declarations are alphabetical: write `{after}` before `{before}`")
+        }
     }
-    let inner = body
-        .strip_prefix("  figure { ")
-        .and_then(|rest| rest.strip_suffix(" }"))
-        .ok_or_else(|| malformed(body))?;
-    if inner.is_empty() || inner.contains(['{', '}']) {
-        return Err(malformed(body));
-    }
-    let mut declarations: Vec<(&str, &str)> = Vec::new();
-    for segment in inner.split("; ") {
-        if segment.contains(';') {
-            return Err(refuse(
-                located,
-                "declarations are separated by `; `, and a rule never ends on one".to_string(),
-            ));
-        }
-        let (property, value) = segment.split_once(": ").ok_or_else(|| {
-            refuse(
-                located,
-                format!("a declaration is `<property>: <value>`; found {segment:?}"),
-            )
-        })?;
-        if property.trim() != property || value.trim() != value || value.is_empty() {
-            return Err(refuse(
-                located,
-                format!("non-canonical declaration {segment:?}: one space follows the `:`"),
-            ));
-        }
-        if !PROPERTIES.contains(&property) {
-            return Err(refuse(
-                located,
-                format!(
-                    "`{property}` is no placement property; a figure states {}",
-                    PROPERTIES.join(", ")
-                ),
-            ));
-        }
-        if let Some((before, _)) = declarations.last() {
-            if *before == property {
-                return Err(refuse(
-                    located,
-                    format!("`{property}` is declared twice in one rule; give it one declaration"),
-                ));
-            } else if property < *before {
-                return Err(refuse(
-                    located,
-                    format!("declarations are alphabetical: write `{property}` before `{before}`"),
-                ));
-            }
-        }
-        declarations.push((property, value));
-    }
-    Ok(declarations)
+}
+
+fn malformed(found: &str) -> String {
+    format!(
+        "a placement sidecar holds one rule, spelled \
+         `  figure {{ <property>: <value>; ... }}` and closed by a newline; found {found:?}"
+    )
 }
 
 /// A CELL is a fixed box's corner, a RANGE the cells the figure fills. Both corners are spelled as a
@@ -251,6 +260,17 @@ fn length(text: &str) -> Option<i64> {
         .find_map(|(unit, per)| text.strip_suffix(unit).map(|n| (n, per)))?;
     let n: f64 = number.parse().ok()?;
     (n.is_finite() && n >= 0.0).then(|| (n * per).round() as i64)
+}
+
+/// [`length`] read backward, in the coarsest unit whose ratio divides the EMU exactly. A size no
+/// unit divides is pixels to 4 decimals, which is 0.48 EMU, so `length`'s `.round()` recovers it.
+fn spell_length(emu: i64) -> String {
+    [("in", IN), ("cm", CM), ("pt", PT), ("px", PX)]
+        .into_iter()
+        .find_map(|(unit, per)| {
+            (emu % per as i64 == 0).then(|| format!("{}{unit}", emu / per as i64))
+        })
+        .unwrap_or_else(|| format!("{:.4}px", emu as f64 / PX))
 }
 
 fn refuse(located: &str, message: String) -> Diagnostic {
@@ -532,35 +552,165 @@ mod tests {
         assert_eq!((wide.max_col, wide.max_row), (u32::MAX, u32::MAX));
     }
 
-    /// One refusal per rule an author can break, each located on the sidecar.
+    /// One refusal per rule an author can break, each located on the sidecar, each WORDED as it was
+    /// before `presentation.rs` owned the grammar. The selector is graded before any declaration,
+    /// and the unknown property before the ordering, so `zebra` is what a rule breaking both is
+    /// refused on.
     #[test]
     fn every_malformed_placement_is_one_located_refusal() {
-        for text in [
-            "",                                                   // an empty file
-            "  figure { anchor: D2 }",                            // no closing newline
-            "  figure {  }\n",                                    // declaring nothing
-            "figure { anchor: D2 }\n",                            // no two-space indent
-            "  figure {anchor: D2}\n",                            // no space inside the braces
-            "  td { color: #ff0000 }\n",                          // another selector
-            "  anchor: D2\n",                                     // a top-level declaration
-            "  figure { anchor: D2 }\n  figure { anchor: E3 }\n", // a second rule
-            "  figure { anchor: D2; }\n",                         // a trailing `;`
-            "  figure { anchor: D2;width: 5cm }\n",               // no space after the `;`
-            "  figure { width: 5cm; anchor: D2 }\n",              // out of alphabetical order
-            "  figure { anchor: D2; anchor: E3 }\n",              // declared twice
-            "  figure { anchor: D2; colour: red }\n",             // no such property
-            "  figure { width: 5cm }\n",                          // no anchor at all
-            "  figure { anchor: D2:K17; width: 5cm }\n",          // a length beside a range
-            "  figure { anchor: D2; width: 480 }\n",              // a unitless length
-            "  figure { anchor: D2; width: -1cm }\n",             // a negative length
-            "  figure { anchor: d2 }\n",                          // a lowercase column
-            "  figure { anchor: D02 }\n",                         // a leading-zero row
-            "  figure { anchor: $D$2 }\n",                        // a `$`
-            "  figure { anchor: K17:D2 }\n",                      // an inverted range
+        const SHAPE: &str = "a placement sidecar holds one rule, spelled \
+                             `  figure { <property>: <value>; ... }` and closed by a newline; found";
+        const CELL: &str = "write one cell (`D2`) for a fixed box, or two corners joined by `:` \
+                            (`D2:K17`) for a figure that fills them";
+        for (text, message) in [
+            ("", format!("{SHAPE} \"\"")),
+            (
+                "  figure { anchor: D2 }",
+                format!("{SHAPE} \"  figure {{ anchor: D2 }}\""),
+            ),
+            ("  figure {  }\n", format!("{SHAPE} \"  figure {{  }}\"")),
+            (
+                "figure { anchor: D2 }\n",
+                format!("{SHAPE} \"figure {{ anchor: D2 }}\""),
+            ),
+            (
+                "  figure {anchor: D2}\n",
+                format!("{SHAPE} \"  figure {{anchor: D2}}\""),
+            ),
+            // A sidecar whose selector is wrong is refused for the SELECTOR, though `color` would earn a refusal of its own under `figure`.
+            (
+                "  td { color: #ff0000 }\n",
+                format!("{SHAPE} \"  td {{ color: #ff0000 }}\""),
+            ),
+            (
+                "  td { anchor: D2 }\n",
+                format!("{SHAPE} \"  td {{ anchor: D2 }}\""),
+            ),
+            ("  anchor: D2\n", format!("{SHAPE} \"  anchor: D2\"")),
+            (
+                "  figure { anchor: D2 }\n  figure { anchor: E3 }\n",
+                format!("{SHAPE} \"  figure {{ anchor: D2 }}\\n  figure {{ anchor: E3 }}\\n\""),
+            ),
+            (
+                "  figure { anchor: D2; }\n",
+                "declarations are separated by `; `, and a rule never ends on one".to_string(),
+            ),
+            (
+                "  figure { anchor: D2;width: 5cm }\n",
+                "declarations are separated by `; `, and a rule never ends on one".to_string(),
+            ),
+            (
+                "  figure { width: 5cm; anchor: D2 }\n",
+                "declarations are alphabetical: write `anchor` before `width`".to_string(),
+            ),
+            (
+                "  figure { anchor: D2; anchor: E3 }\n",
+                "`anchor` is declared twice in one rule; give it one declaration".to_string(),
+            ),
+            (
+                "  figure { anchor: D2; colour: red }\n",
+                "`colour` is no placement property; a figure states anchor, height, left, top, \
+                 width"
+                    .to_string(),
+            ),
+            (
+                "  figure { zebra: 1; anchor: D2 }\n",
+                "`zebra` is no placement property; a figure states anchor, height, left, top, width"
+                    .to_string(),
+            ),
+            (
+                "  figure { width: 5cm }\n",
+                "the rule states no `anchor`, and a placement is where the figure sits".to_string(),
+            ),
+            (
+                "  figure { anchor: D2:K17; width: 5cm }\n",
+                "a RANGE anchor sizes the figure with its cells, so it takes none of `left`, \
+                 `top`, `width`, `height`; anchor one cell to state a fixed box"
+                    .to_string(),
+            ),
+            (
+                "  figure { anchor: D2; width: 480 }\n",
+                "`width: 480` is no length; write a non-negative number with one of the units \
+                 `px`, `in`, `cm`, `pt`"
+                    .to_string(),
+            ),
+            (
+                "  figure { anchor: D2; width: -1cm }\n",
+                "`width: -1cm` is no length; write a non-negative number with one of the units \
+                 `px`, `in`, `cm`, `pt`"
+                    .to_string(),
+            ),
+            ("  figure { anchor: d2 }\n", format!("`anchor: d2` is no A1 cell; {CELL}")),
+            ("  figure { anchor: D02 }\n", format!("`anchor: D02` is no A1 cell; {CELL}")),
+            (
+                "  figure { anchor: $D$2 }\n",
+                format!("`anchor: $D$2` is no A1 cell; {CELL}"),
+            ),
+            (
+                "  figure { anchor: K17:D2 }\n",
+                format!(
+                    "`anchor: K17:D2` puts its second corner above or left of its first; {CELL}"
+                ),
+            ),
         ] {
             let d = refused(text);
             assert_eq!(d.code, Code::FigurePlacement, "{text:?}: {d}");
             assert_eq!(d.loc, Loc::file("Sheet1/Units.css"), "{text:?}");
+            assert_eq!(d.message, message, "{text:?}");
         }
+    }
+
+    /// [`Placement::declarations`] is [`Placement::parse`] read backward over the one text
+    /// [`spell_sidecar`] writes, including the size no unit divides.
+    #[test]
+    fn every_placement_spells_back_to_itself() {
+        for placement in [
+            Placement::Cells(Rect {
+                min_col: 3,
+                min_row: 1,
+                max_col: 10,
+                max_row: 16,
+            }),
+            Placement::Cells(Rect::cell(3, 1)),
+            Placement::Box {
+                at: (3, 1),
+                left: 0,
+                top: 0,
+                w: DEFAULT_W_EMU,
+                h: DEFAULT_H_EMU,
+            },
+            Placement::Box {
+                at: (3, 1),
+                left: 1234,
+                top: 0,
+                w: DEFAULT_W_EMU,
+                h: DEFAULT_H_EMU,
+            },
+            Placement::Box {
+                at: (3, 1),
+                left: 0,
+                top: 0,
+                w: 1_800_000,
+                h: DEFAULT_H_EMU,
+            },
+            Placement::Box {
+                at: (4, 2),
+                left: 7,
+                top: 13,
+                w: 1_111_111,
+                h: 999_999,
+            },
+        ] {
+            let text = crate::presentation::spell_sidecar(&[("figure", placement.declarations())]);
+            assert_eq!(Placement::parse("f.css", &text), Ok(placement), "{text:?}");
+        }
+        assert_eq!(
+            crate::presentation::spell_sidecar(&[(
+                "figure",
+                Placement::Cells(Rect::cell(3, 1)).declarations()
+            )]),
+            "  figure { anchor: D2:D2 }\n",
+            "a 1x1 range never collapses to the cell a box is anchored at",
+        );
     }
 }

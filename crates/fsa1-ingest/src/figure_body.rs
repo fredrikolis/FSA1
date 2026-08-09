@@ -1,21 +1,114 @@
-// Concern: spells a source chart as a Vega-Lite figure, and names what cannot cross | Non-concern: reading a chart part (fsa1-xlsx), a sheet's blocks | IO: (a chart, its sheet) -> (name, body)
+// Concern: spells a source chart as a Vega-Lite figure and its placement, naming what cannot cross | Non-concern: reading a chart part (fsa1-xlsx), a sheet's blocks | IO: (a chart, its anchor) -> files
 //! Excel-to-Vega-Lite is TOTAL over the charts it admits and LOSSY within them: every reason a chart
 //! yields no figure leaves here as a sentence a [`UnpackWarning::ChartNotCarried`] carries, and never
 //! as a silence. A chart that would produce a figure `check` then refuses is one of those reasons —
 //! the binding a figure states is graded against the tab it lands beside, so it is graded here first.
 
+use std::collections::BTreeMap;
+
 use fsa1_ast::a1::{format_cell, parse_a1};
-use fsa1_model::{Cell, FIGURE_SUFFIX, Workbook, display_value, lex_literal, quote_sheet};
+use fsa1_model::{
+    Cell, DEFAULT_H_EMU, DEFAULT_W_EMU, FIGURE_SUFFIX, PRESENTATION_SUFFIX, Placement, Rect,
+    Workbook, display_value, lex_literal, quote_sheet, spell_sidecar,
+};
 use serde_json::{Map, Value as Json};
 
 use crate::resolve::Resolution;
 use crate::serialize::cell_field;
 use crate::source::{SheetSource, SourceValue};
 use crate::warnings::UnpackWarning;
-use fsa1_xlsx::{SourceChart, SourceSeries};
+use fsa1_xlsx::{SourceAnchor, SourceChart, SourceSeries};
 
 /// The dialect the pinned runtime compiles — `vega-manifest.txt` names the version.
 const SCHEMA: &str = "https://vega.github.io/schema/vega-lite/v5.json";
+
+/// A source anchor as the placement a `.css` spells, and the sentence naming what that spelling
+/// approximates. A `oneCellAnchor` IS a fixed box — a corner, two offsets and a size — so it crosses
+/// exactly and silently; every other form, and every coordinate the drawing states as no number,
+/// loses something `pack` then writes back differently.
+fn place(anchor: Option<&SourceAnchor>) -> (Option<Placement>, Option<String>) {
+    let Some(anchor) = anchor else {
+        let why = "no anchor in the drawing holds it, so the figure states no position";
+        return (None, Some(why.to_string()));
+    };
+    let mut why: Vec<String> = Vec::new();
+    if !anchor.unreadable.is_empty() {
+        why.push(format!(
+            "its {} states no number, so the figure is placed as if that coordinate were 0",
+            anchor.unreadable.join(" and ")
+        ));
+    }
+    let placement = match anchor.element.as_str() {
+        "oneCellAnchor" => {
+            let (col, left, row, top) = anchor.from;
+            if left < 0 || top < 0 {
+                why.push(
+                    "its <xdr:oneCellAnchor> offsets the figure by a negative amount, which no \
+                     `left` or `top` spells; it is clamped to 0"
+                        .to_string(),
+                );
+            }
+            let (w, h) = anchor.ext.unwrap_or_else(|| {
+                why.push(
+                    "its <xdr:oneCellAnchor> states no <xdr:ext>, so the figure takes the default \
+                     15cm by 7.5cm box"
+                        .to_string(),
+                );
+                (DEFAULT_W_EMU, DEFAULT_H_EMU)
+            });
+            Some(Placement::Box {
+                at: (col, row),
+                left: left.max(0),
+                top: top.max(0),
+                w,
+                h,
+            })
+        }
+        "twoCellAnchor" => {
+            let (min_col, from_col_off, min_row, from_row_off) = anchor.from;
+            let (to_col, to_col_off, to_row, to_row_off) = anchor.to.unwrap_or(anchor.from);
+            if [from_col_off, from_row_off, to_col_off, to_row_off]
+                .iter()
+                .any(|off| *off != 0)
+            {
+                why.push(
+                    "its <xdr:twoCellAnchor> begins or ends part-way into a cell, and a range \
+                     anchor fills whole cells; the remainder is dropped"
+                        .to_string(),
+                );
+            }
+            if let Some(edit_as) = anchor.edit_as.as_deref()
+                && matches!(edit_as, "oneCell" | "absolute")
+            {
+                why.push(format!(
+                    "its <xdr:twoCellAnchor> carries editAs={edit_as:?}, so it keeps its size when \
+                     its cells resize; a range anchor resizes with them"
+                ));
+            }
+            if to_col <= min_col || to_row <= min_row {
+                why.push(
+                    "its <xdr:twoCellAnchor> ends at or before it begins on an axis; the figure is \
+                     clamped to a one-cell span"
+                        .to_string(),
+                );
+            }
+            Some(Placement::Cells(Rect {
+                min_col,
+                min_row,
+                max_col: to_col.saturating_sub(1).max(min_col),
+                max_row: to_row.saturating_sub(1).max(min_row),
+            }))
+        }
+        element => {
+            why.push(format!(
+                "it is placed by an <xdr:{element}>, which states no cell; the figure states no \
+                 position"
+            ));
+            None
+        }
+    };
+    (placement, (!why.is_empty()).then(|| why.join("; ")))
+}
 
 /// The tab a chart is drawn on, as the SPELLING needs it — nothing about how the tab was obtained.
 /// One speller then grades both legs: the source book an unpack reads, and the loaded workbook
@@ -108,11 +201,13 @@ pub struct SheetFigures {
 }
 
 /// Every chart drawn on ONE sheet, in package-path order. A chart that cannot cross costs one warning
-/// and no file; nothing here can fail the import, because an unpack completes.
+/// and no file; nothing here can fail the import, because an unpack completes. `anchors` is keyed by
+/// chart part, and a chart no anchor holds states no position.
 pub fn figures(
     sheet: &SheetSource,
     charts: &[&SourceChart],
     res: &Resolution,
+    anchors: &BTreeMap<String, SourceAnchor>,
     warnings: &mut Vec<UnpackWarning>,
 ) -> SheetFigures {
     let mut out = SheetFigures::default();
@@ -125,6 +220,21 @@ pub fn figures(
     for chart in charts {
         match spell(chart, &table, content, &taken) {
             Ok((stem, body)) => {
+                let (placement, why) = place(anchors.get(&chart.part));
+                if let Some(placement) = placement {
+                    let rules = [("figure", placement.declarations())];
+                    out.files.push((
+                        format!("{stem}{PRESENTATION_SUFFIX}"),
+                        spell_sidecar(&rules),
+                    ));
+                }
+                if let Some(why) = why {
+                    warnings.push(UnpackWarning::FigurePlacementApproximated {
+                        sheet: sheet.name.clone(),
+                        figure: stem.clone(),
+                        why,
+                    });
+                }
                 out.files.push((format!("{stem}{FIGURE_SUFFIX}"), body));
                 out.carried.push(chart.part.clone());
                 taken.push(stem);
@@ -522,15 +632,38 @@ mod tests {
         }
     }
 
+    /// Every chart is anchored EXACTLY, so what these assert is the figure body and its losses.
     fn run(sheet: &SheetSource, charts: &[SourceChart]) -> (SheetFigures, Vec<UnpackWarning>) {
         let mut warnings = Vec::new();
         let refs: Vec<&SourceChart> = charts.iter().collect();
-        let out = figures(sheet, &refs, &Resolution::empty(), &mut warnings);
+        let anchors: BTreeMap<String, SourceAnchor> = charts
+            .iter()
+            .map(|c| (c.part.clone(), one_cell(3, 0, 1, 0)))
+            .collect();
+        let out = figures(sheet, &refs, &Resolution::empty(), &anchors, &mut warnings);
         (out, warnings)
     }
 
+    fn one_cell(col: u32, left: i64, row: u32, top: i64) -> SourceAnchor {
+        SourceAnchor {
+            element: "oneCellAnchor".to_string(),
+            from: (col, left, row, top),
+            to: None,
+            ext: Some((5_400_000, 2_700_000)),
+            edit_as: None,
+            chart: Some("xl/charts/chart1.xml".to_string()),
+            unreadable: Vec::new(),
+        }
+    }
+
     fn spec_of(figures: &SheetFigures, at: usize) -> Json {
-        serde_json::from_str(&figures.files[at].1).expect("a figure body is JSON")
+        let bodies: Vec<&String> = figures
+            .files
+            .iter()
+            .filter(|(name, _)| name.ends_with(FIGURE_SUFFIX))
+            .map(|(_, body)| body)
+            .collect();
+        serde_json::from_str(bodies[at]).expect("a figure body is JSON")
     }
 
     fn why(warnings: &[UnpackWarning]) -> String {
@@ -538,6 +671,157 @@ mod tests {
             [UnpackWarning::ChartNotCarried { why, .. }] => why.clone(),
             other => panic!("expected exactly one chart loss, got {other:?}"),
         }
+    }
+
+    fn two_cell(
+        from: (u32, i64, u32, i64),
+        to: (u32, i64, u32, i64),
+        edit_as: Option<&str>,
+    ) -> SourceAnchor {
+        SourceAnchor {
+            element: "twoCellAnchor".to_string(),
+            from,
+            to: Some(to),
+            ext: None,
+            edit_as: edit_as.map(str::to_string),
+            chart: Some("xl/charts/chart1.xml".to_string()),
+            unreadable: Vec::new(),
+        }
+    }
+
+    /// A coordinate the drawing states as no number reads as 0, which is a POSITION — so it reaches
+    /// the same approximation path every other loss does, naming the element it could not read.
+    #[test]
+    fn a_coordinate_that_is_no_number_is_named_rather_than_placed_silently() {
+        let (placement, why) = place(Some(&SourceAnchor {
+            unreadable: vec!["<xdr:from><xdr:col>".to_string()],
+            ..one_cell(0, 0, 1, 0)
+        }));
+        assert_eq!(
+            placement,
+            Some(Placement::Box {
+                at: (0, 1),
+                left: 0,
+                top: 0,
+                w: 5_400_000,
+                h: 2_700_000,
+            })
+        );
+        let why = why.expect("an unreadable coordinate names its approximation");
+        assert!(why.contains("<xdr:from><xdr:col>"), "{why}");
+    }
+
+    /// A `oneCellAnchor` IS what a `Box` means, so it crosses with no sentence at all.
+    #[test]
+    fn a_one_cell_anchor_crosses_exactly_and_silently() {
+        assert_eq!(
+            place(Some(&one_cell(3, 0, 1, 0))),
+            (
+                Some(Placement::Box {
+                    at: (3, 1),
+                    left: 0,
+                    top: 0,
+                    w: 5_400_000,
+                    h: 2_700_000,
+                }),
+                None
+            )
+        );
+    }
+
+    /// A negative offset and a missing `<xdr:ext>` are both clamped, and both say so.
+    #[test]
+    fn a_clamped_one_cell_anchor_names_what_it_clamped() {
+        let (placement, why) = place(Some(&SourceAnchor {
+            from: (3, -1, 1, -2),
+            ext: None,
+            ..one_cell(3, 0, 1, 0)
+        }));
+        assert_eq!(
+            placement,
+            Some(Placement::Box {
+                at: (3, 1),
+                left: 0,
+                top: 0,
+                w: DEFAULT_W_EMU,
+                h: DEFAULT_H_EMU,
+            })
+        );
+        let why = why.expect("a clamped anchor names its approximation");
+        assert!(why.contains("clamped to 0"), "{why}");
+        assert!(why.contains("no <xdr:ext>"), "{why}");
+    }
+
+    /// `to` is EXCLUSIVE, so the range ends one cell before it.
+    #[test]
+    fn a_two_cell_anchor_fills_the_cells_between_its_corners() {
+        assert_eq!(
+            place(Some(&two_cell((3, 0, 1, 0), (11, 0, 17, 0), None))),
+            (
+                Some(Placement::Cells(Rect {
+                    min_col: 3,
+                    min_row: 1,
+                    max_col: 10,
+                    max_row: 16,
+                })),
+                None
+            )
+        );
+    }
+
+    /// Each of the three things a `twoCellAnchor` can state that a range anchor cannot.
+    #[test]
+    fn every_approximated_two_cell_anchor_names_what_it_lost() {
+        let offsets = place(Some(&two_cell((3, 9525, 1, 0), (11, 0, 17, 6350), None)));
+        assert!(
+            offsets
+                .1
+                .expect("offsets approximate")
+                .contains("remainder"),
+            "the dropped sub-cell remainder is named",
+        );
+        for edit_as in ["oneCell", "absolute"] {
+            let held = place(Some(&two_cell((3, 0, 1, 0), (11, 0, 17, 0), Some(edit_as))));
+            let why = held.1.expect("an editAs that resizes approximates");
+            assert!(why.contains(edit_as), "{why}");
+        }
+        assert_eq!(
+            place(Some(&two_cell(
+                (3, 0, 1, 0),
+                (11, 0, 17, 0),
+                Some("twoCell")
+            )))
+            .1,
+            None,
+            "`twoCell` IS what a range anchor does",
+        );
+        let (placement, why) = place(Some(&two_cell((3, 0, 1, 0), (3, 0, 1, 0), None)));
+        assert_eq!(placement, Some(Placement::Cells(Rect::cell(3, 1))));
+        assert!(
+            why.expect("a degenerate span approximates")
+                .contains("one-cell span")
+        );
+    }
+
+    /// An `absoluteAnchor` states EMU on the sheet, and a chart no anchor holds states nothing: both
+    /// place the figure NOWHERE, so no `.css` is written beside it.
+    #[test]
+    fn a_position_no_cell_states_writes_no_sidecar() {
+        let absolute = place(Some(&SourceAnchor {
+            element: "absoluteAnchor".to_string(),
+            ext: Some((5_400_000, 2_700_000)),
+            ..one_cell(0, 0, 0, 0)
+        }));
+        assert_eq!(absolute.0, None);
+        assert!(
+            absolute
+                .1
+                .expect("it approximates")
+                .contains("absoluteAnchor")
+        );
+        let none = place(None);
+        assert_eq!(none.0, None);
+        assert!(none.1.expect("it approximates").contains("no anchor"));
     }
 
     /// The whole read leg over the plan's own example: the two references union to a rectangle, the
@@ -559,7 +843,7 @@ mod tests {
         let (out, warnings) = run(&s, &[c]);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(out.carried, vec!["xl/charts/chart1.xml".to_string()]);
-        assert_eq!(out.files[0].0, "chart1.json");
+        assert_eq!(out.files[1].0, "chart1.json");
         let spec = spec_of(&out, 0);
         assert_eq!(spec["mark"], "bar");
         assert_eq!(spec["data"]["name"], "Sheet1!A1:B4");
@@ -729,7 +1013,15 @@ mod tests {
         let names: Vec<&str> = out.files.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(
             names,
-            vec!["Units by region.json", "chart2.json", "chart3.json"]
+            vec![
+                "Units by region.css",
+                "Units by region.json",
+                "chart2.css",
+                "chart2.json",
+                "chart3.css",
+                "chart3.json"
+            ],
+            "an anchored figure carries its position beside its spec",
         );
     }
 }

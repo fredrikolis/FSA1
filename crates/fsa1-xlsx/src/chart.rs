@@ -1,7 +1,7 @@
-// Concern: xl/charts/chartN.xml and the drawing anchoring it to a sheet | Non-concern: which figure becomes one, the rels and content types | IO: (Chart) -> chart bytes; (placements, axes) -> drawing
+// Concern: xl/charts/chartN.xml and the drawing anchoring it to a sheet | Non-concern: which figure becomes one, the rels and content types | IO: (Chart) -> chart bytes; (placements) -> drawing
 
 use fsa1_ast::a1::format_cell;
-use fsa1_model::{Axis, Placement};
+use fsa1_model::{Placement, Rect};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
@@ -213,15 +213,10 @@ fn pin(corner: &str) -> String {
 }
 
 /// One sheet's whole drawing: one anchor per chart, in the order `placements` gives them, each
-/// holding the graphic frame that names the chart part through the drawing's own `rIdN`. Nothing
-/// else is anchored — which is what lets the reader call the part carried. Both stated forms emit a
-/// `<xdr:twoCellAnchor>`; `oneCellAnchor` and `absoluteAnchor` are never written.
-pub(crate) fn emit_drawing(
-    placements: &[Option<Placement>],
-    base_col: u32,
-    cols: &Axis,
-    rows: &Axis,
-) -> Vec<u8> {
+/// holding the graphic frame naming the chart part through its own `rIdN`, and nothing else — which
+/// is what lets the reader call the part carried. A fixed BOX emits an `<xdr:oneCellAnchor>` carrying
+/// its own corner and size; every other case emits today's `<xdr:twoCellAnchor>`.
+pub(crate) fn emit_drawing(placements: &[Option<Placement>], base_col: u32) -> Vec<u8> {
     let mut w = Writer::new(Vec::new());
     decl(&mut w);
     let mut root = BytesStart::new("xdr:wsDr");
@@ -229,18 +224,39 @@ pub(crate) fn emit_drawing(
     root.push_attribute(("xmlns:a", NS_DRAWING));
     start(&mut w, root);
     for (at, placement) in placements.iter().enumerate() {
-        let mut anchor = BytesStart::new("xdr:twoCellAnchor");
-        // A fixed box keeps its size when a column resizes, which is exactly what `oneCell` states.
-        if matches!(placement, Some(Placement::Box { .. })) {
-            anchor.push_attribute(("editAs", "oneCell"));
+        match placement {
+            Some(Placement::Box {
+                at: (col, row),
+                left,
+                top,
+                w: cx,
+                h: cy,
+            }) => {
+                start(&mut w, BytesStart::new("xdr:oneCellAnchor"));
+                write_anchor(&mut w, "xdr:from", Anchor(*col, *left, *row, *top));
+                empty(
+                    &mut w,
+                    "xdr:ext",
+                    &[("cx", &cx.to_string()), ("cy", &cy.to_string())],
+                );
+                write_frame(&mut w, at);
+                empty(&mut w, "xdr:clientData", &[]);
+                end(&mut w, "xdr:oneCellAnchor");
+            }
+            other => {
+                let rect = match other {
+                    Some(Placement::Cells(rect)) => Some(rect),
+                    _ => None,
+                };
+                start(&mut w, BytesStart::new("xdr:twoCellAnchor"));
+                let (from, to) = corners(rect, at, base_col);
+                write_anchor(&mut w, "xdr:from", from);
+                write_anchor(&mut w, "xdr:to", to);
+                write_frame(&mut w, at);
+                empty(&mut w, "xdr:clientData", &[]);
+                end(&mut w, "xdr:twoCellAnchor");
+            }
         }
-        start(&mut w, anchor);
-        let (from, to) = corners(placement.as_ref(), at, base_col, cols, rows);
-        write_anchor(&mut w, "xdr:from", from);
-        write_anchor(&mut w, "xdr:to", to);
-        write_frame(&mut w, at);
-        empty(&mut w, "xdr:clientData", &[]);
-        end(&mut w, "xdr:twoCellAnchor");
     }
     end(&mut w, "xdr:wsDr");
     w.into_inner()
@@ -249,14 +265,8 @@ pub(crate) fn emit_drawing(
 /// One anchor's two ends as (col, colOff, row, rowOff). `to` is EXCLUSIVE, exactly as the derived
 /// form writes it: `base_col + 8` spans eight columns, so a range anchor's far corner is one past
 /// the last cell it fills.
-fn corners(
-    placement: Option<&Placement>,
-    at: usize,
-    base_col: u32,
-    cols: &Axis,
-    rows: &Axis,
-) -> (Anchor, Anchor) {
-    match placement {
+fn corners(rect: Option<&Rect>, at: usize, base_col: u32) -> (Anchor, Anchor) {
+    match rect {
         // Stacked down the first free column, so two charts on one sheet never sit on top of each other.
         None => {
             let top = (at * 16) as u32;
@@ -265,27 +275,10 @@ fn corners(
                 Anchor(base_col + 8, 0, top + 15, 0),
             )
         }
-        Some(Placement::Cells(rect)) => (
+        Some(rect) => (
             Anchor(rect.min_col, 0, rect.min_row, 0),
             Anchor(rect.max_col + 1, 0, rect.max_row + 1, 0),
         ),
-        Some(Placement::Box {
-            at: (col, row),
-            left,
-            top,
-            w,
-            h,
-        }) => {
-            let (x, y) = (cols.edge(*col) + left, rows.edge(*row) + top);
-            let (from_col, from_col_off) = cols.locate(x);
-            let (from_row, from_row_off) = rows.locate(y);
-            let (to_col, to_col_off) = cols.locate(x + w);
-            let (to_row, to_row_off) = rows.locate(y + h);
-            (
-                Anchor(from_col, from_col_off, from_row, from_row_off),
-                Anchor(to_col, to_col_off, to_row, to_row_off),
-            )
-        }
     }
 }
 
@@ -385,6 +378,56 @@ mod tests {
         assert_eq!(absolute("Sheet1!A2:A4"), "Sheet1!$A$2:$A$4");
         assert_eq!(absolute("'My Tab'!B1"), "'My Tab'!$B$1");
         assert_eq!(absolute("A1"), "A1");
+    }
+
+    fn drawing(placement: Option<Placement>) -> String {
+        String::from_utf8(emit_drawing(&[placement], 5)).expect("the writer emits UTF-8")
+    }
+
+    /// A stated BOX is a `oneCellAnchor` — a corner, an offset and a fixed size — where a range and
+    /// the derived spot both span two corners.
+    #[test]
+    fn each_placement_writes_the_element_that_states_it() {
+        let derived = drawing(None);
+        assert!(derived.contains("<xdr:twoCellAnchor>"), "{derived}");
+        assert!(derived.contains("<xdr:col>5</xdr:col>"), "{derived}");
+        assert!(!derived.contains("editAs"), "{derived}");
+        let cells = drawing(Some(Placement::Cells(Rect {
+            min_col: 3,
+            min_row: 1,
+            max_col: 10,
+            max_row: 16,
+        })));
+        assert!(cells.contains("<xdr:twoCellAnchor>"), "{cells}");
+        assert!(cells.contains("<xdr:col>11</xdr:col>"), "{cells}");
+        assert!(!cells.contains("xdr:ext"), "{cells}");
+    }
+
+    /// A box states its own corner, its own offsets and its own size, so no column width and no row
+    /// height can move an imported chart — the writer is handed no axis to measure against.
+    #[test]
+    fn a_box_writes_its_own_numbers_verbatim() {
+        let box_at = drawing(Some(Placement::Box {
+            at: (3, 1),
+            left: 12700,
+            top: 6350,
+            w: 5_400_000,
+            h: 2_700_000,
+        }));
+        assert!(box_at.contains("<xdr:oneCellAnchor>"), "{box_at}");
+        assert!(!box_at.contains("editAs"), "{box_at}");
+        assert!(!box_at.contains("<xdr:to>"), "{box_at}");
+        assert!(
+            box_at.contains(
+                "<xdr:from><xdr:col>3</xdr:col><xdr:colOff>12700</xdr:colOff><xdr:row>1</xdr:row>\
+                 <xdr:rowOff>6350</xdr:rowOff></xdr:from>"
+            ),
+            "{box_at}"
+        );
+        assert!(
+            box_at.contains(r#"<xdr:ext cx="5400000" cy="2700000"/>"#),
+            "{box_at}"
+        );
     }
 
     /// A pie has no axes, so it states no `<c:axId>` for one to cross on.

@@ -26,7 +26,7 @@ pub use warnings::{AxisRef, UnpackCategory, UnpackWarning};
 
 use decompose::StyledCell;
 use figure_body::SheetFigures;
-use fsa1_xlsx::SourceChart;
+use fsa1_xlsx::{SourceAnchor, SourceChart};
 use names::emit_names;
 use serialize::sheet_files;
 use source::{SheetSource, SourceBook};
@@ -90,7 +90,12 @@ fn import(
         false => fsa1_xlsx::Package::default(),
     };
     let (charts, drawings) = (&package.charts, &package.drawings);
-    let figures = spell_figures(&book, charts, &mut chart_losses);
+    let anchors: BTreeMap<String, SourceAnchor> = drawings
+        .iter()
+        .flat_map(|d| d.anchors.iter())
+        .filter_map(|a| a.chart.clone().map(|part| (part, a.clone())))
+        .collect();
+    let figures = spell_figures(&book, charts, &anchors, &mut chart_losses);
     for part in &package.unreached {
         chart_losses.push(UnpackWarning::DrawingNotCarried {
             drawing: part.clone(),
@@ -303,10 +308,10 @@ fn materialize(
     Ok((tabs, files))
 }
 
-/// A size no range file carries is a size `pack` writes back at its own default, so under `--strict`
-/// it is a refusal and not a report line — an unverifiable round trip is never a passing one. Which
-/// sizes cross is knowable only once the blocks are cut, so this lands mid-write and leaves the
-/// destination absent through [`write_book`]'s cleanup.
+/// A size no range file carries, or a position no sidecar spells exactly, is one `pack` writes at its
+/// own default, so under `--strict` it is a refusal and not a report line — an unverifiable round
+/// trip is never a passing one. Which sizes cross is knowable only once the blocks are cut, so this
+/// lands mid-write and leaves the destination absent through [`write_book`]'s cleanup.
 fn refuse_dropped_geometry(warnings: &[UnpackWarning]) -> Result<(), IngestError> {
     let Some(dropped) = warnings
         .iter()
@@ -317,7 +322,7 @@ fn refuse_dropped_geometry(warnings: &[UnpackWarning]) -> Result<(), IngestError
     Err(IngestError::io(
         ErrorKind::Invalid,
         format!(
-            "cannot strictly round-trip this workbook: {dropped}; a size the tree never states is one `pack` writes back differently -- import without --strict to import it lossily, and the fidelity report names every dropped size"
+            "cannot strictly round-trip this workbook: {dropped}; a size or a position the tree states only approximately, or not at all, is one `pack` writes back differently -- import without --strict to import it lossily, and the fidelity report names every size and position that did not cross"
         ),
     ))
 }
@@ -345,12 +350,13 @@ fn refuse_dropped_chart(warnings: &[UnpackWarning]) -> Result<(), IngestError> {
 fn spell_figures(
     book: &SourceBook,
     charts: &[SourceChart],
+    anchors: &BTreeMap<String, SourceAnchor>,
     warnings: &mut Vec<UnpackWarning>,
 ) -> BTreeMap<String, SheetFigures> {
     let mut out = BTreeMap::new();
     for sheet in &book.sheets {
         let drawn: Vec<&SourceChart> = charts.iter().filter(|c| c.sheet == sheet.name).collect();
-        let figures = figure_body::figures(sheet, &drawn, &book.resolution, warnings);
+        let figures = figure_body::figures(sheet, &drawn, &book.resolution, anchors, warnings);
         if !figures.files.is_empty() || !figures.carried.is_empty() {
             out.insert(sheet.name.clone(), figures);
         }
@@ -499,6 +505,25 @@ mod tests {
                 region: "A1:B2".to_string(),
             }])
             .is_ok()
+        );
+    }
+
+    /// A position the tree cannot spell is one `pack` writes back differently, exactly as a dropped
+    /// size is, so it refuses under `--strict` through the same sweep.
+    #[test]
+    fn an_approximated_figure_placement_is_a_strict_refusal() {
+        let loss = UnpackWarning::FigurePlacementApproximated {
+            sheet: "Sheet1".to_string(),
+            figure: "Units by region".to_string(),
+            why: "it is placed by an <xdr:absoluteAnchor>".to_string(),
+        };
+        let err = refuse_dropped_geometry(std::slice::from_ref(&loss)).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert!(err.message.contains("absoluteAnchor"), "{}", err.message);
+        assert!(
+            err.message.contains("a size or a position"),
+            "{}",
+            err.message
         );
     }
 

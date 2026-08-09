@@ -3,6 +3,9 @@ file: Sheet1/A1:B4
 |North	12
 |South	9
 |East	15
+file: Sheet1/Units by region.css
+|  figure { anchor: D2 }
+|
 file: Sheet1/Units by region.json
 |{
 |  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",

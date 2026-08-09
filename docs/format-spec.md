@@ -65,7 +65,8 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 
 - **Tree layout** — the workbook directory, a tab per folder, a file per range, a `.css` sidecar per
   styled region, a `<range>.json` per figure that fills a range, a `<name>.json` per figure that does
-  not, a `<name>.css` sidecar per PLACED one of those, and what nesting means.
+  not, a `<name>.css` sidecar per PLACED one of those — which an imported chart carries wherever its
+  source anchor states a position in cell terms — and what nesting means.
 - **Filename grammar** — the closed A1 range in canonical spelling (uppercase column, no leading-zero
   row, no `$`, top-left`:`bottom-right, no degenerate `A1:A1`, and no whole-column `A:A`, which a
   RANGE file may not name because a grid fills its range exactly), the
@@ -104,7 +105,10 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
   `<name>.css` holding one `figure` rule whose `anchor` is a cell (a fixed box, sized by `left`,
   `top`, `width`, `height`) or a range (the cells it fills, sized with them) — the arbitrary EMU
   position, with sub-cell offsets, that an imported chart carries and no range expresses. A name-form
-  figure with no sidecar is placed by the writer.
+  figure with no sidecar is placed by the writer. An IMPORTED chart states in exactly such a sidecar
+  the position its source anchor gave it in CELL terms, and a source position no `anchor` spells —
+  approximated there, or stated in no sidecar at all — is REPORTED as a named approximation rather
+  than carried in silence.
 - **In-cell content** — literal forms (number, `TRUE`/`FALSE`, the seven author-writable error
   spellings, `'`-prefixed text), the `=formula` form, and the trailing `~<code>` display-format marker.
 - **Coverage and overlap** — the grid fills its declared range exactly, or is a single `=formula`

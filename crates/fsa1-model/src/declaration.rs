@@ -318,11 +318,15 @@ impl Declaration {
         spellable.then(|| Declaration::FontFamily(name.to_string()))
     }
 
-    /// The canonical CSS text of this declaration, `<property>: <value>`. Every value is spelled by
-    /// reading the table that parsed it backward, so a consumer emitting a stylesheet cannot drift
-    /// from what the parser accepts.
+    /// The canonical CSS text of this declaration, `<property>: <value>`.
     pub fn spell(&self) -> String {
-        let value = match self {
+        format!("{}: {}", self.property(), self.value_text())
+    }
+
+    /// The canonical CSS text of this declaration's VALUE, spelled by reading the table that parsed
+    /// it backward, so a consumer emitting a stylesheet cannot drift from what the parser accepts.
+    pub fn value_text(&self) -> String {
+        match self {
             Declaration::BackgroundColor(rgb) | Declaration::Color(rgb) => rgb.spell(),
             Declaration::Border { border, .. } => border.spell(),
             Declaration::FontFamily(name) => name.clone(),
@@ -335,8 +339,7 @@ impl Declaration {
             Declaration::VerticalAlign(a) => spell_keyword(*a, VERTICAL_ALIGNS).to_string(),
             Declaration::WhiteSpace(w) => spell_keyword(*w, WHITE_SPACES).to_string(),
             Declaration::Width(chars) => chars.spell(),
-        };
-        format!("{}: {value}", self.property())
+        }
     }
 
     pub fn property(&self) -> &'static str {

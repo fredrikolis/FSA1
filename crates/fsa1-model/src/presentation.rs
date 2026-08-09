@@ -1,4 +1,4 @@
-// Concern: a sidecar's rules — their selectors, declarations and order, counted in its root | Non-concern: what a declaration means, applying a style, naming the file | IO: (root?, text) <-> Rules
+// Concern: a sidecar's rules — selectors, declarations, order | Non-concern: a declaration's meaning, applying a style, the filename | IO: (root, text) <-> Rules; text -> a selector + its declarations
 
 use crate::declaration::{Declaration, parse_declaration, syntax};
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -117,10 +117,16 @@ fn read_rules(
 /// sidecar. `root` supplies the extent an index is spelled against, exactly as the filename does.
 pub fn spell_rules(root: Rect, presentation: &Presentation) -> String {
     let shape = shape_of(root);
-    let rules: Vec<String> = presentation
+    let selectors: Vec<String> = presentation
         .rules
         .iter()
-        .map(|rule| {
+        .map(|rule| spell(rule.target, shape))
+        .collect();
+    let rules: Vec<(&str, Vec<(&str, String)>)> = presentation
+        .rules
+        .iter()
+        .zip(&selectors)
+        .map(|(rule, selector)| {
             debug_assert!(
                 !rule.declarations.is_empty()
                     && rule
@@ -129,12 +135,12 @@ pub fn spell_rules(root: Rect, presentation: &Presentation) -> String {
                         .all(|w| w[0].property() < w[1].property()),
                 "a written rule declares something, alphabetically, once each",
             );
-            let spelled: Vec<String> = rule.declarations.iter().map(Declaration::spell).collect();
-            format!(
-                "  {} {{ {} }}",
-                spell(rule.target, shape),
-                spelled.join("; ")
-            )
+            let declared = rule
+                .declarations
+                .iter()
+                .map(|d| (d.property(), d.value_text()))
+                .collect();
+            (selector.as_str(), declared)
         })
         .collect();
     debug_assert!(
@@ -145,7 +151,119 @@ pub fn spell_rules(root: Rect, presentation: &Presentation) -> String {
                 .all(|w| w[0].target < w[1].target),
         "a written presentation holds rules, ascending by target",
     );
-    format!("{}\n", rules.join("\n"))
+    spell_sidecar(&rules)
+}
+
+/// The rule text a sidecar holds: two-space indent, a space inside each brace, `; ` between
+/// declarations, no trailing `;`, one closing newline. [`split_rule`] is this read backward.
+pub fn spell_sidecar(rules: &[(&str, Vec<(&str, String)>)]) -> String {
+    let spelled: Vec<String> = rules
+        .iter()
+        .map(|(selector, declarations)| {
+            let declared: Vec<String> = declarations
+                .iter()
+                .map(|(property, value)| format!("{property}: {value}"))
+                .collect();
+            format!("  {selector} {{ {} }}", declared.join("; "))
+        })
+        .collect();
+    format!("{}\n", spelled.join("\n"))
+}
+
+/// What one rule's text broke, as DATA rather than a [`Diagnostic`]: a caller states it in its own
+/// vocabulary, over its own code and location.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuleFault {
+    /// The text found, which is no one rule.
+    Malformed(String),
+    /// A `;` that no `; ` separates, so the rule ends on one.
+    TrailingSeparator,
+    /// The segment holding no `: `.
+    NotADeclaration(String),
+    /// The segment spelled with the wrong space.
+    NonCanonical(String),
+    /// The property no `allowed` admits.
+    UnknownProperty(String),
+    /// The property declared twice.
+    Duplicate(String),
+    /// The pair out of alphabetical order.
+    OutOfOrder { before: String, after: String },
+}
+
+/// [`spell_sidecar`] read backward over a file holding ONE rule, as far as its FRAME: the selector
+/// between the indent and ` { `, and the declaration text inside the braces, unread. Anything else
+/// is a second spelling of one appearance, which is the very thing a sidecar has none of. The
+/// selector is mandatory and judged no further HERE, so a caller grades it before its declarations.
+pub fn split_rule(text: &str) -> Result<(&str, &str), RuleFault> {
+    let body = text
+        .strip_suffix('\n')
+        .filter(|body| !body.contains('\n'))
+        .ok_or_else(|| RuleFault::Malformed(text.to_string()))?;
+    let malformed = || RuleFault::Malformed(body.to_string());
+    let (selector, inner) = body
+        .strip_prefix("  ")
+        .and_then(|rest| rest.split_once(" { "))
+        .and_then(|(selector, rest)| Some((selector, rest.strip_suffix(" }")?)))
+        .ok_or_else(malformed)?;
+    if selector.is_empty() || inner.is_empty() || inner.contains(['{', '}']) {
+        return Err(malformed());
+    }
+    Ok((selector, inner))
+}
+
+/// The declaration text [`split_rule`] left unread, one pair per declaration in the order written.
+/// `allowed` is the caller's property vocabulary, applied per declaration before the duplicate and
+/// order verdict.
+pub fn read_declarations<'a>(
+    inner: &'a str,
+    allowed: &[&str],
+) -> Result<Vec<(&'a str, &'a str)>, RuleFault> {
+    let mut declarations: Vec<(&str, &str)> = Vec::new();
+    for segment in inner.split("; ") {
+        if segment.contains(';') {
+            return Err(RuleFault::TrailingSeparator);
+        }
+        let (property, value) = segment
+            .split_once(": ")
+            .ok_or_else(|| RuleFault::NotADeclaration(segment.to_string()))?;
+        if property.trim() != property || value.trim() != value || value.is_empty() {
+            return Err(RuleFault::NonCanonical(segment.to_string()));
+        }
+        if !allowed.contains(&property) {
+            return Err(RuleFault::UnknownProperty(property.to_string()));
+        }
+        if let Some((before, _)) = declarations.last() {
+            match adjacent(before, property) {
+                Adjacent::Duplicate => return Err(RuleFault::Duplicate(property.to_string())),
+                Adjacent::OutOfOrder => {
+                    return Err(RuleFault::OutOfOrder {
+                        before: (*before).to_string(),
+                        after: property.to_string(),
+                    });
+                }
+                Adjacent::Ascending => {}
+            }
+        }
+        declarations.push((property, value));
+    }
+    Ok(declarations)
+}
+
+/// The one order every sidecar's declarations are held to, read by both legs that judge it.
+enum Adjacent {
+    Ascending,
+    Duplicate,
+    OutOfOrder,
+}
+
+fn adjacent(before: &str, after: &str) -> Adjacent {
+    if after == before {
+        Adjacent::Duplicate
+    } else if after < before {
+        Adjacent::OutOfOrder
+    } else {
+        Adjacent::Ascending
+    }
 }
 
 /// The extent a root's selectors count in: its own, the filename no longer supplying one.
@@ -292,22 +410,22 @@ fn check_declaration_order(
     for window in parsed.windows(2) {
         let ((_, _, before), (line, col, after)) = (&window[0], &window[1]);
         let (a, b) = (before.property(), after.property());
-        if a == b {
-            diags.push(located(
+        match adjacent(a, b) {
+            Adjacent::Duplicate => diags.push(located(
                 file,
                 *line,
                 *col,
                 Code::PresentationSyntax,
                 format!("`{b}` is declared twice in one rule; give it one declaration"),
-            ));
-        } else if b < a {
-            diags.push(located(
+            )),
+            Adjacent::OutOfOrder => diags.push(located(
                 file,
                 *line,
                 *col,
                 Code::NonCanonicalPresentation,
                 format!("declarations are alphabetical: write `{b}` before `{a}`"),
-            ));
+            )),
+            Adjacent::Ascending => {}
         }
     }
 }
