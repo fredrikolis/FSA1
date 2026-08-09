@@ -12,3 +12,4 @@ fsa1-ingest = { path = "../fsa1-ingest" }
 fsa1-xlsx = { path = "../fsa1-xlsx" }
 comfy-table = "7.2"
 annotated-tree = "0.6"
+unicode-width = "0.2.2"

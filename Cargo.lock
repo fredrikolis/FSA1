@@ -352,6 +352,7 @@ dependencies = [
  "fsa1-ingest",
  "fsa1-model",
  "fsa1-verbs",
+ "unicode-width",
 ]
 
 [[package]]
@@ -401,6 +402,7 @@ dependencies = [
  "fsa1-ingest",
  "fsa1-model",
  "fsa1-xlsx",
+ "unicode-width",
 ]
 
 [[package]]

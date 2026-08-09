@@ -30,6 +30,8 @@ pub struct FigureView {
     pub binds: Vec<String>,
     /// `None` where the figure states no placement, and wherever the caller measured none.
     pub cover: Option<Rect>,
+    /// The form the NAME states: `true` where the filename IS the placement, false where it floats.
+    pub range_form: bool,
 }
 
 /// `files` is the authored structure a nested presenter groups the grid's cells by; it carries no
@@ -239,6 +241,7 @@ mod tests {
             kind: "bar".to_string(),
             binds: Vec::new(),
             cover,
+            range_form: false,
         }
     }
 

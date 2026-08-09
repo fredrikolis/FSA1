@@ -16,3 +16,4 @@ fsa1-ingest = { path = "../fsa1-ingest" }
 
 [dev-dependencies]
 calamine = "0.36"
+unicode-width = "0.2.2"

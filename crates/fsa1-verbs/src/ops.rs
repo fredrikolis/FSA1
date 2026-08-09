@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use fsa1_ingest::{Decomposition, ImportReport};
 use fsa1_model::{
     Axis, Diagnostic, Direction, Figure, FigureView, Figures, FormulaOutcome, Overlay, Placement,
-    Rect, RenderMode, TraceNode, ViewScope, view,
+    Rect, RenderMode, TraceNode, ViewScope, figure_occupancy, view,
 };
 
 use crate::address;
@@ -196,12 +196,15 @@ fn view_at(
 }
 
 /// The two spec readings a view carries, plus the cover only a caller that measured one supplies.
+/// The FORM comes off the name instead: `figure.name` locates, and `figure_occupancy` reads an entry.
 fn figure_view(figure: &Figure, cover: Option<Rect>) -> FigureView {
+    let entry = present::entry_name(&figure.name);
     FigureView {
         name: figure.name.clone(),
         kind: figure.kind(),
         binds: figure.bindings(),
         cover,
+        range_form: figure_occupancy(entry).is_some(),
     }
 }
 

@@ -218,7 +218,7 @@ pub(crate) fn figure_range(stem: &str) -> Option<Rect> {
 /// What an ENTRY occupies: the rectangle a range-form figure's name states, `None` for a name-form
 /// figure -- which floats -- and for anything that is not a figure at all. The one derivation every
 /// loader shares, so a tree's occupancy cannot differ by which loader walked it.
-pub(crate) fn figure_occupancy(name: &str) -> Option<Rect> {
+pub fn figure_occupancy(name: &str) -> Option<Rect> {
     figure_range(figure_stem(name)?)
 }
 
