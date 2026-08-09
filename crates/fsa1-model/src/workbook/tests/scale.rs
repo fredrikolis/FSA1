@@ -160,8 +160,14 @@ fn a_whole_workbook_view_is_one_pass_whatever_it_is_drawn_as() {
         ),
     ] {
         let fresh = load(&tabs);
-        let v = crate::view::view(&fresh, None, scope, crate::render::RenderMode::Combined)
-            .expect("the view fits the render bound");
+        let v = crate::view::view(
+            &fresh,
+            None,
+            scope,
+            crate::render::RenderMode::Combined,
+            &[],
+        )
+        .expect("the view fits the render bound");
         assert_eq!(
             fresh.pass_count(),
             1,
@@ -180,6 +186,7 @@ fn a_whole_workbook_view_is_one_pass_whatever_it_is_drawn_as() {
         None,
         crate::view::ViewScope::Tab(0),
         crate::render::RenderMode::Values,
+        &[],
     )
     .expect("the view fits the render bound");
     assert_eq!(v.sheets[0].names[0].text, "820"); // 1 + 2 + ... + 40

@@ -962,9 +962,11 @@ DESCRIPTION:
   COMBINED (a literal shows its value; a formula shows `<value> ← =<formula>`, reusing the same value
   and source spellings --mode values|functions produce). A multi-tab view heads each grid with its tab
   name and separates them by a blank line; a single tab is the bare grid. Default viewport is the tab's
-  used region. A region is the LITERAL rectangle — cells outside the used region pad blank (no
-  clipping); a region wholly outside the used region prints a stderr note but still draws the padded
-  grid and exits 0.
+  used region — its CONTENT under --format ascii, its content plus every styled region under
+  --format html — widened to take in the cells each figure covers, unless that widening would exceed
+  the render bound (then the covers outside it are simply not drawn). A region is the LITERAL rectangle
+  — cells outside the used region pad blank (no clipping); a region wholly outside the used region
+  prints a stderr note but still draws the padded grid and exits 0.
 
 ARGUMENTS:
   <path>            (required) <wb>[/<tab>[/<A1>]] (tabs = sub-folders; the A1 selector is logical).
@@ -982,6 +984,13 @@ OUTPUT:
   An ASCII table per in-scope tab on stdout: a column-letter header row, a row-number gutter, and one
   cell per coordinate (the computed value, the formula source, or `<value> ← =<formula>` per the chosen
   mode). A multi-tab view names each tab above its grid.
+  FIGURES: ascii cannot draw one, so every cell a figure COVERS is marked in the grid instead, in every
+  --mode: `fig` alone where the cell is empty, and `fig! ` prefixed before the cell's own text where it
+  holds a value or formula (`fig! 3 ← =A1+B1`) — so a value the figure sits on top of is never hidden.
+  A cell no figure covers is unmarked. One stderr note per figure names where it sits and what it reads:
+    figure <tab>/<name>.json covers <A1 range> and binds <ranges>   (a placed figure)
+    figure <tab>/<name>.json has no placement and binds <ranges>    (no <name>.css beside it)
+  `tree` marks nothing (it has no coordinate plane), and --format html draws the figure itself.
   --format html emits ONE standalone, JavaScript-free HTML document on stdout instead (redirect it to a
   file): a <table> per in-scope tab with the same header row and gutter as <th>, carrying each cell's
   resolved presentation as a class — one CSS rule per distinct style. Nothing else is written to stdout.
@@ -989,8 +998,9 @@ OUTPUT:
 EXIT CODES:
   0   Success (grid drawn, incl. a region outside the used region — with a stderr note)
   1   I/O failure
-  2   Invalid arguments (unknown flag/mode/format, an oversized region, a trailing segment that is
-      neither canonical A1 nor a known defined name, or a name that resolves to a formula/constant)
+  2   Invalid arguments (unknown flag/mode/format, a viewport over the render bound — the region you
+      gave, else the tab's own used region — a trailing segment that is neither canonical A1 nor a
+      known defined name, or a name that resolves to a formula/constant)
   3   Validation error (the workbook would not load, or the path has no tabs)
   24  Not found (no such workbook directory, or no such tab)
 

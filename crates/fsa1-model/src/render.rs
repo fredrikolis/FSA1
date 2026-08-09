@@ -49,11 +49,13 @@ pub fn combined_cell(value: &str, source: &str) -> String {
     format!("{value}{COMBINED_ARROW}{source}")
 }
 
-/// `u64` so the product of two `u32` spans cannot overflow.
+/// Each span is inclusive, so a full-`u32` axis counts `2^32` and the product of two reaches `2^64`
+/// -- one past what `u64` holds. Saturating there is answer enough: the only caller compares against
+/// [`MAX_VIEWPORT_CELLS`], and `u64::MAX` is over it by every reading.
 pub fn viewport_cell_count(vp: Rect) -> u64 {
     let rows = u64::from(vp.max_row - vp.min_row) + 1;
     let cols = u64::from(vp.max_col - vp.min_col) + 1;
-    rows * cols
+    rows.saturating_mul(cols)
 }
 
 /// The whole viewport is demanded in ONE batched [`Workbook::values_at`], so a dependency shared by
@@ -349,6 +351,16 @@ mod tests {
         let huge = parse_viewport("A1:A4294967295").unwrap();
         assert_eq!(viewport_cell_count(huge), u64::from(u32::MAX));
         assert!(viewport_cell_count(huge) > MAX_VIEWPORT_CELLS);
+
+        // Both axes full: `2^32 * 2^32` is one past `u64`, so this saturates rather than wrapping to 0.
+        let widest = Rect {
+            min_col: 0,
+            min_row: 0,
+            max_col: u32::MAX,
+            max_row: u32::MAX,
+        };
+        assert_eq!(viewport_cell_count(widest), u64::MAX);
+        assert!(viewport_cell_count(widest) > MAX_VIEWPORT_CELLS);
     }
 
     #[test]

@@ -39,6 +39,7 @@ free to drift. What is built today belongs in `ROADMAP.md`.
 ## CLI — the tool
 
 - **CLI1 · the tool needs no companion.** Every rule a workbook must satisfy, and every fault in a given workbook with the location an author must edit to remove it, is obtainable from a fsa1-cli invocation alone.
+- **CLI4 · the terminal shows what an export would hide.** Every cell a figure covers is marked in the ASCII grid, and a marked cell that holds a value or formula is distinguishable from one that is empty, without exporting the workbook.
 
 ## Withdrawn ids
 

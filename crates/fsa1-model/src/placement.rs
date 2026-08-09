@@ -1,4 +1,4 @@
-// Concern: where a figure sits on the sheet, in EMU | Non-concern: the spec beside it (figure.rs), a cell's rules (presentation.rs), writing an anchor | IO: (text) -> Placement; (runs, cell) <-> EMU
+// Concern: where a figure sits on the sheet, in its own EMU geometry, and the cells that geometry covers | Non-concern: writing an anchor | IO: (text) -> Placement; (runs, cell) <-> EMU; (runs) -> Rect
 
 use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -95,6 +95,34 @@ impl Placement {
                 w: w.unwrap_or(DEFAULT_W_EMU),
                 h: h.unwrap_or(DEFAULT_H_EMU),
             }),
+        }
+    }
+
+    /// The cells this placement occupies, which a drawer that cannot draw a figure marks instead.
+    /// The `- 1` EMU is why a box ending on a boundary does not claim the next column, and `.max`
+    /// is why a zero-length box still covers its own cell. Every step SATURATES: `length` takes any
+    /// finite literal, so input near `i64::MAX` lands on the sheet's far edge, panicking on none.
+    pub fn cover(&self, cols: &Axis, rows: &Axis) -> Rect {
+        match *self {
+            Placement::Cells(rect) => rect,
+            Placement::Box {
+                at,
+                left,
+                top,
+                w,
+                h,
+            } => {
+                let x0 = cols.edge(at.0).saturating_add(left);
+                let y0 = rows.edge(at.1).saturating_add(top);
+                let x1 = x0.max(x0.saturating_add(w).saturating_sub(1));
+                let y1 = y0.max(y0.saturating_add(h).saturating_sub(1));
+                Rect {
+                    min_col: cols.locate(x0).0,
+                    min_row: rows.locate(y0).0,
+                    max_col: cols.locate(x1).0,
+                    max_row: rows.locate(y1).0,
+                }
+            }
         }
     }
 }
@@ -271,12 +299,13 @@ impl Axis {
         }
     }
 
-    /// The EMU distance from the sheet's origin to the leading edge of `index`.
+    /// The EMU distance from the sheet's origin to the leading edge of `index`. Saturating, for the
+    /// same reason [`Placement::cover`] is: an authored width and a far column are both input.
     pub fn edge(&self, index: u32) -> i64 {
-        let mut emu = i64::from(index) * self.default;
+        let mut emu = i64::from(index).saturating_mul(self.default);
         for (start, end, size) in &self.runs {
             let covered = i64::from((*end + 1).min(index).saturating_sub(*start));
-            emu += covered * (size - self.default);
+            emu = emu.saturating_add(covered.saturating_mul(size - self.default));
         }
         emu
     }
@@ -289,18 +318,18 @@ impl Axis {
         let emu = emu.max(0);
         for (start, end, size) in &self.runs {
             if *start > at {
-                let span = i64::from(*start - at) * self.default;
-                if emu < acc + span {
+                let span = i64::from(*start - at).saturating_mul(self.default);
+                if emu < acc.saturating_add(span) {
                     return step(at, emu - acc, self.default);
                 }
-                acc += span;
+                acc = acc.saturating_add(span);
                 at = *start;
             }
-            let span = i64::from(*end - *start + 1) * size;
-            if emu < acc + span {
+            let span = i64::from(*end - *start + 1).saturating_mul(*size);
+            if emu < acc.saturating_add(span) {
                 return step(at, emu - acc, *size);
             }
-            acc += span;
+            acc = acc.saturating_add(span);
             at = *end + 1;
         }
         step(at, emu - acc, self.default)
@@ -308,10 +337,12 @@ impl Axis {
 }
 
 /// `size` is positive at every call site: a zero-sized run spans nothing, so the caller's `<` test
-/// never admits one.
+/// never admits one. A distance no sheet is that wide saturates on the INDEX, because `as u32`
+/// would truncate it into a small, wrong column and there is none past `u32::MAX` to name anyway.
 fn step(from: u32, into: i64, size: i64) -> (u32, i64) {
     let whole = into / size;
-    (from + whole as u32, into - whole * size)
+    let index = u32::try_from(whole).unwrap_or(u32::MAX);
+    (from.saturating_add(index), into - whole * size)
 }
 
 fn chars_emu(width: Chars) -> i64 {
@@ -423,6 +454,82 @@ mod tests {
                 max_row: 16,
             }),
         );
+    }
+
+    /// Excel's own default box, 15cm by 7.5cm, over 64px columns and 15pt rows.
+    #[test]
+    fn a_sizeless_box_covers_the_default_chart_box_worth_of_cells() {
+        assert_eq!(
+            placed("  figure { anchor: D2 }\n").cover(&Axis::columns(&[]), &Axis::rows(&[])),
+            Rect {
+                min_col: 3,
+                min_row: 1,
+                max_col: 11,
+                max_row: 15,
+            },
+            "D2:L16",
+        );
+    }
+
+    /// A box ending inside a cell claims it, and one ending on a boundary does not claim the next.
+    #[test]
+    fn a_stated_box_covers_the_cells_its_edges_land_in() {
+        assert_eq!(
+            placed("  figure { anchor: A1; height: 1.5cm; width: 2cm }\n")
+                .cover(&Axis::columns(&[]), &Axis::rows(&[])),
+            Rect {
+                min_col: 0,
+                min_row: 0,
+                max_col: 1,
+                max_row: 2,
+            },
+            "A1:B3",
+        );
+    }
+
+    #[test]
+    fn a_range_anchor_covers_exactly_the_cells_it_names() {
+        assert_eq!(
+            placed("  figure { anchor: B2:C3 }\n").cover(&Axis::columns(&[]), &Axis::rows(&[])),
+            Rect {
+                min_col: 1,
+                min_row: 1,
+                max_col: 2,
+                max_row: 2,
+            },
+        );
+    }
+
+    /// A length is any finite non-negative literal, so `cover` is handed EMU near `i64::MAX` by a
+    /// sidecar that grades clean. It answers the far edge of the sheet — it does not panic in debug,
+    /// and it does not wrap into a small wrong rectangle in release. Both the OFFSET that moves the
+    /// corner and the SIZE that extends past it saturate.
+    #[test]
+    fn an_absurd_length_saturates_instead_of_overflowing() {
+        let (cols, rows) = (Axis::columns(&[]), Axis::rows(&[]));
+        let far = placed(
+            "  figure { anchor: A1; height: 1cm; left: 99999999999999999999cm; width: 1cm }\n",
+        )
+        .cover(&cols, &rows);
+        assert_eq!((far.min_col, far.max_col), (u32::MAX, u32::MAX));
+        assert!(far.min_col <= far.max_col && far.min_row <= far.max_row);
+
+        let tall = placed(
+            "  figure { anchor: A1; height: 1cm; top: 99999999999999999999cm; width: 1cm }\n",
+        )
+        .cover(&cols, &rows);
+        assert_eq!((tall.min_row, tall.max_row), (u32::MAX, u32::MAX));
+
+        let wide = placed(
+            "  figure { anchor: B2; height: 99999999999999999999cm; width: 99999999999999999999cm }\n",
+        )
+        .cover(&cols, &rows);
+        assert_eq!(
+            (wide.min_col, wide.min_row),
+            (1, 1),
+            "it still begins at B2"
+        );
+        assert_eq!((wide.max_col, wide.max_row), (u32::MAX, u32::MAX));
     }
 
     /// One refusal per rule an author can break, each located on the sidecar.

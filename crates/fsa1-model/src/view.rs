@@ -1,4 +1,4 @@
-// Concern: resolves a scope to a View, spelling its cells and names from one demand | Non-concern: drawing it (fsa1-html, present.rs) | IO: (&Workbook, Option<&Overlay>, ViewScope, RenderMode) -> View
+// Concern: resolves a scope to a View, spelling its cells and names from one demand | Non-concern: drawing it (present.rs) | IO: (&Workbook, Option<&Overlay>, ViewScope, RenderMode, covers) -> View
 
 use crate::names::{Name, NameScope, NameTarget};
 use crate::overlap::Rect;
@@ -32,6 +32,9 @@ pub struct SheetView<'a> {
     pub region: Option<Rect>,
     pub files: Vec<FileEntry<'a>>,
     pub names: Vec<NameView>,
+    /// The cell rectangles a figure covers on this sheet; a drawer that cannot draw a figure marks
+    /// them instead.
+    pub covers: Vec<Rect>,
 }
 
 pub struct View<'a> {
@@ -61,27 +64,34 @@ impl SheetView<'_> {
     }
 }
 
-/// Every coordinate the view will show and every in-scope name's dependency cone accrete into ONE
-/// [`Workbook::values_at`] demand before anything is spelled, so no two parts of a view can disagree
-/// about a cell. Each sheet's viewport is bounded by [`MAX_VIEWPORT_CELLS`] independently; over the
-/// bound is a refusal, never a crash. `overlay` is `None` where a view spans CONTENT alone.
+/// Every coordinate the view shows and every in-scope name's cone accrete into ONE
+/// [`Workbook::values_at`] demand, so no two parts of a view can disagree about a cell. Over
+/// [`MAX_VIEWPORT_CELLS`] per sheet is a refusal, never a crash. A `covers` rectangle widens any
+/// viewport but a [`ViewScope::Region`]'s while that widening still fits: no figure costs the grid.
 pub fn view<'a>(
     wb: &'a Workbook,
     overlay: Option<&Overlay>,
     scope: ViewScope,
     mode: RenderMode,
+    covers: &[(u32, Rect)],
 ) -> Result<View<'a>, String> {
     let sheets: Vec<u32> = match scope {
         ViewScope::Workbook => (0..wb.sheet_names().len() as u32).collect(),
         ViewScope::Tab(s) | ViewScope::Region(s, _) => vec![s],
     };
-    let mut viewports: Vec<(u32, Option<Rect>)> = Vec::with_capacity(sheets.len());
+    let mut viewports: Vec<(u32, Option<Rect>, Vec<Rect>)> = Vec::with_capacity(sheets.len());
     for &s in &sheets {
-        let vp = match scope {
+        let mine: Vec<Rect> = covers
+            .iter()
+            .filter(|(sheet, _)| *sheet == s)
+            .map(|(_, rect)| *rect)
+            .collect();
+        let mut vp = match scope {
             ViewScope::Region(_, rect) => Some(rect),
             // Without an overlay the viewport spans CONTENT alone: a view that will not draw a style has no reason to widen for one.
             _ => overlay.map_or_else(|| wb.content_region(s), |o| o.stated_region(wb, s)),
         };
+        // Tested on what the CALLER demanded, before any cover widens it: the demand is the only thing a caller can narrow, so a refusal over a cover would prescribe a fix it has no argv for.
         if let Some(rect) = vp {
             let cells = viewport_cell_count(rect);
             if cells > MAX_VIEWPORT_CELLS {
@@ -90,7 +100,16 @@ pub fn view<'a>(
                 ));
             }
         }
-        viewports.push((s, vp));
+        if !matches!(scope, ViewScope::Region(..)) {
+            for rect in &mine {
+                // A figure past the content is worth reaching for; one a sheet away is not worth the whole grid, and either way the cells of it inside the viewport still mark.
+                let widened = Rect::union(vp, Some(*rect));
+                if widened.is_none_or(|r| viewport_cell_count(r) <= MAX_VIEWPORT_CELLS) {
+                    vp = widened;
+                }
+            }
+        }
+        viewports.push((s, vp, mine));
     }
 
     let sheet_names: Vec<(u32, Vec<&Name>)> = match scope {
@@ -111,8 +130,8 @@ pub fn view<'a>(
     // `Functions` spells authored source, so it demands nothing.
     if matches!(mode, RenderMode::Values | RenderMode::Combined) {
         let mut coords: Vec<(u32, u32, u32)> = Vec::new();
-        for &(s, vp) in &viewports {
-            let Some(r) = vp else { continue };
+        for (s, vp, _) in &viewports {
+            let (s, Some(r)) = (*s, *vp) else { continue };
             for row in r.min_row..=r.max_row {
                 for col in r.min_col..=r.max_col {
                     coords.push((s, col, row));
@@ -127,15 +146,16 @@ pub fn view<'a>(
     }
 
     let out_sheets = viewports
-        .iter()
+        .into_iter()
         .zip(&sheet_names)
-        .map(|(&(s, vp), (_, names))| SheetView {
+        .map(|((s, vp, mine), (_, names))| SheetView {
             sheet: s,
             name: wb.sheet_names()[s as usize],
             grid: vp.map(|r| render(wb, s, r, mode)),
             region: vp,
             files: wb.tab_files(s).unwrap_or_default(),
             names: names.iter().map(|n| name_view(wb, s, n, mode)).collect(),
+            covers: mine,
         })
         .collect();
 

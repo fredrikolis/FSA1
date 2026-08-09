@@ -74,7 +74,9 @@ FIGURES — <tab>/<name>.json, a Vega-Lite spec bound to the tab's ranges
   The range resolves to a table whose FIRST ROW is the field names (no blank, no duplicate)
   and whose cells contribute VALUES, never formulas: blank is null, an error is its text.
   check lints the JSON and every binding; render --format html embeds the expanded spec and
-  the Vega runtime and draws it; render --format ascii names it on stderr and draws the table.
+  the Vega runtime and draws it; render --format ascii cannot draw one, so it names it on
+  stderr and MARKS the cells it covers in the grid: `fig` where the cell is empty, `fig! `
+  before the cell's own text where it is not. tree marks nothing.
 
 NAMES — a named cell/range/formula, by an identifier (not an A1 address)
   A name is an entry in its SCOPE folder: a tab folder = sheet-scoped, the workbook root = workbook-

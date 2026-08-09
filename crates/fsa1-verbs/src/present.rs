@@ -9,7 +9,7 @@ pub fn table(view: &View) -> String {
     let named = view.sheets.len() > 1;
     let mut out: Vec<String> = Vec::with_capacity(view.sheets.len());
     for sheet in &view.sheets {
-        let grid = sheet.grid.as_ref().map(grid_table).unwrap_or_default();
+        let grid = grid_table(sheet);
         out.push(match (named, grid.is_empty()) {
             (true, true) => sheet.name.to_string(),
             (true, false) => format!("{}\n{grid}", sheet.name),
@@ -105,17 +105,34 @@ fn dir_node(name: String, dirs: Vec<DirNode>, files: Vec<FileNode>, elided_files
     }
 }
 
-fn grid_table(grid: &fsa1_model::RenderGrid) -> String {
+/// A covered cell is marked in the grid itself, because the terminal is the only place an agent
+/// laying out a sheet ever sees: `fig` where the cell is empty, `fig! ` prefixed where it is not, so
+/// a value an export would hide is distinguishable from blank space the figure merely sits over.
+fn grid_table(sheet: &SheetView) -> String {
+    let (Some(grid), Some(region)) = (sheet.grid.as_ref(), sheet.region) else {
+        return String::new();
+    };
     let mut t = Table::new();
     t.load_preset(ASCII_FULL);
     let mut header: Vec<Cell> = Vec::with_capacity(grid.col_labels.len() + 1);
     header.push(Cell::new(""));
     header.extend(grid.col_labels.iter().map(Cell::new));
     t.set_header(header);
-    for row in &grid.rows {
+    for (r, row) in grid.rows.iter().enumerate() {
         let mut cells: Vec<Cell> = Vec::with_capacity(row.cells.len() + 1);
         cells.push(Cell::new(&row.row_label));
-        cells.extend(row.cells.iter().map(Cell::new));
+        for (c, text) in row.cells.iter().enumerate() {
+            let (col, row) = (region.min_col + c as u32, region.min_row + r as u32);
+            cells.push(
+                if !sheet.covers.iter().any(|rect| rect.contains(col, row)) {
+                    Cell::new(text)
+                } else if text.is_empty() {
+                    Cell::new("fig")
+                } else {
+                    Cell::new(format!("fig! {text}"))
+                },
+            );
+        }
         t.add_row(cells);
     }
     t.to_string()

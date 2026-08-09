@@ -1432,7 +1432,12 @@ fn a_malformed_sidecar_reaches_only_the_verbs_that_read_presentation() {
         "check names the fault and where it is:\n{out}"
     );
 
-    for verb in [vec!["render", root, "--format", "html"], vec!["pack", root]] {
+    // The ASCII table reads the sidecar for its axis runs alone: a figure's cover is measured in them.
+    for verb in [
+        vec!["render", root, "--format", "html"],
+        vec!["render", root],
+        vec!["pack", root],
+    ] {
         let (code, out) = run(&verb);
         assert_eq!(
             code, 3,
@@ -1443,7 +1448,6 @@ fn a_malformed_sidecar_reaches_only_the_verbs_that_read_presentation() {
     let cell = at(&fx, "Sheet1/B1");
     for verb in [
         vec!["eval", root, "--formula", "=B1"],
-        vec!["render", root],
         vec!["tree", root],
         vec!["trace", cell.as_str()],
     ] {
@@ -1484,4 +1488,245 @@ fn check_lints_a_figure_without_denying_the_workbook_its_values() {
     let (rcode, rout) = run(&["render", &format!("{root}/Sheet1/A1")]);
     assert_eq!(rcode, 0, "{rout}");
     assert!(rout.contains('1'), "{rout}");
+}
+
+/// A figure with a placement sidecar beside it. The stem is shared: `<name>.json` IS the figure and
+/// `<name>.css` is where it sits.
+fn figured(tag: &str, placement: &str) -> Fixture {
+    let fx = Fixture::new(tag);
+    fx.file("Sheet1", "A1", "1")
+        .file("Sheet1", "B1", "2")
+        .file("Sheet1", "C3", "=A1+B1")
+        .file(
+            "Sheet1",
+            "Chart1.json",
+            "{\"data\":{\"name\":\"A1:B1\"},\"mark\":\"bar\"}",
+        )
+        .file("Sheet1", "Chart1.css", placement);
+    fx
+}
+
+/// The ASCII grid is the only surface an agent laying out a sheet ever sees, so a covered cell is
+/// marked IN it: `fig` alone where the cell is empty, `fig! ` before the cell's own text where it is
+/// not, and nothing at all where no figure reaches. Every `--mode` marks, because a figure occludes
+/// a coordinate whatever the coordinate is spelled as.
+#[test]
+fn the_ascii_grid_marks_every_cell_a_figure_covers_and_no_other() {
+    let fx = figured("figure-cover-marks", "  figure { anchor: A1:B2 }\n");
+    let root = fx.path().to_str().unwrap();
+
+    for mode in [None, Some("values"), Some("functions")] {
+        let mut argv = vec!["render", root];
+        if let Some(m) = mode {
+            argv.extend(["--mode", m]);
+        }
+        let (code, out, err) = run_err(&argv);
+        assert_eq!(code, 0, "{argv:?} exits 0:\n{out}{err}");
+        assert!(
+            out.contains("fig! 1") && out.contains("fig! 2"),
+            "{argv:?}: a covered cell HOLDING a value keeps its text behind the `fig! ` prefix:\n{out}"
+        );
+        assert_eq!(
+            out.matches("| fig ").count(),
+            2,
+            "{argv:?}: A2 and B2 are covered and empty, so each is the bare mark:\n{out}"
+        );
+        assert!(
+            !out.contains("fig! 3") && !out.contains("fig! ="),
+            "{argv:?}: C3 is outside the cover, so it is unmarked:\n{out}"
+        );
+    }
+
+    // Combined keeps BOTH halves of an occluded formula cell, prefix and all.
+    let wide = figured("figure-cover-combined", "  figure { anchor: A1:C3 }\n");
+    let (code, out) = run(&["render", wide.path().to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("fig! 3 ← =A1+B1"),
+        "the mark PREFIXES the combined spelling, it does not replace it:\n{out}"
+    );
+}
+
+/// One note per figure, in one of exactly two spellings: a placed figure names the rectangle it
+/// covers, and an unplaced one says so rather than naming a position no author wrote.
+#[test]
+fn each_figure_gets_one_note_naming_its_cover_or_the_lack_of_one() {
+    let placed = figured("figure-note-placed", "  figure { anchor: A1:B2 }\n");
+    let (code, _out, err) = run_err(&["render", placed.path().to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        err.contains("figure Sheet1/Chart1.json covers A1:B2 and binds A1:B1"),
+        "the placed spelling names the cover and the bindings:\n{err}"
+    );
+
+    let bare = Fixture::new("figure-note-unplaced");
+    bare.file("Sheet1", "A1", "1")
+        .file("Sheet1", "B1", "2")
+        .file(
+            "Sheet1",
+            "Chart1.json",
+            "{\"data\":{\"name\":\"A1:B1\"},\"mark\":\"bar\"}",
+        );
+    let (code, out, err) = run_err(&["render", bare.path().to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        err.contains("figure Sheet1/Chart1.json has no placement and binds A1:B1"),
+        "with no sidecar there is no authored position to name:\n{err}"
+    );
+    assert!(!out.contains("fig"), "and nothing is marked:\n{out}");
+}
+
+/// Marking is the ASCII TABLE's answer to a figure it cannot draw. `--format html` draws the figure
+/// itself, and `tree` has no coordinate plane to occlude — neither may mark.
+#[test]
+fn only_the_ascii_table_marks_a_cover() {
+    let fx = figured("figure-cover-carriers", "  figure { anchor: A1:B2 }\n");
+    let root = fx.path().to_str().unwrap();
+
+    let (code, html) = run(&["render", root, "--format", "html"]);
+    assert_eq!(code, 0, "{html}");
+    assert!(
+        !html.contains("fig!") && !html.contains(">fig<"),
+        "html DRAWS the figure, so it marks no cell:\n{html}"
+    );
+
+    let (code, tree) = run(&["tree", root]);
+    assert_eq!(code, 0, "{tree}");
+    assert!(!tree.contains("fig"), "tree marks nothing:\n{tree}");
+}
+
+/// A `length` is any finite non-negative literal an author can write, so a sidecar that grades CLEAN
+/// hands the cover arithmetic EMU near `i64::MAX`. Input never panics the binary, and it never wraps
+/// into a quietly wrong rectangle either — the figure simply lands off the drawn grid.
+#[test]
+fn an_absurd_placement_length_renders_instead_of_crashing() {
+    let fx = figured(
+        "figure-cover-overflow",
+        "  figure { anchor: A1; height: 1cm; left: 99999999999999999999cm; width: 1cm }\n",
+    );
+    let root = fx.path().to_str().unwrap();
+
+    let (code, out) = run(&["check", root]);
+    assert_eq!(
+        code, 0,
+        "the sidecar grades clean, so render must cope:\n{out}"
+    );
+
+    let (code, out, err) = run_err(&["render", root]);
+    assert_eq!(code, 0, "no panic, no refusal:\n{out}{err}");
+    assert!(
+        out.contains("| 1 ") && out.contains("3 ← =A1+B1"),
+        "the sheet is drawn on its own content:\n{out}"
+    );
+    assert!(
+        !out.contains("fig"),
+        "and nothing near A1 is marked:\n{out}"
+    );
+    assert!(err.contains("figure Sheet1/Chart1.json covers"), "{err}");
+}
+
+/// A figure cannot cost the caller the grid. A cover far past the content would widen the viewport
+/// over the render bound, so the widening is dropped — the sheet still draws, and the covered cells
+/// that fall inside it are still marked.
+#[test]
+fn a_cover_over_the_render_bound_does_not_take_the_grid_with_it() {
+    let fx = figured("figure-cover-bound", "  figure { anchor: A1:Z50000 }\n");
+    let root = fx.path().to_str().unwrap();
+
+    let (code, out, err) = run_err(&["render", root]);
+    assert_eq!(
+        code, 0,
+        "the caller gave no region, so there is nothing to narrow:\n{out}{err}"
+    );
+    assert!(
+        !err.contains("render bound"),
+        "and no refusal prescribing a fix the caller has no argv for:\n{err}"
+    );
+    assert!(
+        out.contains("fig! 1") && out.contains("fig! 2"),
+        "the content is drawn AND the cover reaches it:\n{out}"
+    );
+    assert!(
+        err.contains("figure Sheet1/Chart1.json covers A1:Z50000"),
+        "the note still names the whole cover:\n{err}"
+    );
+
+    // A REGION the caller did state is still bounded, and still says so.
+    let (code, _out, err) = run_err(&["render", &format!("{root}/Sheet1/A1:Z50000")]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("over the render bound"), "{err}");
+}
+
+/// "The tab's used region" has ONE value per carrier: ascii draws no style, so its used region is
+/// CONTENT, and html draws one, so its used region takes in every stated region. The note and the
+/// grid read the same value, so a note can never describe a region the grid does not span.
+#[test]
+fn the_used_region_a_note_names_is_the_one_the_grid_spans() {
+    let fx = Fixture::new("used-region-carriers");
+    fx.file("Sheet1", "A1", "1")
+        .file("Sheet1", "Z1:Z5.css", "  td { color: #3f0421 }\n");
+    let root = fx.path().to_str().unwrap();
+
+    let (code, out, err) = run_err(&["render", root]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("| A |") && !out.contains("| Z "),
+        "ascii's grid spans the CONTENT alone:\n{out}"
+    );
+
+    for region in ["Z1:Z5", "AA1:AA2"] {
+        let (code, _out, err) = run_err(&["render", &format!("{root}/Sheet1/{region}")]);
+        assert_eq!(code, 0, "{err}");
+        assert!(
+            err.contains(&format!(
+                "region {region} lies entirely outside the tab's used region A1"
+            )),
+            "ascii's note reads the same CONTENT region its grid does:\n{err}"
+        );
+    }
+
+    // html DRAWS the style, so the styled region is part of its used region — and its note says so.
+    let (code, _out, err) = run_err(&[
+        "render",
+        &format!("{root}/Sheet1/AA1:AA2"),
+        "--format",
+        "html",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        err.contains("outside the tab's used region A1:Z5"),
+        "html's used region takes in the stated one:\n{err}"
+    );
+}
+
+/// A cover that saturates to the whole coordinate plane spans `2^32` cells on EACH axis, and the
+/// bound test multiplies the two. The count is the only thing standing between a pathological
+/// sidecar and a string per cell, so it must read as OVER the bound -- not wrap to something under
+/// it. Both spellings reach the same arithmetic: one saturates the extent, the other the anchor.
+#[test]
+fn a_cover_spanning_the_whole_plane_is_still_bounded_out_of_the_grid() {
+    for (tag, placement) in [
+        (
+            "figure-cover-plane-extent",
+            "  figure { anchor: A1; height: 99999999999999999999cm; width: 99999999999999999999cm }\n",
+        ),
+        (
+            "figure-cover-plane-anchor",
+            "  figure { anchor: XFD1048576; height: 99999999999cm; width: 99999999999cm }\n",
+        ),
+    ] {
+        let fx = figured(tag, placement);
+        let root = fx.path().to_str().unwrap();
+
+        let (code, out) = run(&["check", root]);
+        assert_eq!(code, 0, "{tag}: the sidecar grades clean:\n{out}");
+
+        let (code, out, err) = run_err(&["render", root]);
+        assert_eq!(code, 0, "{tag}: no panic and no abort:\n{out}{err}");
+        assert!(
+            out.contains("| 1 ") && out.contains("3 ← =A1+B1"),
+            "{tag}: the sheet is drawn on its own content:\n{out}"
+        );
+        assert!(err.contains("figure Sheet1/Chart1.json covers"), "{err}");
+    }
 }

@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use fsa1_ingest::{Decomposition, ImportReport};
 use fsa1_model::{
-    Diagnostic, Direction, Figures, FormulaOutcome, Overlay, RenderMode, TraceNode, ViewScope, view,
+    Axis, Diagnostic, Direction, Figures, FormulaOutcome, Overlay, Rect, RenderMode, TraceNode,
+    ViewScope, view,
 };
 
 use crate::address;
@@ -57,10 +58,12 @@ fn view_at(
         return Err(fail(Kind::Validation, &msg));
     }
     let wb = &resolved.workbook;
-    // The HTML carrier is the one drawer that draws presentation, and the only reason to pay for it.
-    let overlay = match format {
-        Format::Html => Some(load_overlay(&resolved.root)?),
-        Format::Ascii => None,
+    // HTML DRAWS presentation and the ASCII table measures a figure's cover in the same axis runs; `tree` opens no figure, so it opens no overlay either.
+    let overlay = match (format, presenter) {
+        (Format::Html, _) | (Format::Ascii, Presenter::Table) => {
+            Some(load_overlay(&resolved.root)?)
+        }
+        (Format::Ascii, Presenter::Tree) => None,
     };
     // Gated on the PRESENTER, not the format: `tree` reaches this same function and draws no figure, so it must not open one, exactly as `eval` and `trace` never do.
     let (figures, mut notes) = match presenter {
@@ -82,10 +85,15 @@ fn view_at(
         (None, None) => ViewScope::Workbook,
     };
 
+    // ONE answer to "the tab's used region" per carrier, read by both the note below and the viewport `view` builds: HTML DRAWS a style so its takes in every stated region, ASCII draws none so its is CONTENT — opening the overlay to MEASURE a cover makes the table no drawer of presentation.
+    let view_overlay = match format {
+        Format::Html => overlay.as_ref(),
+        Format::Ascii => None,
+    };
+
     if let ViewScope::Region(sheet, rect) = scope
-        && let Some(used) = overlay
-            .as_ref()
-            .map_or_else(|| wb.content_region(sheet), |o| o.stated_region(wb, sheet))
+        && let Some(used) =
+            view_overlay.map_or_else(|| wb.content_region(sheet), |o| o.stated_region(wb, sheet))
         && rect.intersect(&used).is_none()
     {
         notes.push(format!(
@@ -95,7 +103,30 @@ fn view_at(
         ));
     }
 
-    let v = view(wb, overlay.as_ref(), scope, mode).map_err(|msg| bad_arg(&msg))?;
+    // Where each figure sits, in CELLS, named so the note below reads the rectangle it just built. Only the ASCII table marks: HTML draws the figure itself, and `tree` has no coordinate plane to occlude.
+    let mut placed: Vec<(u32, String, Rect)> = Vec::new();
+    if let (Presenter::Table, Format::Ascii) = (presenter, format) {
+        let overlay = overlay
+            .as_ref()
+            .expect("the ASCII table loaded the overlay above");
+        for (s, tab) in wb.sheet_names().iter().enumerate() {
+            let s = s as u32;
+            let tab_figures = figures.in_tab(tab);
+            if tab_figures.is_empty() {
+                continue;
+            }
+            let cols = Axis::columns(&overlay.column_widths(wb, s));
+            let rows = Axis::rows(&overlay.row_heights(wb, s));
+            for figure in tab_figures {
+                if let Some(placement) = figures.placement(figure) {
+                    placed.push((s, figure.name.clone(), placement.cover(&cols, &rows)));
+                }
+            }
+        }
+    }
+    let covers: Vec<(u32, Rect)> = placed.iter().map(|(s, _, rect)| (*s, *rect)).collect();
+
+    let v = view(wb, view_overlay, scope, mode, &covers).map_err(|msg| bad_arg(&msg))?;
 
     let empty = v.sheets.len() == 1 && v.sheets[0].grid.is_none();
     if empty {
@@ -125,16 +156,27 @@ fn view_at(
 
     let text = match (presenter, format) {
         (Presenter::Table, Format::Ascii) => {
-            // ASCII cannot DRAW one, so it names what it cannot draw rather than dropping it.
-            for figure in v.sheets.iter().flat_map(|s| figures.in_tab(s.name)) {
-                notes.push(format!(
-                    "figure {} binds {}",
-                    figure.name,
-                    match figure.bindings().as_slice() {
+            // ASCII cannot DRAW one, so it names it. An unplaced figure marks nothing and names no range: `pack`'s derived position moves as content grows and is no authored position.
+            for sheet in &v.sheets {
+                for figure in figures.in_tab(sheet.name) {
+                    let bindings = match figure.bindings().as_slice() {
                         [] => "no range".to_string(),
                         bindings => bindings.join(", "),
-                    }
-                ));
+                    };
+                    let name = &figure.name;
+                    notes.push(
+                        match placed
+                            .iter()
+                            .find(|(s, n, _)| *s == sheet.sheet && n == name)
+                        {
+                            Some((_, _, rect)) => format!(
+                                "figure {name} covers {} and binds {bindings}",
+                                rect.label()
+                            ),
+                            None => format!("figure {name} has no placement and binds {bindings}"),
+                        },
+                    );
+                }
             }
             present::table(&v)
         }

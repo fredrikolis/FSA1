@@ -79,7 +79,10 @@ One table, both paths. Optional arguments are in brackets.
 | `pack` | `source`, `dest`, `strict`, `format` (`xlsx`) | `fsa1-cli pack [--strict] [--target xlsx] <workbook-dir> [<dst>]` |
 
 - `render` draws the scope. Bare `<wb>` draws every tab; `<wb>/<Tab>` one tab; `<wb>/<Tab>/A1:D9` a
-  region. Default `combined` shows `value ← =formula`.
+  region. Default `combined` shows `value ← =formula`. `ascii` cannot draw a FIGURE, so it marks the
+  cells one covers instead — `fig` where the cell is empty, `fig! ` before the cell's own text where
+  it is not — and names each figure's cover and bindings in a note. `tree` marks nothing, and
+  `format: html` draws the figure itself.
 - `check` lints overlap, dimension mismatch, cycles and broken references. Scope it to a tab or range
   to lint only that.
 - `eval` evaluates an ad-hoc formula against the workbook, writing nothing. An error value like

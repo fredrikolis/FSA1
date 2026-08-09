@@ -12,7 +12,14 @@ fn doc(files: &[(&str, &str)]) -> String {
 fn figured(files: &[(&str, &str)], figures: &[(&str, &str)]) -> String {
     let wb = Workbook::from_tabs(&[("Sheet1", files)]).expect("loads clean");
     let overlay = Overlay::from_tabs(&[("Sheet1", files)]).expect("its sidecars load clean");
-    let v = view(&wb, Some(&overlay), ViewScope::Workbook, RenderMode::Values).expect("a view");
+    let v = view(
+        &wb,
+        Some(&overlay),
+        ViewScope::Workbook,
+        RenderMode::Values,
+        &[],
+    )
+    .expect("a view");
     let bound: Vec<(String, String)> = figures
         .iter()
         .map(|(name, text)| {
