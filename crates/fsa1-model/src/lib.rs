@@ -59,7 +59,7 @@ pub use render::{
 pub use sample::sample_workbook;
 pub use scope::Scope;
 pub use style::{BlankPaint, CellStyle, DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE, default_style};
-pub use view::{NameView, SheetView, View, ViewScope, view};
+pub use view::{FigureView, NameView, SheetView, View, ViewScope, view};
 pub use workbook::{
     CellSource, Direction, FileEntry, FormulaOutcome, TraceNode, TraceStatus, Workbook,
 };

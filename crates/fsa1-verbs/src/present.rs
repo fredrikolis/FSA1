@@ -3,7 +3,9 @@
 use annotated_tree::{CodebaseMap, DirNode, FileNode, Format as TreeFormat, for_format};
 use comfy_table::presets::ASCII_FULL;
 use comfy_table::{Cell, Table};
-use fsa1_model::{Diagnostic, NameView, Rect, RenderMode, SheetView, TraceNode, View, ViewScope};
+use fsa1_model::{
+    Diagnostic, FigureView, NameView, Rect, RenderMode, SheetView, TraceNode, View, ViewScope,
+};
 
 pub fn table(view: &View) -> String {
     let named = view.sheets.len() > 1;
@@ -23,6 +25,7 @@ pub fn tree(view: &View, cap: u32) -> String {
     let root = match view.scope {
         ViewScope::Region(..) => match view.sheets.first() {
             Some(s) => {
+                // A region is a rectangle of CELLS, so it names no figure.
                 let cells = s.region.map(|r| cells_in(s, r, u32::MAX).0);
                 dir_node(s.name.to_string(), Vec::new(), cells.unwrap_or_default(), 0)
             }
@@ -60,7 +63,19 @@ fn tab_dir(view: &View, sheet: &SheetView, cap: u32) -> DirNode {
         elided = elided.saturating_add(over);
     }
     files.extend(sheet.names.iter().map(name_node));
+    files.extend(sheet.figures.iter().map(figure_node));
     dir_node(sheet.name.to_string(), Vec::new(), files, elided)
+}
+
+/// A cell's line reads what it is then what it came from, and a figure's follows: the mark it draws,
+/// then the ranges it binds. A figure that binds nothing shows the mark and no arrow.
+fn figure_node(f: &FigureView) -> FileNode {
+    let entry = f.name.rsplit_once('/').map_or(f.name.as_str(), |(_, e)| e);
+    let text = match f.binds.as_slice() {
+        [] => f.kind.clone(),
+        binds => format!("{} ← {}", f.kind, binds.join(", ")),
+    };
+    file_node(entry.to_string(), &text)
 }
 
 fn cells_in(sheet: &SheetView, r: Rect, cap: u32) -> (Vec<FileNode>, u32) {
@@ -105,6 +120,14 @@ fn dir_node(name: String, dirs: Vec<DirNode>, files: Vec<FileNode>, elided_files
     }
 }
 
+fn covered(sheet: &SheetView, col: u32, row: u32) -> bool {
+    sheet
+        .figures
+        .iter()
+        .filter_map(|f| f.cover)
+        .any(|rect| rect.contains(col, row))
+}
+
 /// A covered cell is marked in the grid itself, because the terminal is the only place an agent
 /// laying out a sheet ever sees: `fig` where the cell is empty, `fig! ` prefixed where it is not, so
 /// a value an export would hide is distinguishable from blank space the figure merely sits over.
@@ -123,15 +146,13 @@ fn grid_table(sheet: &SheetView) -> String {
         cells.push(Cell::new(&row.row_label));
         for (c, text) in row.cells.iter().enumerate() {
             let (col, row) = (region.min_col + c as u32, region.min_row + r as u32);
-            cells.push(
-                if !sheet.covers.iter().any(|rect| rect.contains(col, row)) {
-                    Cell::new(text)
-                } else if text.is_empty() {
-                    Cell::new("fig")
-                } else {
-                    Cell::new(format!("fig! {text}"))
-                },
-            );
+            cells.push(if !covered(sheet, col, row) {
+                Cell::new(text)
+            } else if text.is_empty() {
+                Cell::new("fig")
+            } else {
+                Cell::new(format!("fig! {text}"))
+            });
         }
         t.add_row(cells);
     }

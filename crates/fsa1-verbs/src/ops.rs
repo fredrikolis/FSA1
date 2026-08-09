@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use fsa1_ingest::{Decomposition, ImportReport};
 use fsa1_model::{
-    Axis, Diagnostic, Direction, Figures, FormulaOutcome, Overlay, Placement, Rect, RenderMode,
-    TraceNode, ViewScope, view,
+    Axis, Diagnostic, Direction, Figure, FigureView, Figures, FormulaOutcome, Overlay, Placement,
+    Rect, RenderMode, TraceNode, ViewScope, view,
 };
 
 use crate::address;
@@ -58,11 +58,8 @@ fn view_at(
         return Err(fail(Kind::Validation, &msg));
     }
     let wb = &resolved.workbook;
-    // Gated on the PRESENTER, not the format: `tree` reaches this same function and draws no figure, so it must not open one, exactly as `eval` and `trace` never do.
-    let (figures, mut notes) = match presenter {
-        Presenter::Table => load_figures(&resolved.root)?,
-        Presenter::Tree => (Figures::default(), Vec::new()),
-    };
+    // `tree` NAMES each figure and the table MARKS the cells it covers, so both presenters open one; `eval` and `trace` reach a different function and still never do.
+    let (figures, mut notes) = load_figures(&resolved.root)?;
     let needs_axes = figures
         .all()
         .any(|(_, f)| matches!(figures.placement(f), Some(Placement::Box { .. })));
@@ -105,8 +102,8 @@ fn view_at(
         ));
     }
 
-    // Where each figure sits, in CELLS, named so the note below reads the rectangle it just built. Only the ASCII table marks: HTML draws the figure itself, and `tree` has no coordinate plane to occlude.
-    let mut placed: Vec<(u32, String, Rect)> = Vec::new();
+    // Where each figure sits, in CELLS, so the note below reads the rectangle it just built. Only the ASCII table MEASURES a cover: HTML draws the figure itself, and `tree` has no coordinate plane to occlude.
+    let mut placed: Vec<(u32, FigureView)> = Vec::new();
     if let (Presenter::Table, Format::Ascii) = (presenter, format) {
         for (s, tab) in wb.sheet_names().iter().enumerate() {
             let s = s as u32;
@@ -125,15 +122,21 @@ fn view_at(
                 },
             );
             for figure in tab_figures {
-                if let Some(placement) = figures.placement(figure) {
-                    placed.push((s, figure.name.clone(), placement.cover(&cols, &rows)));
-                }
+                let cover = figures
+                    .placement(figure)
+                    .map(|placement| placement.cover(&cols, &rows));
+                placed.push((s, figure_view(figure, cover)));
+            }
+        }
+    } else if let Presenter::Tree = presenter {
+        for (s, tab) in wb.sheet_names().iter().enumerate() {
+            for figure in figures.in_tab(tab) {
+                placed.push((s as u32, figure_view(figure, None)));
             }
         }
     }
-    let covers: Vec<(u32, Rect)> = placed.iter().map(|(s, _, rect)| (*s, *rect)).collect();
 
-    let v = view(wb, view_overlay, scope, mode, &covers).map_err(|msg| bad_arg(&msg))?;
+    let v = view(wb, view_overlay, scope, mode, &placed).map_err(|msg| bad_arg(&msg))?;
 
     let empty = v.sheets.len() == 1 && v.sheets[0].grid.is_none();
     if empty {
@@ -165,24 +168,18 @@ fn view_at(
         (Presenter::Table, Format::Ascii) => {
             // ASCII cannot DRAW one, so it names it. An unplaced figure marks nothing and names no range: `pack`'s derived position moves as content grows and is no authored position.
             for sheet in &v.sheets {
-                for figure in figures.in_tab(sheet.name) {
-                    let bindings = match figure.bindings().as_slice() {
+                for figure in &sheet.figures {
+                    let bindings = match figure.binds.as_slice() {
                         [] => "no range".to_string(),
                         bindings => bindings.join(", "),
                     };
                     let name = &figure.name;
-                    notes.push(
-                        match placed
-                            .iter()
-                            .find(|(s, n, _)| *s == sheet.sheet && n == name)
-                        {
-                            Some((_, _, rect)) => format!(
-                                "figure {name} covers {} and binds {bindings}",
-                                rect.label()
-                            ),
-                            None => format!("figure {name} has no placement and binds {bindings}"),
-                        },
-                    );
+                    notes.push(match figure.cover {
+                        Some(rect) => {
+                            format!("figure {name} covers {} and binds {bindings}", rect.label())
+                        }
+                        None => format!("figure {name} has no placement and binds {bindings}"),
+                    });
                 }
             }
             present::table(&v)
@@ -196,6 +193,16 @@ fn view_at(
         (Presenter::Tree, _) => present::tree(&v, if full { u32::MAX } else { TREE_CELL_CAP }),
     };
     Ok(Rendered { text, notes, empty })
+}
+
+/// The two spec readings a view carries, plus the cover only a caller that measured one supplies.
+fn figure_view(figure: &Figure, cover: Option<Rect>) -> FigureView {
+    FigureView {
+        name: figure.name.clone(),
+        kind: figure.kind(),
+        binds: figure.bindings(),
+        cover,
+    }
 }
 
 /// Every parameter `render` has. A struct literal must name every field, so a front end that stops

@@ -16,6 +16,20 @@ use crate::workbook::Workbook;
 /// The top-level key expansion adds, and the one Vega-Lite resolves a `NamedData` against.
 const DATASETS: &str = "datasets";
 
+/// Vega-Lite's own eight spec-kind keys, in the order [`Figure::kind`] reads them.
+const KINDS: [&str; 8] = [
+    "mark", "layer", "facet", "concat", "hconcat", "vconcat", "repeat", "spec",
+];
+
+/// The mark key, named so a reader of [`Figure::kind`] never counts into [`KINDS`] to see which.
+const MARK: &str = KINDS[0];
+
+/// The layer key, likewise; the array's ORDER is load-bearing for the fallback scan alone.
+const LAYER: &str = KINDS[1];
+
+/// What a spec whose kind will not read reports, since naming a mark that is not there would lie.
+const UNKNOWN: &str = "?";
+
 /// One figure: the entry it was read from, and the spec that entry holds.
 #[derive(Clone, Debug)]
 pub struct Figure {
@@ -52,9 +66,6 @@ impl Figure {
     /// it cannot draw. Every Vega-Lite top-level spec carries one of these keys — the grammar's own
     /// set of spec kinds — so requiring one refuses a non-spec without refusing any spec.
     fn states_a_chart(spec: &Json) -> Result<(), &'static str> {
-        const KINDS: [&str; 8] = [
-            "mark", "layer", "facet", "concat", "hconcat", "vconcat", "repeat", "spec",
-        ];
         let Some(root) = spec.as_object() else {
             return Err("is not one JSON object, so it states no Vega-Lite spec");
         };
@@ -75,6 +86,36 @@ impl Figure {
         let mut out = Vec::new();
         collect_bindings(&self.spec, &mut out);
         out
+    }
+
+    /// The spec's OWN word for what it draws, so it greps: a top-level `mark`, bare or as an object
+    /// with a `type`; else a `layer`'s child marks, first-seen and deduped, read ONE level; else the
+    /// spec-kind key itself, which is all recursing further would restate.
+    pub fn kind(&self) -> String {
+        let Some(root) = self.spec.as_object() else {
+            return UNKNOWN.to_string();
+        };
+        if let Some(mark) = root.get(MARK) {
+            return mark_word(mark).unwrap_or(UNKNOWN).to_string();
+        }
+        if let Some(Json::Array(children)) = root.get(LAYER) {
+            let mut marks: Vec<&str> = Vec::new();
+            for word in children.iter().filter_map(|c| c.get(MARK)) {
+                if let Some(w) = mark_word(word)
+                    && !marks.contains(&w)
+                {
+                    marks.push(w);
+                }
+            }
+            if !marks.is_empty() {
+                return format!("{LAYER}({})", marks.join(", "));
+            }
+        }
+        KINDS
+            .iter()
+            .find(|k| root.contains_key(**k))
+            .map_or(UNKNOWN, |k| k)
+            .to_string()
     }
 
     /// The bound spec: the file's own JSON with one `datasets` key added, one entry per binding.
@@ -204,6 +245,14 @@ fn json_value(v: &Value) -> Json {
             .map_or_else(|| Json::String(display_value(v)), Json::Number),
         Value::Text(s) => Json::String(s.clone()),
         Value::Error(_) | Value::Array(..) => Json::String(display_value(v)),
+    }
+}
+
+/// Vega-Lite states a mark either as its name or as an object whose `type` holds it.
+fn mark_word(mark: &Json) -> Option<&str> {
+    match mark {
+        Json::String(s) => Some(s.as_str()),
+        _ => mark.get("type").and_then(Json::as_str),
     }
 }
 
@@ -455,6 +504,28 @@ mod tests {
         .expect("it parses");
         let diags = missing.expand(&wb, 0).expect_err("no such tab");
         assert_eq!(diags[0].code, Code::FigureBinding);
+    }
+
+    /// The kind is the literal the author wrote, whichever form states it; a layer reports its
+    /// children deduped; every other spec kind reports its own key; an unreadable mark reports `?`.
+    #[test]
+    fn the_kind_is_the_specs_own_word_and_a_layer_names_its_children() {
+        for (spec, want) in [
+            (r#"{"mark":"bar"}"#, "bar"),
+            (r#"{"mark":{"type":"bar","point":true}}"#, "bar"),
+            (
+                r#"{"layer":[{"mark":"line"},{"mark":"point"}]}"#,
+                "layer(line, point)",
+            ),
+            (r#"{"layer":[{"mark":"bar"},{"mark":"bar"}]}"#, "layer(bar)"),
+            (r#"{"layer":[{"encoding":{}}]}"#, "layer"),
+            (r#"{"facet":{},"spec":{}}"#, "facet"),
+            (r#"{"vconcat":[]}"#, "vconcat"),
+            (r#"{"mark":42}"#, UNKNOWN),
+        ] {
+            let figure = Figure::parse("Sheet1/f.json", spec).expect("it parses");
+            assert_eq!(figure.kind(), want, "{spec}");
+        }
     }
 
     /// A figure's stem is a NAME, so the loader must not let the defined-name branch claim it.

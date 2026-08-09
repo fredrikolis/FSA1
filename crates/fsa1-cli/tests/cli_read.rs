@@ -648,6 +648,47 @@ fn tree_rejects_the_removed_format_flag_as_an_unknown_flag() {
     assert_eq!(code, 2, "`--format json` is now an unknown flag (exit 2)");
 }
 
+/// `tree` has no coordinate plane to mark, so it NAMES each figure beside the tab's cells and names:
+/// the entry, then the mark it draws and the ranges it binds. A range-form figure keeps its own name,
+/// a layer reports its children, and a figure binding nothing shows the mark and no arrow — there is
+/// no range for one to point at.
+#[test]
+fn tree_names_each_figure_with_the_mark_it_draws_and_the_ranges_it_binds() {
+    let fx = Fixture::new("tree-figures");
+    fx.file("Sheet1", "A1:B3", "1\t2\n3\t4\n5\t6")
+        .file("Sheet2", "A1:A3", "7\n8\n9")
+        .file(
+            "Sheet1",
+            "D2:K17.json",
+            "{\"data\":{\"name\":\"A1:B3\"},\"mark\":\"bar\"}",
+        )
+        .file(
+            "Sheet1",
+            "Chart1.json",
+            "{\"layer\":[{\"data\":{\"name\":\"A1:B3\"},\"mark\":\"line\"},\
+             {\"data\":{\"name\":\"Sheet2!A1:A3\"},\"mark\":\"point\"}]}",
+        )
+        .file("Sheet1", "Bare.json", "{\"mark\":\"point\"}");
+
+    let (code, out) = run(&["tree", fx.path().to_str().unwrap()]);
+    assert_eq!(code, 0, "a workbook holding figures trees clean:\n{out}");
+    assert!(
+        out.contains(&format!(
+            "{}  # bar ← A1:B3",
+            fsa1_model::range_file_name("D2:K17.json")
+        )),
+        "a range-form figure is named by its entry, its mark and its one binding:\n{out}"
+    );
+    assert!(
+        out.contains("Chart1.json  # layer(line, point) ← A1:B3, Sheet2!A1:A3"),
+        "a layer names its child marks and every range it binds, in order:\n{out}"
+    );
+    assert!(
+        out.contains("Bare.json  # point\n"),
+        "a figure that binds nothing shows the mark and no arrow:\n{out}"
+    );
+}
+
 #[test]
 fn accept01_path_tab_renders_the_named_tab() {
     let fx = Fixture::new("a1-pathtab");

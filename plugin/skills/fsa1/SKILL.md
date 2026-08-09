@@ -81,7 +81,9 @@ One table, both paths. Optional arguments are in brackets.
 - `render` draws the scope. Bare `<wb>` draws every tab; `<wb>/<Tab>` one tab; `<wb>/<Tab>/A1:D9` a
   region. Default `combined` shows `value ← =formula`. `ascii` cannot draw a FIGURE, so it marks the
   cells one covers instead — `fig` where the cell is empty, `fig! ` before the cell's own text where
-  it is not — and names each figure's cover and bindings in a note. `tree` marks nothing, and
+  it is not — and names each figure's cover and bindings in a note. `tree` marks no cell but NAMES
+  each figure beside the tab's entries — `Chart1.json  # bar ← A1:B3`, the mark it draws and the
+  ranges it binds — except under a region path, which is a rectangle of cells and lists no figure.
   `format: html` draws the figure itself.
 - `check` lints overlap, dimension mismatch, cycles and broken references. Scope it to a tab or range
   to lint only that.

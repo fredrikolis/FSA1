@@ -1,4 +1,4 @@
-// Concern: resolves a scope to a View, spelling its cells and names from one demand | Non-concern: drawing it (present.rs) | IO: (&Workbook, Option<&Overlay>, ViewScope, RenderMode, covers) -> View
+// Concern: resolves a scope to a View: the cells, names and figures one demand spells | Non-concern: drawing it (present.rs) | IO: (&Workbook, Option<&Overlay>, ViewScope, RenderMode, figures) -> View
 
 use crate::names::{Name, NameScope, NameTarget};
 use crate::overlap::Rect;
@@ -22,6 +22,16 @@ pub struct NameView {
     pub text: String,
 }
 
+/// One figure as a view carries it: what it draws, what it reads, and where it sits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FigureView {
+    pub name: String,
+    pub kind: String,
+    pub binds: Vec<String>,
+    /// `None` where the figure states no placement, and wherever the caller measured none.
+    pub cover: Option<Rect>,
+}
+
 /// `files` is the authored structure a nested presenter groups the grid's cells by; it carries no
 /// content of its own, and a flat presenter ignores it.
 pub struct SheetView<'a> {
@@ -32,9 +42,9 @@ pub struct SheetView<'a> {
     pub region: Option<Rect>,
     pub files: Vec<FileEntry<'a>>,
     pub names: Vec<NameView>,
-    /// The cell rectangles a figure covers on this sheet; a drawer that cannot draw a figure marks
-    /// them instead.
-    pub covers: Vec<Rect>,
+    /// The figures on this sheet; a drawer that cannot draw one MARKS the cells it covers or NAMES
+    /// it.
+    pub figures: Vec<FigureView>,
 }
 
 pub struct View<'a> {
@@ -66,25 +76,25 @@ impl SheetView<'_> {
 
 /// Every coordinate the view shows and every in-scope name's cone accrete into ONE
 /// [`Workbook::values_at`] demand, so no two parts of a view can disagree about a cell. Over
-/// [`MAX_VIEWPORT_CELLS`] per sheet is a refusal, never a crash. A `covers` rectangle widens any
+/// [`MAX_VIEWPORT_CELLS`] per sheet is a refusal, never a crash. A figure's `cover` widens any
 /// viewport but a [`ViewScope::Region`]'s while that widening still fits: no figure costs the grid.
 pub fn view<'a>(
     wb: &'a Workbook,
     overlay: Option<&Overlay>,
     scope: ViewScope,
     mode: RenderMode,
-    covers: &[(u32, Rect)],
+    figures: &[(u32, FigureView)],
 ) -> Result<View<'a>, String> {
     let sheets: Vec<u32> = match scope {
         ViewScope::Workbook => (0..wb.sheet_names().len() as u32).collect(),
         ViewScope::Tab(s) | ViewScope::Region(s, _) => vec![s],
     };
-    let mut viewports: Vec<(u32, Option<Rect>, Vec<Rect>)> = Vec::with_capacity(sheets.len());
+    let mut viewports: Vec<(u32, Option<Rect>, Vec<FigureView>)> = Vec::with_capacity(sheets.len());
     for &s in &sheets {
-        let mine: Vec<Rect> = covers
+        let mine: Vec<FigureView> = figures
             .iter()
             .filter(|(sheet, _)| *sheet == s)
-            .map(|(_, rect)| *rect)
+            .map(|(_, figure)| figure.clone())
             .collect();
         let mut vp = match scope {
             ViewScope::Region(_, rect) => Some(rect),
@@ -101,9 +111,9 @@ pub fn view<'a>(
             }
         }
         if !matches!(scope, ViewScope::Region(..)) {
-            for rect in &mine {
+            for rect in mine.iter().filter_map(|f| f.cover) {
                 // A figure past the content is worth reaching for; one a sheet away is not worth the whole grid, and either way the cells of it inside the viewport still mark.
-                let widened = Rect::union(vp, Some(*rect));
+                let widened = Rect::union(vp, Some(rect));
                 if widened.is_none_or(|r| viewport_cell_count(r) <= MAX_VIEWPORT_CELLS) {
                     vp = widened;
                 }
@@ -155,7 +165,7 @@ pub fn view<'a>(
             region: vp,
             files: wb.tab_files(s).unwrap_or_default(),
             names: names.iter().map(|n| name_view(wb, s, n, mode)).collect(),
-            covers: mine,
+            figures: mine,
         })
         .collect();
 
@@ -216,5 +226,51 @@ fn name_view(wb: &Workbook, sheet: u32, name: &Name, mode: RenderMode) -> NameVi
     NameView {
         ident: name.ident.clone(),
         text,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn figure(cover: Option<Rect>) -> FigureView {
+        FigureView {
+            name: "Sheet1/f.json".to_string(),
+            kind: "bar".to_string(),
+            binds: Vec::new(),
+            cover,
+        }
+    }
+
+    fn region(cover: Option<Rect>) -> Option<Rect> {
+        let wb = Workbook::from_tabs(&[("Sheet1", &[("A1", "1")])]).expect("the tab loads");
+        let v = view(
+            &wb,
+            None,
+            ViewScope::Tab(0),
+            RenderMode::Values,
+            &[(0, figure(cover))],
+        )
+        .expect("it resolves");
+        v.sheets[0].region
+    }
+
+    /// A figure the caller measured no cover for widens nothing; one that has a cover widens to it.
+    #[test]
+    fn a_figure_without_a_cover_widens_no_viewport_and_one_with_a_cover_widens_to_it() {
+        let content = Rect {
+            min_col: 0,
+            min_row: 0,
+            max_col: 0,
+            max_row: 0,
+        };
+        assert_eq!(region(None), Some(content));
+        let cover = Rect {
+            min_col: 3,
+            min_row: 1,
+            max_col: 10,
+            max_row: 16,
+        };
+        assert_eq!(region(Some(cover)), Rect::union(Some(content), Some(cover)));
     }
 }

@@ -117,9 +117,12 @@ COMMANDS  (the tab and A1 cell/range are PART OF THE PATH: <wb>[/<tab>[/<A1>]])
                                           (unqualified refs bind to the path tab, else the first tab)
   fsa1-cli trace  <wb>/<tab>/<A1> [--dependents]   a cell's upstream deps / downstream consumers
   fsa1-cli tree   <path> [--mode combined|values|functions]   the whole workbook's structure (every
-                                          tab/cell/name) as a nested view; default COMBINED (value +
-                                          source); a wb/Tab path roots it at one tab, and a wb/Tab/A1:B9
-                                          path shows that viewport's cells in full (cap overridden)
+                                          tab/cell/name/figure) as a nested view; default COMBINED
+                                          (value + source); each figure is named with the mark it draws
+                                          and the ranges it binds, `bar ← A1:B3`; a wb/Tab path roots it
+                                          at one tab, and a wb/Tab/A1:B9 path shows that viewport's
+                                          cells in full (cap overridden) and NO figure — a region is
+                                          a rectangle of cells
   fsa1-cli sample <dir>                 write a live tutorial workbook to play with
   fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]   read a .ods/.xlsx into a workbook
                                           (<dst> derives to ./<src-stem>/; --strict refuses a file the
