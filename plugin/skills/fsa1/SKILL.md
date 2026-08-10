@@ -84,7 +84,9 @@ One table, both paths. Optional arguments are in brackets.
   figure's cover reaches into becomes ONE block labelled over two lines, `D2:F6.json` then
   `bar←A1:B3`; every other figure — that one included once another cover intersects it — marks each
   covered cell, `fig` where the cell is empty, `fig! ` before the cell's own text where not. Either
-  way it names each figure's cover and bindings in a note. `tree` marks no cell but NAMES each
+  way it names each figure's cover and bindings in a note, for the figures the path READS: under a
+  region path a `<name>.json` is never read and a `<range>.json` only where its range meets the
+  region. `tree` marks no cell but NAMES each
   figure beside the tab's entries — `Chart1.json  # bar ← A1:B3`, the mark it draws and the
   ranges it binds — except under a region path, which is a rectangle of cells and lists no figure.
   `format: html` draws the figure itself.

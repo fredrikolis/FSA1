@@ -58,15 +58,30 @@ fn view_at(
         return Err(fail(Kind::Validation, &msg));
     }
     let wb = &resolved.workbook;
+    let scope = match (resolved.tab, resolved.region()) {
+        (tab, Some(rect)) => ViewScope::Region(tab.unwrap_or(0), rect),
+        (Some(sheet), None) => ViewScope::Tab(sheet),
+        (None, None) => ViewScope::Workbook,
+    };
+    // The same demand the path states, in the loaders' vocabulary: a file whose NAME the path never meets is not opened, so it neither draws, nor is named, nor refuses the render.
+    let demand = fsa1_model::Scope::new(
+        resolved
+            .tab
+            .and_then(|sheet| wb.sheet_name(sheet))
+            .map(str::to_string),
+        resolved.region(),
+    );
     // `tree` NAMES each figure and the table MARKS the cells it covers, so both presenters open one; `eval` and `trace` reach a different function and still never do.
-    let (figures, mut notes) = load_figures(&resolved.root)?;
+    let (figures, mut notes) = load_figures_scoped(&resolved.root, &demand)?;
     let needs_axes = figures
         .all()
         .any(|(_, f)| matches!(figures.placement(f), Some(Placement::Box { .. })));
     // HTML DRAWS presentation; ASCII draws none and opens the sidecar only to MEASURE, which a cover stated in CELLS does not need.
     let overlay = match (format, presenter) {
-        (Format::Html, _) => Some(load_overlay(&resolved.root)?),
-        (Format::Ascii, Presenter::Table) if needs_axes => Some(load_overlay(&resolved.root)?),
+        (Format::Html, _) => Some(load_overlay_scoped(&resolved.root, &demand)?),
+        (Format::Ascii, Presenter::Table) if needs_axes => {
+            Some(load_overlay_scoped(&resolved.root, &demand)?)
+        }
         (Format::Ascii, _) => None,
     };
     // A page draws VALUES and shows a formula in its bar, so a `--mode` has nothing left to pick.
@@ -77,11 +92,6 @@ fn view_at(
             return Err(fail(Kind::Validation, msg));
         }
         (Format::Ascii, mode) => mode.unwrap_or(RenderMode::Combined),
-    };
-    let scope = match (resolved.tab, resolved.region()) {
-        (tab, Some(rect)) => ViewScope::Region(tab.unwrap_or(0), rect),
-        (Some(sheet), None) => ViewScope::Tab(sheet),
-        (None, None) => ViewScope::Workbook,
     };
 
     // ONE answer to "the tab's used region" per carrier, read by both the note below and the viewport `view` builds: HTML DRAWS a style so its takes in every stated region, ASCII draws none so its is CONTENT — opening the overlay to MEASURE a cover makes the table no drawer of presentation.
@@ -282,11 +292,11 @@ pub fn check(args: CheckArgs<'_>) -> Result<Vec<Diagnostic>, Refusal> {
         }
         // Best-effort: a bare-filename loc carries no tab, so a scope cannot exclude it on that axis, and with no `Workbook` to resolve against a binding is graded on its SYNTAX and no further.
         Ok(Err(load_diags)) => {
-            let (sidecar, _) = sidecar_diags(&decomposed.root)?;
-            let (figure, _) = figure_diags(&decomposed.root, None)?;
+            let (sidecar, _) = sidecar_diags(&decomposed.root, &scope)?;
+            let (figure, _) = figure_diags(&decomposed.root, None, &scope)?;
             Ok(in_scope(load_diags, &scope)
-                .chain(in_scope(sidecar, &scope))
-                .chain(in_scope(figure, &scope))
+                .chain(sidecar)
+                .chain(figure)
                 .collect())
         }
         Ok(Ok(wb)) => {
@@ -301,14 +311,14 @@ pub fn check(args: CheckArgs<'_>) -> Result<Vec<Diagnostic>, Refusal> {
             }
             // The values first and the sidecars after, the order this verb reports on either branch.
             let mut found = wb.lint_scoped(&scope);
-            let (sidecar, overlay) = sidecar_diags(&decomposed.root)?;
-            found.extend(in_scope(sidecar, &scope));
-            let (figure, figures) = figure_diags(&decomposed.root, Some(&wb))?;
-            found.extend(in_scope(figure, &scope));
+            let (sidecar, overlay) = sidecar_diags(&decomposed.root, &scope)?;
+            found.extend(sidecar);
+            let (figure, figures) = figure_diags(&decomposed.root, Some(&wb), &scope)?;
+            found.extend(figure);
             // A sidecar that would not parse leaves no overlay to grade, but it stops only ITS half — the figure half is asked here whatever the presentation did, and the sidecar's own fault is already in the table above.
             if args.format.is_some() {
                 let (_, not_drawn) = crate::charts::charts(&wb, &figures);
-                found.extend(in_scope(losses(&wb, overlay.as_ref(), &not_drawn), &scope));
+                found.extend(losses(&wb, overlay.as_ref(), &not_drawn));
             }
             Ok(found)
         }
@@ -511,7 +521,13 @@ fn pack_kind(e: &fsa1_xlsx::ExportError) -> Kind {
 /// The SECOND load, off the same directory: a verb that draws presentation asks for it, and every
 /// other one never opens a sidecar at all.
 pub fn load_overlay(path: &Path) -> Result<Overlay, Refusal> {
-    match Overlay::load_dir(path) {
+    load_overlay_scoped(path, &fsa1_model::Scope::unscoped())
+}
+
+/// [`load_overlay`] under a demand: a sidecar the demand does not name is neither applied nor able
+/// to refuse the render, which is what an out-of-scope fault costs today.
+pub fn load_overlay_scoped(path: &Path, demand: &fsa1_model::Scope) -> Result<Overlay, Refusal> {
+    match Overlay::load_dir_scoped(path, demand) {
         Err(e) => {
             let msg = format!("cannot read {:?}: {e}", path.display());
             Err(fail(Kind::Io, &msg))
@@ -526,7 +542,15 @@ pub fn load_overlay(path: &Path) -> Result<Overlay, Refusal> {
 /// figure is ADDITIVE: a sidecar that will not parse changes what every cell wears, while a figure
 /// that will not parse costs the document that figure and nothing else. `check` grades one.
 pub fn load_figures(path: &Path) -> Result<(Figures, Vec<String>), Refusal> {
-    match Figures::load_dir(path) {
+    load_figures_scoped(path, &fsa1_model::Scope::unscoped())
+}
+
+/// [`load_figures`] under a demand: a figure the demand does not name is neither drawn nor noted.
+pub fn load_figures_scoped(
+    path: &Path,
+    demand: &fsa1_model::Scope,
+) -> Result<(Figures, Vec<String>), Refusal> {
+    match Figures::load_dir_scoped(path, demand) {
         Err(e) => {
             let msg = format!("cannot read {:?}: {e}", path.display());
             Err(fail(Kind::Io, &msg))
@@ -558,8 +582,11 @@ pub fn load(path: &Path) -> Result<fsa1_model::Workbook, Refusal> {
 /// to stop. A directory it cannot READ is neither: a pass that could not run reports no faults and
 /// must not be mistaken for one that found none. What LOADED rides out beside them, because the
 /// export question is answered off exactly this read and no second one.
-fn sidecar_diags(root: &Path) -> Result<(Vec<Diagnostic>, Option<Overlay>), Refusal> {
-    match Overlay::load_dir(root) {
+fn sidecar_diags(
+    root: &Path,
+    demand: &fsa1_model::Scope,
+) -> Result<(Vec<Diagnostic>, Option<Overlay>), Refusal> {
+    match Overlay::load_dir_scoped(root, demand) {
         Err(e) => {
             let msg = format!("cannot read {:?}: {e}", root.display());
             Err(fail(Kind::Io, &msg))
@@ -576,8 +603,9 @@ fn sidecar_diags(root: &Path) -> Result<(Vec<Diagnostic>, Option<Overlay>), Refu
 fn figure_diags(
     root: &Path,
     wb: Option<&fsa1_model::Workbook>,
+    demand: &fsa1_model::Scope,
 ) -> Result<(Vec<Diagnostic>, Figures), Refusal> {
-    let figures = match Figures::load_dir(root) {
+    let figures = match Figures::load_dir_scoped(root, demand) {
         Err(e) => {
             let msg = format!("cannot read {:?}: {e}", root.display());
             return Err(fail(Kind::Io, &msg));
@@ -606,6 +634,6 @@ fn in_scope<'a>(
 ) -> impl Iterator<Item = fsa1_model::Diagnostic> + 'a {
     diags.into_iter().filter(move |d| {
         let (loc_tab, region) = fsa1_model::scope::loc_target(&d.loc);
-        scope.includes(loc_tab, region)
+        scope.wants(loc_tab, region)
     })
 }

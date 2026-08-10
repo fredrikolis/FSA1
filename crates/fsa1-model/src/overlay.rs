@@ -1,4 +1,4 @@
-// Concern: holds a tab's default layer and its blocks, and answers what a coordinate or axis wears | Non-concern: a rule's grammar (presentation.rs), a figure's sidecar (figures.rs) | IO: dir -> Overlay
+// Concern: decides which sidecars a demand admits and what a coordinate or axis wears, holding its layer and blocks | Non-concern: a rule's grammar, a figure's sidecar | IO: (dir, demand) -> Overlay
 //! Presentation is off the engine's load path: a [`crate::Workbook`] cannot reach a sidecar, so a
 //! value derives from content and references alone (VAL1) as a SHAPE rather than an assertion. The
 //! resolvers take the workbook because the gap rule is the grid's: a coordinate no block reaches but
@@ -11,9 +11,10 @@ use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::filename::{parse_filename, parse_root};
 use crate::geometry::{AxisRun, declared_heights, declared_widths};
-use crate::names::{CssEntry, css_entry, figure_stems, is_tab_layer, presentation_stem};
+use crate::names::{CssEntry, css_entry, figure_stems};
 use crate::overlap::Rect;
 use crate::presentation::{Presentation, parse_rules_located, rules_of};
+use crate::scope::Scope;
 use crate::sidecar_scope::{
     Sidecar, SidecarScope, area, check_scope_nesting, check_tab_layer, scopes,
 };
@@ -39,17 +40,30 @@ impl Overlay {
     /// The outer `io::Result` reports a filesystem failure and the inner one the sidecars' own
     /// refusals, exactly as [`Workbook::load_dir`] splits them.
     pub fn load_dir(root: &Path) -> std::io::Result<Result<Overlay, Vec<Diagnostic>>> {
+        Overlay::load_dir_scoped(root, &Scope::unscoped())
+    }
+
+    /// [`Overlay::load_dir`] under a demand: a tab or a sidecar root the demand does not want is
+    /// never OPENED, so a fault in it is neither applied nor graded. What a NAME answers — the
+    /// content rect, and the roots the relational checks run over — stays total over the listing.
+    pub fn load_dir_scoped(
+        root: &Path,
+        demand: &Scope,
+    ) -> std::io::Result<Result<Overlay, Vec<Diagnostic>>> {
         let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
         // Filename order is the order `Workbook::load_dir` gives its tabs, so a sheet index means the same on both sides without either holding the other.
         entries.sort_by_key(|e| e.file_name());
         let mut tabs: Vec<TabInput> = Vec::new();
         for entry in entries {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if Workbook::is_reserved_entry(&name) || !entry.file_type()?.is_dir() {
+            if Workbook::is_reserved_entry(&name)
+                || !entry.file_type()?.is_dir()
+                || !demand.wants(Some(&name), None)
+            {
                 continue;
             }
-            let (sidecars, content) = read_sidecar_dir(&entry.path())?;
-            tabs.push((name, sidecars, content));
+            let (layer, content, roots) = read_sidecar_dir(&entry.path(), &name, demand)?;
+            tabs.push((name, layer, content, roots));
         }
         Ok(build(tabs))
     }
@@ -60,21 +74,29 @@ impl Overlay {
         let owned = tabs
             .iter()
             .map(|(tab, files)| {
-                let mut sidecars = Vec::new();
+                let mut layer = None;
+                let mut roots = Vec::new();
                 let mut content = None;
                 // The whole tab's figures first: a `.css` beside `<stem>.json` is that figure's placement whatever its stem spells, and the listing is in no useful order.
                 let figures = figure_stems(files.iter().map(|(name, _)| *name));
                 for (name, text) in *files {
                     // An `Unrooted` is dropped here and in `read_sidecar_dir`, so it never reaches `read_sidecars` and never becomes a block: `figures.rs` alone judges it.
                     match css_entry(name, &figures) {
-                        Some(CssEntry::TabLayer | CssEntry::Root(_)) => {
-                            sidecars.push(((*name).to_string(), (*text).to_string()));
+                        Some(CssEntry::TabLayer) => {
+                            layer = Some((format!("{tab}/{name}"), (*text).to_string()));
+                        }
+                        Some(CssEntry::Root(stem)) => {
+                            roots.push((
+                                format!("{tab}/{name}"),
+                                stem.to_string(),
+                                Some((*text).to_string()),
+                            ));
                         }
                         Some(CssEntry::Unrooted(_)) => {}
                         None => content = Rect::union(content, range_of(name)),
                     }
                 }
-                ((*tab).to_string(), sidecars, content)
+                ((*tab).to_string(), layer, content, roots)
             })
             .collect();
         build(owned)
@@ -208,22 +230,27 @@ fn axis_size<T: Copy>(runs: &[AxisRun<T>], index: u32) -> Option<T> {
         .map(|r| r.size)
 }
 
-/// A tab's presentation entries, and how far its range files reach.
-type TabInput = (String, Vec<(String, String)>, Option<Rect>);
+/// One rooted sidecar a tab NAMES: its located `<tab>/<name>`, its stem, and its bytes where the
+/// demand admitted it — `None` for a root that was named but never opened.
+type RootEntry = (String, String, Option<String>);
 
-/// What one tab directory yields: its presentation entries, and its content rect.
-type TabEntries = (Vec<(String, String)>, Option<Rect>);
+/// A tab's tab-layer sidecar where it holds one — located and read — how far its range files reach,
+/// and every rooted sidecar it names, read or not, because a root is a fact of the name.
+type TabInput = (
+    String,
+    Option<(String, String)>,
+    Option<Rect>,
+    Vec<RootEntry>,
+);
+
+/// What one tab directory yields: its tab layer, its content rect, and its rooted sidecars.
+type TabEntries = (Option<(String, String)>, Option<Rect>, Vec<RootEntry>);
 
 fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
     let mut diags: Vec<Diagnostic> = Vec::new();
     let mut out = BTreeMap::new();
-    for (tab, entries, content) in tabs {
-        let (layer, sidecars): (Vec<_>, Vec<_>) = entries
-            .into_iter()
-            // The layer is the SUFFIX alone, so it needs no tab: only the two callers above, which have already dropped every `Unrooted`, separate a root from a placement.
-            .partition(|(name, _)| is_tab_layer(name));
-        let read = layer.into_iter().next().and_then(|(name, text)| {
-            let file = format!("{tab}/{name}");
+    for (tab, layer, content, entries) in tabs {
+        let read = layer.and_then(|(file, text)| {
             let Some(root) = content else {
                 diags.push(Diagnostic::new(
                     Code::PresentationSelector,
@@ -242,11 +269,17 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
                 }
             }
         });
-        let blocks = read_sidecars(&tab, sidecars, content, &mut diags);
-        check_scope_nesting(&blocks, &mut diags);
+        let roots = tab_roots(&tab, entries, content, &mut diags);
+        // What the relational checks and the tab-layer gate answer is the tab's NAMED roots, bytes or none, so they are handed the pairs without them.
+        let named: Vec<(String, Rect)> = roots
+            .iter()
+            .map(|(file, root, _)| (file.clone(), *root))
+            .collect();
+        check_scope_nesting(&named, &mut diags);
+        let blocks = read_sidecars(roots, &mut diags);
         // The layer's rules are judged BEFORE they are stripped of their positions, so a refusal on one lands on the line the author wrote it.
         let default = read.map(|(root, file, text, read)| {
-            if !blocks.is_empty() {
+            if !named.is_empty() {
                 check_tab_layer(&file, &read.rules, &mut diags);
             }
             Sidecar {
@@ -267,8 +300,12 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
 }
 
 /// Sorted, so two sidecars of equal area are cascaded in one order whatever the directory yields.
-fn read_sidecar_dir(dir: &Path) -> std::io::Result<TabEntries> {
-    let mut out = Vec::new();
+/// The tab layer covers the tab by definition and is read whatever the demand states; a rooted
+/// sidecar states its extent in its NAME, so the demand answers it before the file is opened. A stem
+/// that will not parse states no extent to be excluded by, so it is read and graded.
+fn read_sidecar_dir(dir: &Path, tab: &str, demand: &Scope) -> std::io::Result<TabEntries> {
+    let mut layer = None;
+    let mut roots = Vec::new();
     let mut content = None;
     let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(|e| e.file_name());
@@ -283,14 +320,26 @@ fn read_sidecar_dir(dir: &Path) -> std::io::Result<TabEntries> {
     let figures = figure_stems(files.iter().map(|(name, _)| name.as_str()));
     for (name, path) in files {
         match css_entry(&name, &figures) {
-            Some(CssEntry::TabLayer | CssEntry::Root(_)) => {
-                out.push((name, std::fs::read_to_string(path)?));
+            // The located name is spelled HERE and nowhere else, so the root a check names and the bytes it is graded on cannot be keyed apart.
+            Some(CssEntry::TabLayer) => {
+                layer = Some((format!("{tab}/{name}"), std::fs::read_to_string(path)?));
+            }
+            Some(CssEntry::Root(stem)) => {
+                let wanted = match parse_root(stem) {
+                    Ok(root) => demand.wants_root(Some(tab), root),
+                    Err(_) => true,
+                };
+                let text = match wanted {
+                    true => Some(std::fs::read_to_string(path)?),
+                    false => None,
+                };
+                roots.push((format!("{tab}/{name}"), stem.to_string(), text));
             }
             Some(CssEntry::Unrooted(_)) => {}
             None => content = Rect::union(content, range_of(&name)),
         }
     }
-    Ok((out, content))
+    Ok((layer, content, roots))
 }
 
 /// How far a tab's CONTENT reaches, read off the range filenames alone. A name the parser rejects
@@ -301,44 +350,31 @@ fn range_of(name: &str) -> Option<Rect> {
         .map(|parsed| parsed.region)
 }
 
-/// The tab's sidecars, read against the root each is NAMED for, then laid in cascade order: widest
-/// root first so the narrowest reaching a coordinate is the last layered over it, ties settled by
-/// canonical filename. Total over distinct roots, so every coordinate has exactly one winner.
-fn read_sidecars(
+/// Every root the tab NAMES, in cascade order: widest first so the narrowest reaching a coordinate is
+/// the last layered over it, ties settled by canonical spelling. Total over the stem listing, read or
+/// not — a root is a fact of the filename, so the relational checks over it cost no read.
+fn tab_roots(
     tab: &str,
-    sidecars: Vec<(String, String)>,
+    entries: Vec<RootEntry>,
     content: Option<Rect>,
     diags: &mut Vec<Diagnostic>,
-) -> Vec<Sidecar> {
-    let mut read: Vec<(String, Sidecar)> = Vec::new();
-    for (name, text) in sidecars {
-        let stem = presentation_stem(&name).expect("the classifier admitted only sidecars");
-        let located = format!("{tab}/{name}");
-        match parse_root(stem) {
+) -> Vec<(String, Rect, Option<String>)> {
+    // Keyed by the RESOLVED region: contention is settled there, so two names reaching one region are what cannot be ordered.
+    let mut roots: Vec<(String, String, Rect, Option<String>)> = Vec::new();
+    for (located, stem, text) in entries {
+        match parse_root(&stem) {
             // An open root clamps to the tab's content, so a tab stating none reaches nothing: a no-op, never a refusal.
-            Ok(root) => match root.resolve(content) {
-                None => continue,
-                Some(region) => match parse_rules_located(&located, region, &text) {
-                    // Keyed by the RESOLVED region: contention is settled there, so two names reaching one region are what cannot be ordered.
-                    Ok(parsed) => read.push((
-                        region.label(),
-                        Sidecar {
-                            root: region,
-                            file: located,
-                            text,
-                            presentation: rules_of(parsed.rules),
-                            uncarried: parsed.uncarried,
-                        },
-                    )),
-                    Err(d) => diags.extend(d),
-                },
-            },
+            Ok(root) => {
+                if let Some(region) = root.resolve(content) {
+                    roots.push((region.label(), located, region, text));
+                }
+            }
             Err(d) => diags.push(Diagnostic::new(d.code, Loc::file(&located), d.message)),
         }
     }
     // Two spellings of one root canonicalize alike, so no order separates them. Refused, not ordered.
     let mut seen: Vec<&String> = Vec::new();
-    for (key, _) in &read {
+    for (key, _, _, _) in &roots {
         if seen.contains(&key) {
             diags.push(Diagnostic::new(
                 Code::DuplicateSidecarRoot,
@@ -351,12 +387,39 @@ fn read_sidecars(
         }
         seen.push(key);
     }
-    read.sort_by(|(a_key, a), (b_key, b)| {
-        area(b.root)
-            .cmp(&area(a.root))
-            .then_with(|| a_key.cmp(b_key))
+    roots.sort_by(|(a_key, _, a, _), (b_key, _, b, _)| {
+        area(*b).cmp(&area(*a)).then_with(|| a_key.cmp(b_key))
     });
-    read.into_iter().map(|(_, sidecar)| sidecar).collect()
+    roots
+        .into_iter()
+        .map(|(_, located, region, text)| (located, region, text))
+        .collect()
+}
+
+/// The sidecars actually READ, parsed against the root their name states and laid in the cascade
+/// order [`tab_roots`] already settled. A root the demand excluded carries no text and becomes no
+/// block: it is unapplied and ungraded alike.
+fn read_sidecars(
+    roots: Vec<(String, Rect, Option<String>)>,
+    diags: &mut Vec<Diagnostic>,
+) -> Vec<Sidecar> {
+    let mut blocks = Vec::new();
+    for (located, region, text) in roots
+        .into_iter()
+        .filter_map(|(located, region, text)| text.map(|text| (located, region, text)))
+    {
+        match parse_rules_located(&located, region, &text) {
+            Ok(parsed) => blocks.push(Sidecar {
+                root: region,
+                file: located,
+                text,
+                presentation: rules_of(parsed.rules),
+                uncarried: parsed.uncarried,
+            }),
+            Err(d) => diags.extend(d),
+        }
+    }
+    blocks
 }
 
 #[cfg(test)]
@@ -619,6 +682,40 @@ mod tests {
             Some(CellStyle::default()),
             "A1 is covered by its range file and by nothing else",
         );
+    }
+
+    /// Decision 6: whether two roots cross is answerable from the two NAMES, so a demand that reads
+    /// neither file still reports it. Narrowing this would move a sidecar's region under a scope.
+    #[test]
+    fn two_crossing_roots_report_under_a_demand_that_reads_neither() {
+        let dir =
+            std::env::temp_dir().join(format!("fsa1-overlay-{}-crossing", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let tab = dir.join("Sheet1");
+        std::fs::create_dir_all(&tab).expect("a tab");
+        std::fs::write(tab.join("A1:D4"), "1\t2\t3\t4\n".repeat(4).trim_end()).expect("a grid");
+        for name in ["A1:C3.css", "B2:D4.css"] {
+            std::fs::write(tab.join(name), "  fsa1-cell { color: #3f0421 }\n").expect("a sidecar");
+        }
+        let demand = Scope::new(
+            Some("Sheet1".to_string()),
+            Some(Rect {
+                min_col: 7,
+                min_row: 9,
+                max_col: 7,
+                max_row: 14,
+            }),
+        );
+        let diags = Overlay::load_dir_scoped(&dir, &demand)
+            .expect("the tree is readable")
+            .expect_err("the crossing is still refused");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            diags.iter().map(|d| d.code).collect::<Vec<_>>(),
+            vec![Code::SidecarScopeCrossing],
+            "{diags:?}"
+        );
+        assert_eq!(diags[0].loc.to_string(), "Sheet1/B2:D4.css");
     }
 
     /// A block whose root no file covers is content of its own: it widens `stated_region`, and

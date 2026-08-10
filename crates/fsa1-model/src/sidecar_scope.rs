@@ -1,4 +1,4 @@
-// Concern: a tab's sidecars as scopes: the shapes it may hold, and each one's region and bytes | Non-concern: what a coordinate wears (overlay.rs), a rule's grammar | IO: (sidecars) -> Scopes
+// Concern: a tab's sidecars as scopes: their shape, their bytes, whether their NAMED roots may coexist | Non-concern: a coordinate's style, a rule's grammar | IO: (sidecars, roots) -> scopes, diags
 
 use crate::declaration::Declaration;
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -62,17 +62,17 @@ pub(crate) fn area(root: Rect) -> u64 {
 /// Decision 3: the roots of one tab are DISJOINT, or nest with the inner one a SINGLE cell. Any
 /// other overlap has no one subtree of the outer to be applied over — its cells are parts of several
 /// of the outer's rows — so it is refused on the LATER of the pair, which the cascade order names.
-/// An identical root is [`Code::DuplicateSidecarRoot`]'s and is passed over here.
-pub(crate) fn check_scope_nesting(blocks: &[Sidecar], diags: &mut Vec<Diagnostic>) {
-    for (index, block) in blocks.iter().enumerate() {
-        for outer in &blocks[..index] {
-            let (outer, root) = (outer.root, block.root);
+/// Every root the tab NAMES is graded, read or not; an identical pair is [`Code::DuplicateSidecarRoot`]'s.
+pub(crate) fn check_scope_nesting(roots: &[(String, Rect)], diags: &mut Vec<Diagnostic>) {
+    for (index, (file, root)) in roots.iter().enumerate() {
+        for (_, outer) in &roots[..index] {
+            let (outer, root) = (*outer, *root);
             if outer == root || nests(root, outer) || root.intersect(&outer).is_none() {
                 continue;
             }
             diags.push(Diagnostic::new(
                 Code::SidecarScopeCrossing,
-                Loc::file(&block.file),
+                Loc::file(file),
                 format!(
                     "{} and {} claim overlapping cells and neither is one cell inside the other; a \
                      scope is one region of the sheet -- nest a single cell, or split one",

@@ -998,6 +998,9 @@ OUTPUT:
     figure <tab>/<name>.json covers <A1 range> and binds <ranges>   (a placed figure)
     figure <tab>/<name>.json has no placement and binds <ranges>    (no <name>.css beside it)
   `tree` marks nothing (it has no coordinate plane), and --format html draws the figure itself.
+  A REGION in the path opens only the files whose NAME meets it, so a <name>.json figure — which
+  states its placement in <name>.css rather than its name — is neither drawn nor named there (rename
+  it <range>.json to make it participate), and a sidecar meets the region by sharing a column or row.
   --format html emits ONE standalone, INTERACTIVE HTML document on stdout instead (redirect it to a
   file): a grid of elements per in-scope tab, with the same header row and gutter as <fsa1-head>, that
   carries each sidecar's own CSS unchanged in a scoped, layered <style>. Its script drives the formula
@@ -1039,7 +1042,10 @@ DESCRIPTION:
   lets an agent validate just the cells IT authored on an import that carries pre-existing (GRID6) error
   cells elsewhere. A file-level diagnostic (no single cell, e.g. a whole-tab overlap) is reported
   whenever its tab is in scope. An unscoped check (a bare <wb> path) is the whole workbook — and a
-  workbook that will not load is itself the failure (exit 3), scoped or not.
+  workbook that will not load is itself the failure (exit 3), scoped or not. A REGION in the path
+  also narrows what is READ, so what it never opens it never grades: a <name>.json figure is out of
+  every region scope (rename it <range>.json to make it participate), and a sidecar is in one when
+  its name shares a column or a row with the region — `A100:A200.css` sizes column A of `A1:B5`.
 
 ARGUMENTS:
   <path>            (required) <wb>[/<tab>[/<A1>]] — the workbook, optionally narrowed to a tab/region.

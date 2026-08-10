@@ -662,7 +662,7 @@ impl Workbook {
             .into_iter()
             .filter(|(sheet, d)| {
                 let (_loc_tab, region) = crate::scope::loc_target(&d.loc);
-                scope.includes(Some(&self.tab_name(*sheet)), region)
+                scope.wants(Some(&self.tab_name(*sheet)), region)
             })
             .map(|(_, d)| d)
             .collect()

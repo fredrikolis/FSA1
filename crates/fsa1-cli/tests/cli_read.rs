@@ -1,4 +1,4 @@
-// Concern: locks the render/check/eval/trace/tree argv dispatch, stdout and exit codes | Non-concern: the spreadsheet logic beneath it | IO: spawns the binary -> stdout + exit status
+// Concern: locks the render/check/eval/trace/tree argv dispatch, stdout, stderr and exit codes | Non-concern: the spreadsheet logic beneath it | IO: spawns the binary -> stdout + stderr + exit status
 
 mod common;
 
@@ -274,7 +274,9 @@ fn a_scope_filters_a_tab_qualified_sidecar_or_figure_loc() {
         );
     for (scope, want) in [
         ("Sheet1/H3", 0),
-        ("Sheet1/H1:H5", 0),
+        // `A1:B2.css` sizes rows 1-2, which this demand shows, so it is read and graded.
+        ("Sheet1/H1:H5", 3),
+        ("Sheet1/H10:H15", 0),
         ("Sheet1/A1:B2", 3),
         ("Sheet1/B2", 3),
     ] {
@@ -306,6 +308,109 @@ fn a_scope_filters_a_tab_qualified_sidecar_or_figure_loc() {
     let (code, out) = run(&["check", &at(&figure, "Sheet1")]);
     assert_eq!(code, 3, "the figure's tab is in scope:\n{out}");
     assert!(out.contains("figure-syntax"), "in scope:\n{out}");
+}
+
+/// A region in the path is a DEMAND, not a filter on findings: the two broken files it never names
+/// are never opened, so neither refuses the render nor is graded. The same tab unscoped reports both.
+#[test]
+fn a_region_demand_neither_opens_nor_grades_the_files_it_does_not_name() {
+    let fx = Fixture::new("scope-demand-unread");
+    fx.file("Sheet1", "A1:B2", "1\t2\n3\t4")
+        .file("Sheet1", "H10:H19.css", "td { color:: }")
+        .file("Sheet1", "Chart1.json", "{");
+
+    let (code, out) = run(&["check", &at(&fx, "Sheet1/A1:B2")]);
+    assert_eq!(code, 0, "neither broken file is in the demand:\n{out}");
+    assert!(out.contains("no diagnostics"), "clean in-scope:\n{out}");
+
+    let (code, out, err) = run_err(&["render", &at(&fx, "Sheet1/A1:B2"), "--format", "html"]);
+    assert_eq!(
+        code, 0,
+        "the unread sidecar cannot refuse the render:\n{err}"
+    );
+    assert!(
+        out.contains("<!doctype html>"),
+        "a document is drawn:\n{out}"
+    );
+    assert!(
+        !err.contains("Chart1"),
+        "the unread figure is not named:\n{err}"
+    );
+
+    let (code, out) = run(&["check", &at(&fx, "Sheet1")]);
+    assert_eq!(
+        code, 3,
+        "a tab demand states no rect, so both are read:\n{out}"
+    );
+    assert!(out.contains("presentation-syntax"), "the sidecar:\n{out}");
+    assert!(out.contains("figure-syntax"), "the figure:\n{out}");
+}
+
+/// A figure's admission is its NAME's: a range form states its rectangle and answers the demand, a
+/// name form hides its placement in `<name>.css` and so is out of every region demand.
+#[test]
+fn a_region_demand_names_only_the_range_form_figures_that_meet_it() {
+    let fx = Fixture::new("scope-demand-figures");
+    fx.file("Sheet1", "A1:B2", "1\t2\n3\t4")
+        .file("Sheet1", "D2:K17.json", r#"{"mark":"bar"}"#)
+        .file("Sheet1", "Chart1.json", r#"{"mark":"bar"}"#);
+
+    for (scope, ranged, named) in [
+        ("Sheet1/A1:B2", false, false),
+        ("Sheet1/D2:K17", true, false),
+        ("Sheet1", true, true),
+    ] {
+        let (code, _, err) = run_err(&["render", &at(&fx, scope)]);
+        assert_eq!(code, 0, "{scope} renders:\n{err}");
+        assert_eq!(
+            err.contains("D2:K17.json"),
+            ranged,
+            "{scope} and the range form:\n{err}"
+        );
+        assert_eq!(
+            err.contains("Chart1.json"),
+            named,
+            "{scope} and the name form:\n{err}"
+        );
+    }
+}
+
+/// A demand withholds BYTES, never a relation: the figure it admits is still graded on what the
+/// NAMES alone settle — a sidecar over a range form clashes, a stem naming no figure is unclaimed —
+/// while the name form, whose placement hides in bytes nobody opened, stays absent.
+#[test]
+fn a_region_demand_still_grades_the_name_answerable_relations_of_the_figure_it_admits() {
+    let fx = Fixture::new("scope-demand-sidecar-relations");
+    fx.file("Sheet1", "A1:B2", "1\t2\n3\t4")
+        .file("Sheet1", "D2:E3.json", r#"{"mark":"bar"}"#)
+        .file("Sheet1", "D2:E3.css", "figure { anchor: D2 }")
+        .file("Sheet1", "Ghost.css", "figure { anchor: D2 }")
+        .file("Sheet1", "Chart1.json", r#"{"mark":"bar"}"#)
+        .file("Sheet1", "Chart1.css", "figure { anchor: d2 }");
+
+    for (scope, clash, placement) in [
+        // The demand names the range form's own rectangle, so that figure is admitted and its sidecar answers for itself.
+        ("Sheet1/D2:E3", true, false),
+        ("Sheet1/A1:B2", false, false),
+        ("Sheet1", true, true),
+    ] {
+        let (code, out) = run(&["check", &at(&fx, scope)]);
+        assert_eq!(code, 3, "{scope} reports the unclaimed sidecar:\n{out}");
+        assert!(
+            out.contains("unclaimed-sidecar"),
+            "{scope}: a stem naming no figure states no extent to be excluded by:\n{out}"
+        );
+        assert_eq!(
+            out.contains("figure-sidecar-clash"),
+            clash,
+            "{scope} against the range form's sidecar:\n{out}"
+        );
+        assert_eq!(
+            out.contains("figure-placement"),
+            placement,
+            "{scope} against the name form's sidecar:\n{out}"
+        );
+    }
 }
 
 #[test]
