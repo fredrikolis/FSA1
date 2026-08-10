@@ -1,4 +1,4 @@
-// Concern: spells each figure as a <figure> and the one script that mounts it | Non-concern: expanding a spec, the table | IO: (bound specs) -> markup + a script
+// Concern: spells each figure as a <figure> and the one script that mounts it | Non-concern: expanding a spec, the sheets a figure is drawn beneath | IO: (bound specs) -> markup + a script
 
 /// The pinned runtime, inlined so the export stays ONE self-contained file: a CDN `src=` would make
 /// a saved page a page that stops drawing the day the network is gone. `build.rs` locates it.

@@ -766,8 +766,8 @@ fn accept05_mode_enum_all_values_and_unknown() {
     );
 }
 
-/// The carrier an agent redirects to a file: stdout is the whole document and nothing else, and
-/// `border-collapse` is what hands shared-edge resolution to the browser.
+/// The carrier an agent redirects to a file: stdout is the whole document and nothing else, and it
+/// is a grid of elements — no `<table>`, whose one stylesheet had nowhere to put a scoped rule.
 #[test]
 fn render_format_html_writes_one_document_to_stdout() {
     let fx = Fixture::new("html");
@@ -779,12 +779,12 @@ fn render_format_html_writes_one_document_to_stdout() {
         "stdout is one whole document:\n{out}"
     );
     assert!(
-        out.contains("border-collapse"),
-        "the browser resolves each shared edge:\n{out}"
+        !out.contains("<td") && !out.contains("<table"),
+        "the grid is elements the sidecars address, never a table:\n{out}"
     );
     assert!(
-        out.contains("<th>A</th>") && out.contains("<th>1</th>"),
-        "column letters and row numbers ride as <th>:\n{out}"
+        out.contains(">A</fsa1-head>") && out.contains(">1</fsa1-head>"),
+        "column letters and row numbers ride as <fsa1-head>:\n{out}"
     );
 
     // A page draws values and shows a formula in its bar, so a `--mode` has nothing left to pick.
@@ -801,13 +801,41 @@ fn render_format_html_writes_one_document_to_stdout() {
         assert!(err.contains("formula bar"), "{mode}: {err}");
     }
     assert!(
-        out.contains("<td data-ref=\"B1\" data-formula=\"=A1+3\"") || out.contains("data-formula"),
+        out.contains("<fsa1-cell data-ref=\"B1\" data-formula=\"=A1*2\""),
         "a formula rides as an attribute, not as cell text:\n{out}"
     );
     assert!(
         !out.contains('←'),
         "no cell carries the combined arrow:\n{out}"
     );
+}
+
+/// What a sidecar's carrier cannot hold is text that ends open: an unclosed comment or bracket
+/// swallows every later rule, and `</style` ends the raw-text element the bytes ride in outright.
+/// The verb that DRAWS one refuses before writing a document; `check` grades the model, which none
+/// of these is anything to, and still passes.
+#[test]
+fn render_format_html_refuses_text_its_carrier_cannot_hold() {
+    for spelling in ["</style>", "</STYLE>", "/*evil", "[evil"] {
+        let fx = Fixture::new("html-carrier");
+        fx.file("Sheet1", "A1:A2", "x\ny").file(
+            "Sheet1",
+            "A1:A2.css",
+            &format!(
+                "  fsa1-cell {{ color: #ff0000 }}\n  fsa1-row:first-child fsa1-cell {{ \
+                 font-family: Ar{spelling}ial }}\n"
+            ),
+        );
+        let root = fx.path().to_str().unwrap();
+        let (code, _out, err) = run_err(&["render", root, "--format", "html"]);
+        assert_eq!(code, 3, "{spelling}: the carrier refuses:\n{err}");
+        assert!(
+            err.contains("Sheet1/A1:A2.css:2:"),
+            "{spelling}: the refusal locates the sidecar:\n{err}"
+        );
+        let (code, out, err) = run_err(&["check", root]);
+        assert_eq!(code, 0, "{spelling}: check grades the MODEL:\n{out}{err}");
+    }
 }
 
 #[test]

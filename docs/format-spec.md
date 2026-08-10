@@ -46,6 +46,7 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 ## PRES — presentation
 
 - **PRES1 · a selector addresses structure, never a coordinate.** A sidecar's selectors address the shape of its region — the whole of it, an edge row or column, an index, a periodic offset — and no selector names a single cell. One coordinate's presentation is stated by a sidecar whose ROOT is that coordinate.
+- **PRES2 · the TRANSPARENT html form carries every sidecar's bytes unchanged and paints the cascade the model resolves.** That form applies a sidecar by copying its bytes into a scoped, layered `<style>` over the region its filename names, adding only wrappers, coordinates, track sizes and that layer — so what the page paints is what `Overlay::cell_style` resolves and `pack` writes. That byte-for-byte guarantee is over SIDECARS: a figure's spec is not carried unchanged but EXPANDED from its bindings and then re-spelled — every `<` in it becomes `\u003c` so the raw-text `<script>` holding it cannot be ended by a cell's own text — and drawn by the pinned Vega runtime. It is kept permanently as the form to read to learn what the format does.
 
 ## VAL — the value model
 

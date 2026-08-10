@@ -11,6 +11,7 @@ fsa1-ast = { path = "../crates/fsa1-ast" }
 # tests/ only: the presentation corpus drives unpack -> check -> pack -> unpack in-process, so the
 # Rust half of that oracle runs under `cargo test --workspace` with no venv and no network.
 [dev-dependencies]
+fsa1-html = { path = "../crates/fsa1-html" }
 fsa1-ingest = { path = "../crates/fsa1-ingest" }
 fsa1-model = { path = "../crates/fsa1-model" }
 fsa1-verbs = { path = "../crates/fsa1-verbs" }

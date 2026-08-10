@@ -1,25 +1,33 @@
 // Concern: freezes the document's output contract | Non-concern: the CLI dispatch (fsa1-cli/tests owns it), the ASCII table | IO: (range files, sidecars, figures) -> assertions
 
-use fsa1_model::{Figure, Overlay, RenderMode, ViewScope, Workbook, view};
+use fsa1_model::{Figure, Overlay, Rect, RenderMode, ViewScope, Workbook, view};
 
 use crate::document;
 
+/// A tab layer, two DISJOINT blocks, a row only one of them covers, and a single-cell root NESTED in
+/// the wider block — every shape one tab may hold, in the cascade order `Overlay::scopes` yields:
+/// the layer, then `A1:B2`, then `D1:D3`, then `B2`.
+const SHAPES: &[(&str, &str)] = &[
+    ("A1:D3", "a\tb\tc\td\ne\tf\tg\th\ni\tj\tk\tl"),
+    (".css", "  fsa1-cell { font-family: Georgia }\n"),
+    ("A1:B2.css", "  fsa1-cell { background-color: #eef6ff }\n"),
+    ("D1:D3.css", "  fsa1-cell { text-align: right }\n"),
+    ("B2.css", "  fsa1-cell { color: #d33333 }\n"),
+];
+
 fn doc(files: &[(&str, &str)]) -> String {
-    figured(files, &[])
+    scoped(files, ViewScope::Workbook)
+}
+
+fn scoped(files: &[(&str, &str)], scope: ViewScope) -> String {
+    figured(files, &[], scope)
 }
 
 /// `figures` is `(name, spec text)`, expanded here exactly as `fsa1-verbs` expands it.
-fn figured(files: &[(&str, &str)], figures: &[(&str, &str)]) -> String {
+fn figured(files: &[(&str, &str)], figures: &[(&str, &str)], scope: ViewScope) -> String {
     let wb = Workbook::from_tabs(&[("Sheet1", files)]).expect("loads clean");
     let overlay = Overlay::from_tabs(&[("Sheet1", files)]).expect("its sidecars load clean");
-    let v = view(
-        &wb,
-        Some(&overlay),
-        ViewScope::Workbook,
-        RenderMode::Values,
-        &[],
-    )
-    .expect("a view");
+    let v = view(&wb, Some(&overlay), scope, RenderMode::Values, &[]).expect("a view");
     let bound: Vec<(String, String)> = figures
         .iter()
         .map(|(name, text)| {
@@ -29,6 +37,218 @@ fn figured(files: &[(&str, &str)], figures: &[(&str, &str)]) -> String {
         })
         .collect();
     document(&wb, &overlay, &v, &bound)
+}
+
+/// PRES2's first half, and the whole point of the carrier: the exporter WRAPS a sidecar's bytes and
+/// does nothing else to them, so each authored text — indent, spacing and trailing newline — is a
+/// literal substring of the page. Re-deriving one from the typed rules would fail every line here.
+#[test]
+fn every_sidecars_bytes_reach_the_document_unchanged() {
+    let html = doc(SHAPES);
+    for (name, text) in SHAPES.iter().filter(|(name, _)| name.ends_with(".css")) {
+        assert!(
+            html.contains(text),
+            "{name}'s bytes must be verbatim:\n{html}"
+        );
+    }
+}
+
+/// Layer order IS the model's cascade order, and it outranks specificity — so a `<style>`'s position
+/// in the document decides nothing and the narrowest root stands. The names count the SHEET INDEX,
+/// never the tab name, which is a directory name free to hold a byte that invalidates the statement.
+#[test]
+fn the_head_states_the_layer_order_the_model_folds_its_scopes_in() {
+    let html = doc(SHAPES);
+    assert!(
+        html.contains("@layer fsa1-harness, fsa1-s0-0, fsa1-s0-1, fsa1-s0-2, fsa1-s0-3;"),
+        "the harness sorts first and each scope follows in cascade order:\n{html}"
+    );
+    for (at, text) in [
+        (0, "font-family: Georgia"),
+        (1, "background-color: #eef6ff"),
+        (2, "text-align: right"),
+        (3, "color: #d33333"),
+    ] {
+        let layer = format!("@layer fsa1-s0-{at} {{ @scope ");
+        let carried = html.split(&layer).nth(1).unwrap_or_default();
+        assert!(
+            carried
+                .split("</style>")
+                .next()
+                .unwrap_or_default()
+                .contains(text),
+            "layer fsa1-s0-{at} must carry {text:?}:\n{html}"
+        );
+    }
+}
+
+/// A grid item is blockified and `vertical-align` does nothing on a block, so the strut is what keeps
+/// one of the sixteen properties `pack` carries paintable. Frozen because losing it is INVISIBLE:
+/// every cell still draws, just never where the author aligned it.
+#[test]
+fn the_harness_keeps_an_authored_vertical_align_paintable() {
+    let html = doc(SHAPES);
+    assert!(
+        html.contains("vertical-align: bottom"),
+        "a cell declaring nothing wears the model's own default:\n{html}"
+    );
+    assert!(
+        html.contains(
+            "fsa1-cell::before, fsa1-head::before { content: \"\"; display: inline-block; \
+             width: 0; height: 100%; vertical-align: inherit }"
+        ),
+        "the strut fills the cell and takes the cell's computed alignment:\n{html}"
+    );
+}
+
+/// PRES2's second half at the base: a cell declaring no font paints the face and the size the model
+/// resolves for it, read off `fsa1-model`'s own constants rather than a second copy of the numbers.
+/// A harness declaring `sans-serif` at `10pt` made the guarantee false for every undeclared cell.
+#[test]
+fn a_cell_declaring_no_font_paints_the_models_default() {
+    let html = doc(SHAPES);
+    let (_, rest) = html
+        .split_once("fsa1-cell, fsa1-head {")
+        .expect("the harness states one base rule for cells");
+    let (base, _) = rest.split_once('}').expect("that rule closes");
+    for css in [
+        format!("font-family: {}", fsa1_model::DEFAULT_FONT_FAMILY),
+        format!("font-size: {}", fsa1_model::DEFAULT_FONT_SIZE.spell()),
+    ] {
+        assert!(
+            base.contains(&css),
+            "the harness base must state `{css}`:\n{base}"
+        );
+    }
+    assert!(
+        !base.contains("sans-serif"),
+        "and no font of its own beside it:\n{base}"
+    );
+}
+
+/// A scope root is an ELEMENT and its scope reaches exactly its MODEL root: a block gets a region
+/// whose own `<style>` roots there prelude-less, while a single-cell root keeps its cell where it is
+/// and names it in the prelude instead — a 1x1 root holds only `fsa1-cell`, which must reach one cell.
+#[test]
+fn a_block_root_is_a_region_and_a_single_cell_root_names_its_cell_in_the_prelude() {
+    let html = doc(SHAPES);
+    for root in ["A1:B2", "D1:D3"] {
+        assert!(
+            html.contains(&format!("<fsa1-region data-root=\"{root}\">")),
+            "{root} is a region:\n{html}"
+        );
+    }
+    assert!(
+        !html.contains("data-root=\"B2\""),
+        "a single-cell root moves no cell:\n{html}"
+    );
+    assert!(
+        html.contains(
+            "@scope (#fsa1-s0 fsa1-row:has(> fsa1-cell[data-ref=\"B2\"])) to \
+             (fsa1-cell:not([data-ref=\"B2\"]))"
+        ),
+        "it roots the ROW and limits the others out:\n{html}"
+    );
+    assert!(
+        html.contains("</fsa1-row></fsa1-rows><style>"),
+        "a region's rows close before its own <style>, so nth-child counts rows alone:\n{html}"
+    );
+}
+
+/// The tab layer's `<style>` is a child of `<fsa1-sheet>`, whose rows span the STATED region — wider
+/// than the layer's own root, the content rect, which is the only place `cell_style` applies it.
+#[test]
+fn the_tab_layer_is_limited_to_the_rect_the_model_applies_it_over() {
+    let html = doc(&[
+        ("A1", "1"),
+        ("C1:C2.css", "  fsa1-cell { font-weight: bold }\n"),
+        (".css", "  fsa1-cell { font-family: Georgia }\n"),
+    ]);
+    assert!(
+        html.contains("@scope (#fsa1-s0) to (fsa1-cell[data-outside])"),
+        "the layer roots at the sheet and stops at a cell past its rect:\n{html}"
+    );
+    assert_eq!(
+        html.matches(" data-outside").count(),
+        5,
+        "the layer's root is the CONTENT rect A1, and the block widens the rows past it:\n{html}"
+    );
+}
+
+/// Each cell is emitted EXACTLY once — in the block region whose root reaches it, else in the sheet's
+/// own rows — so a partially covered row is split across the two and neither doubles a coordinate.
+#[test]
+fn a_partially_covered_row_emits_each_of_its_cells_once() {
+    let html = doc(SHAPES);
+    assert_eq!(
+        html.matches("<fsa1-cell").count(),
+        12,
+        "A1:D3 is twelve cells however its roots divide it:\n{html}"
+    );
+    for at in ["A1", "B2", "C3", "D1"] {
+        assert_eq!(
+            html.matches(&format!("data-ref=\"{at}\"")).count(),
+            if at == "B2" { 3 } else { 1 },
+            "{at} is emitted once (B2 is also NAMED twice in its own prelude):\n{html}"
+        );
+    }
+    let rows = html.rsplit("</fsa1-region>").next().unwrap_or_default();
+    assert!(
+        rows.contains("data-ref=\"C1\"") && !rows.contains("data-ref=\"D1\""),
+        "the sheet's own rows hold what no block covers, and nothing else:\n{html}"
+    );
+}
+
+/// Rows span the ROOT and the viewport decides only what is VISIBLE: a cut root still emits every
+/// row and cell of itself, the ones outside carrying `hidden` and NOTHING else, so a region-relative
+/// `nth-child` cannot move with a viewport.
+#[test]
+fn a_viewport_that_cuts_a_root_hides_cells_rather_than_dropping_them() {
+    let region = Rect {
+        min_col: 0,
+        min_row: 0,
+        max_col: 1,
+        max_row: 2,
+    };
+    let html = scoped(SHAPES, ViewScope::Region(0, region));
+    assert_eq!(
+        html.matches("<fsa1-cell").count(),
+        12,
+        "the stated region is A1:D3 whatever the viewport spans:\n{html}"
+    );
+    assert_eq!(
+        html.matches("<fsa1-cell hidden></fsa1-cell>").count(),
+        6,
+        "column C and column D are outside it, and carry nothing but `hidden`:\n{html}"
+    );
+    assert!(
+        !html.contains("data-ref=\"C1\""),
+        "a hidden cell states no coordinate:\n{html}"
+    );
+}
+
+/// A size belongs to the AXIS, which is where an authored one BINDS: the sheet states one track per
+/// viewport column behind the label track, and the cell filling it is `width: 100%` inline —
+/// unbeatable, so a `width` that reached a cell could never overrule the run the model resolved.
+#[test]
+fn an_axis_size_states_the_grid_track_and_never_the_cell() {
+    let html = doc(&[
+        ("A1:B2", "1\t2\n3\t4"),
+        (
+            "A1:B2.css",
+            "  fsa1-row:last-child fsa1-cell { height: 22.5pt }\n  fsa1-cell:last-child { width: 14.5ch }\n",
+        ),
+    ]);
+    assert!(
+        html.contains("grid-template-columns:auto auto 14.5ch")
+            && html.contains("grid-template-rows:auto auto 22.5pt"),
+        "each run states its own track, the leading one standing for the labels:\n{html}"
+    );
+    assert_eq!(
+        html.matches("width:100%;height:100%").count(),
+        4 + 5,
+        "every cell and head fills the track it sits in:\n{html}"
+    );
 }
 
 /// Cell text is author-controlled, and this document is the boundary it crosses into markup.
@@ -47,46 +267,14 @@ fn a_cell_spelling_markup_renders_as_visible_text() {
     );
 }
 
-/// `font-family` is the one free-text style value. Each of these ends the raw-text `<style>` element
-/// or opens a construct consuming to end-of-stylesheet, discarding a LATER cell's rule in silence.
-/// The allow-list is what makes this a closed set rather than the three bytes someone thought of.
-#[test]
-fn no_font_family_byte_can_swallow_a_later_cells_rule() {
-    for hostile in [
-        "</style>x",   // ends the raw-text element
-        "Arial/*evil", // opens a comment, consumes to EOF
-        "Arial[evil",  // unmatched bracket, consumes to `]` or EOF
-        "a\\65 vil",   // an escape that could re-form one of the above
-    ] {
-        let html = doc(&[
-            ("A1", "x"),
-            ("A2", "y"),
-            (
-                "A1.css",
-                &format!("  fsa1-cell {{ font-family: {hostile} }}\n"),
-            ),
-            ("A2.css", "  fsa1-cell { background-color: #ff0000 }\n"),
-        ]);
-        assert_eq!(
-            html.matches("</style>").count(),
-            1,
-            "{hostile:?}: only the document's own </style> may appear:\n{html}"
-        );
-        assert!(
-            html.contains("background-color: #ff0000"),
-            "{hostile:?}: the later cell's rule must survive:\n{html}"
-        );
-    }
-}
-
 /// The two carriers must not disagree about a cell: the ASCII table preserves an embedded newline
 /// and padding, so the HTML one may not let a browser collapse them.
 #[test]
 fn an_embedded_newline_and_padding_survive_the_html_carrier() {
     let html = doc(&[("A1", "line one\\nline two")]);
     assert!(
-        html.contains("white-space: pre-wrap"),
-        "cells preserve their own whitespace:\n{html}"
+        html.contains("white-space: pre;"),
+        "cells preserve their own whitespace, and `pre` is the model's `nowrap`:\n{html}"
     );
     assert!(
         html.contains("line one\nline two"),
@@ -96,73 +284,6 @@ fn an_embedded_newline_and_padding_survive_the_html_carrier() {
     assert!(
         padded.contains(">  spaced  <"),
         "leading and trailing spaces reach the cell verbatim:\n{padded}"
-    );
-}
-
-/// An axis size is CSS the browser already understands, so it crosses into the document as written
-/// rather than being dropped for want of a table-level carrier.
-#[test]
-fn an_axis_size_reaches_the_document_where_the_browser_honours_it() {
-    let html = doc(&[
-        ("A1:B2", "1\t2\n3\t4"),
-        (
-            "A1:B2.css",
-            "  fsa1-cell { height: 22.5pt; width: 14.5ch }\n",
-        ),
-    ]);
-    assert!(
-        html.contains(".c0 { height: 22.5pt }"),
-        "a height rides the cell's own class:\n{html}"
-    );
-    assert!(
-        html.contains("table-layout: fixed") && html.contains(r#"<col style="width: 14.5ch">"#),
-        "a WIDTH rides the <colgroup>, which is the only place it binds:\n{html}"
-    );
-    assert!(
-        !html.contains(".c0 { height: 22.5pt; width: 14.5ch }"),
-        "and never the cell, where it does nothing:\n{html}"
-    );
-}
-
-/// The output contract: the stylesheet is one rule per DISTINCT style, not one per cell.
-#[test]
-fn two_cells_with_the_same_declarations_share_one_class_and_one_rule() {
-    let html = doc(&[
-        ("A1:B1", "1\t2"),
-        ("A1:B1.css", "  fsa1-cell { font-weight: bold }\n"),
-    ]);
-    assert_eq!(
-        html.matches("<td class=\"c0\"").count(),
-        2,
-        "both cells wear the same class:\n{html}"
-    );
-    assert_eq!(
-        html.matches(".c0 { font-weight: bold }").count(),
-        1,
-        "one rule, spelled as the author wrote it:\n{html}"
-    );
-    assert!(!html.contains(".c1"), "no second class:\n{html}");
-}
-
-/// `table-layout: fixed` stops an unwidened column sizing to its content, so a document reaching no
-/// authored width must not carry it — the layout would move while every byte of text stayed put.
-#[test]
-fn a_document_stating_no_width_keeps_the_browsers_own_layout() {
-    let styled = doc(&[
-        ("A1:B2", "1\t2\n3\t4"),
-        ("A1:B2.css", "  fsa1-cell { font-weight: bold }\n"),
-    ]);
-    assert!(
-        !styled.contains("table-layout"),
-        "styled but unwidened is still auto:\n{styled}"
-    );
-    let widened = doc(&[
-        ("A1:B2", "1\t2\n3\t4"),
-        ("A:A.css", "  fsa1-cell { width: 30ch }\n"),
-    ]);
-    assert!(
-        widened.contains("table-layout: fixed") && widened.contains(r#"<col style="width: 30ch">"#),
-        "one authored width turns it on:\n{widened}"
     );
 }
 
@@ -188,6 +309,7 @@ fn a_figured_document_carries_the_runtime_once_and_fetches_nothing() {
     let html = figured(
         &[("A1:B2", "x\ty\n3\t4")],
         &[("Sheet1/one.json", spec), ("Sheet1/two.json", spec)],
+        ViewScope::Workbook,
     );
     assert_eq!(html.matches("<figure").count(), 2, "one element per figure");
     assert_eq!(
@@ -218,6 +340,7 @@ fn a_cell_cannot_close_the_spec_script_it_rides_in() {
     let html = figured(
         &[("A1:A2", "h\n</script><img src=x>")],
         &[("Sheet1/f.json", r#"{"data":{"name":"A1:A2"},"mark":"bar"}"#)],
+        ViewScope::Workbook,
     );
     assert!(
         !html.contains("<img src=x>"),

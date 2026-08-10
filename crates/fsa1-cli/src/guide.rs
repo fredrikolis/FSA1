@@ -64,8 +64,11 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   Roots of one tab are DISJOINT, or nest with the inner root a SINGLE cell, which layers last
   and wins property by property. Crossing roots, and a multi-cell root inside another, are
   refused. check parses and validates the sheet and reports its
-  faults; render --format html carries it into the document's CSS, and pack carries it into
-  the .xlsx as fonts, fills, borders, alignment, column widths and row heights.
+  faults; pack carries it into the .xlsx as fonts, fills, borders, alignment, column widths
+  and row heights.
+  render --format html writes the TRANSPARENT form (PRES2): every sidecar's own bytes reach
+  the page unchanged, in a <style> scoped to the region its filename names and layered in the
+  model's cascade order — so what the page paints is what check resolved and pack writes.
 
 FIGURES — <tab>/<stem>.json, a Vega-Lite spec bound to the tab's ranges
   Any .json entry of a tab with a non-empty stem is a figure, and a figure is the only JSON

@@ -991,9 +991,10 @@ OUTPUT:
     figure <tab>/<name>.json covers <A1 range> and binds <ranges>   (a placed figure)
     figure <tab>/<name>.json has no placement and binds <ranges>    (no <name>.css beside it)
   `tree` marks nothing (it has no coordinate plane), and --format html draws the figure itself.
-  --format html emits ONE standalone, JavaScript-free HTML document on stdout instead (redirect it to a
-  file): a <table> per in-scope tab with the same header row and gutter as <th>, carrying each cell's
-  resolved presentation as a class — one CSS rule per distinct style. Nothing else is written to stdout.
+  --format html emits ONE standalone, INTERACTIVE HTML document on stdout instead (redirect it to a
+  file): a grid of elements per in-scope tab, with the same header row and gutter as <fsa1-head>, that
+  carries each sidecar's own CSS unchanged in a scoped, layered <style>. Its script drives the formula
+  bar, and a figure embeds the pinned Vega runtime. Nothing else is written to stdout.
 
 EXIT CODES:
   0   Success (grid drawn, incl. a region outside the used region — with a stderr note)

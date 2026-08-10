@@ -138,6 +138,21 @@ fn view_at(
 
     let v = view(wb, view_overlay, scope, mode, &placed).map_err(|msg| bad_arg(&msg))?;
 
+    // A sidecar's bytes ride a raw-text `<style>` UNCHANGED, so text its carrier cannot hold is refused before the document is drawn rather than silently swallowing every later rule inside it.
+    if let (Format::Html, Some(overlay)) = (format, overlay.as_ref()) {
+        for sheet in &v.sheets {
+            for scope in overlay.scopes(wb, sheet.sheet) {
+                if let Some((line, col)) = fsa1_html::carrier::unholdable(scope.text) {
+                    let msg = format!(
+                        "{}:{line}:{col}: from here the <style> element this sidecar's bytes are carried in stops carrying them, so every later rule would be dropped -- close it here, or spell it another way",
+                        scope.file
+                    );
+                    return Err(fail(Kind::Validation, &msg));
+                }
+            }
+        }
+    }
+
     let empty = v.sheets.len() == 1 && v.sheets[0].grid.is_none();
     if empty {
         notes.push(format!(

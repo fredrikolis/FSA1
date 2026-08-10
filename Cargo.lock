@@ -221,6 +221,7 @@ name = "conformance"
 version = "0.2.3"
 dependencies = [
  "fsa1-ast",
+ "fsa1-html",
  "fsa1-ingest",
  "fsa1-model",
  "fsa1-verbs",
