@@ -10,7 +10,7 @@ use fsa1_model::{Code, Workbook};
 const CORRECTION_RULE: &str = "a frozen expectation is corrected ONLY when the reading of the \
      third-party-authored fixture was wrong -- never edited to chase an FSA1 regression";
 
-/// The two `check` codes the acceptance criteria name. An empty lint is the bar; these are the two
+/// The two `check` codes a decomposed region can wrongly earn. An empty lint is the bar; these are the two
 /// failures it exists to catch, so a failure names them rather than leaving them to be looked up.
 const NAMED_REFUSALS: [Code; 2] = [Code::PresentationSelector, Code::DegenerateRange];
 

@@ -93,8 +93,11 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
   and so reach into every block, where the tab holds ANY rooted sidecar each of the layer's rules
   selects the whole region or declares only an axis size; the file holds rules directly and no
   prelude, and needs no range file beside it.
-  Those selectors, each WRITTEN in its ONE canonical spelling and READ in any spelling of the
-  target it names, its rules in ANY order, cascading by specificity then source order and written
+  Those selectors, each WRITTEN in its ONE canonical spelling and READ in the spellings admitted
+  for the target it names — `:first-child` and `:last-child` beside the literal indices 1 and the
+  last line, a periodic `An` beside `An+0`, ANY whitespace between the row and the cell compound —
+  and in no others, so that `odd`, `even`, `0n+1` and a space inside the parentheses are refused;
+  its rules in ANY order, cascading by specificity then source order and written
   back in the order they were read, the properties — a
   sidecar may declare ANY of them save a size on a selector naming no such axis, the model
   carrying the ones it resolves onto a coordinate or an axis and the rest reaching the page and

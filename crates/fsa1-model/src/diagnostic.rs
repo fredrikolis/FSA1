@@ -1,4 +1,4 @@
-// Concern: the located-refusal type and the stable registry of refusal codes | Non-concern: detecting a refusal, printing the lint table | IO: (Code, Loc, message) -> Diagnostic
+// Concern: the located-refusal type and the registry of refusal codes | Non-concern: detecting a refusal, printing the lint table | IO: (Code, Loc, message) -> Diagnostic
 
 use fsa1_ast::ErrKind;
 use std::fmt;

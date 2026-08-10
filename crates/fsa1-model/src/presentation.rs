@@ -587,9 +587,9 @@ fn index_of(pseudo: &str, whole: &str, extent: u32, axis: &str) -> Result<Idx, (
     Ok(Idx::At(index))
 }
 
-/// Splits `An` or `An+B` into its two numbers. `odd` and `even` reach here as the keywords they are
-/// and split to nothing, which is what refuses them: they are `2n+1` and `2n` under another name,
-/// and one appearance is spelled one way.
+/// Splits `An` or `An+B` into its two numbers, a bare `An` taking offset 0. Anything else — a
+/// keyword like `odd`, a signed or spaced offset — splits to nothing and falls through to the
+/// literal-index parse, which refuses it.
 fn split_periodic(k: &str) -> Option<(&str, &str)> {
     let (a, rest) = k.split_once('n')?;
     match rest.strip_prefix('+') {
@@ -1236,6 +1236,14 @@ mod tests {
             (
                 "@scope {\n  fsa1-row:first-child\n  fsa1-cell { color: #3f0421 }\n}",
                 Target::Row(1),
+            ),
+            (
+                "@scope {\n  fsa1-row:nth-child(2n+0) fsa1-cell { color: #3f0421 }\n}",
+                Target::RowEvery { a: 2, b: 0 },
+            ),
+            (
+                "@scope {\n  fsa1-row:nth-child(2n) fsa1-cell { color: #3f0421 }\n}",
+                Target::RowEvery { a: 2, b: 0 },
             ),
         ] {
             assert_eq!(rules(block)[0].target, want, "{block:?}");
