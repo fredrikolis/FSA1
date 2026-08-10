@@ -1,4 +1,4 @@
-// Concern: a sidecar's rules — selectors, declarations, and which no carrier takes | Non-concern: a declaration's meaning, applying a style, the filename | IO: (root, text) <-> Rules + uncarried
+// Concern: a sidecar's rules — selectors, declarations, and which the .xlsx cannot carry | Non-concern: a declaration's meaning, applying a style, the filename | IO: (root, text) <-> Rules + uncarried
 
 use crate::declaration::{DeclFault, Declaration, parse_declaration, syntax};
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -149,28 +149,33 @@ fn read_rules(
             parse_declarations(file, cur, None, shape, diags, uncarried);
             continue;
         }
-        let read = resolve_target(file, selector, line, col, shape, diags);
-        let named = match read {
-            TargetRead::Named(target) => Some(target),
-            _ => None,
+        // A refusal is stated HERE, before the body the selector frames, so a rule's faults reach the author in written order. What the CARRIER drops waits for the body, having to outlive whatever that body left behind.
+        let mut uncarried_rule: Option<String> = None;
+        let named = match resolve_target(selector, shape) {
+            Ok(target) => Some(target),
+            Err(SelectorFault::Refused(code, message)) => {
+                diags.push(located(file, line, col, code, message));
+                None
+            }
+            Err(SelectorFault::Unresolved(why)) => {
+                uncarried_rule = Some(why);
+                None
+            }
         };
         let faults_before = (diags.len(), uncarried.len());
         let declarations = parse_declarations(file, cur, named, shape, diags, uncarried);
-        let target = match read {
-            TargetRead::Named(target) => target,
-            TargetRead::Refused => continue,
-            // ONE finding per RULE: the declarations under a selector that resolves to nothing were read before the target settled, and what the carrier drops is the rule, not each line of it.
-            TargetRead::Unresolved(why) => {
-                uncarried.truncate(faults_before.1);
-                uncarried.push(Uncarried {
-                    line,
-                    col,
-                    text: selector.to_string(),
-                    why,
-                });
-                continue;
-            }
-        };
+        // ONE finding per RULE: the declarations under a selector that resolves to nothing were read before the target settled, and what the carrier drops is the rule, not each line of it.
+        if let Some(why) = uncarried_rule {
+            uncarried.truncate(faults_before.1);
+            uncarried.push(Uncarried {
+                line,
+                col,
+                text: selector.to_string(),
+                why,
+            });
+            continue;
+        }
+        let Some(target) = named else { continue };
         if declarations.is_empty() && faults_before == (diags.len(), uncarried.len()) {
             diags.push(located(
                 file,
@@ -357,45 +362,26 @@ fn shape_of(root: Rect) -> Shape {
 
 /// What a selector's text yields where it yields no [`Target`]: a REFUSAL, the sidecar's own root or
 /// frame being wrong, or a selector FSA1 simply resolves to nothing, which the whole rule is
-/// uncarried for.
+/// uncarried for. Each carries the reason the author is given; neither states it, the caller holding
+/// the position both are located at.
 enum SelectorFault {
     Refused(Code, String),
     Unresolved(String),
 }
 
-/// What one rule's selector settled to. `Refused` has already stated its own diagnostic; `Unresolved`
-/// carries the reason the rule is named to the carrier that drops it.
-enum TargetRead {
-    Named(Target),
-    Unresolved(String),
-    Refused,
-}
-
-/// Anything but `Named` keeps a rule from being reported both for its selector and for the emptiness
-/// that follows from it.
-fn resolve_target(
-    file: &str,
-    selector: &str,
-    line: u32,
-    col_at: u32,
-    shape: Shape,
-    diags: &mut Vec<Diagnostic>,
-) -> TargetRead {
+/// [`parse_selector`] under PRES1: a cell selector parses, and addresses a coordinate on every root —
+/// a single line of one axis included — so no FSA1 carrier but the page takes it. A coordinate earns
+/// a better reason than the generic one, which is the whole of what this adds to the grammar.
+fn resolve_target(selector: &str, shape: Shape) -> Result<Target, SelectorFault> {
     match parse_selector(selector, shape) {
-        // PRES1 over the target the selector NAMES: a cell selector addresses a coordinate on every root, a single line of one axis included, so no FSA1 carrier takes it — but a coordinate earns a better reason than the generic one.
         Ok(Target::Cell { row, col }) => {
             let at = crate::Rect::cell(col - 1, row - 1).label();
-            TargetRead::Unresolved(format!(
-                "{selector:?} addresses a coordinate; a selector states a region's SHAPE. \
+            Err(SelectorFault::Unresolved(format!(
+                "a selector states a region's SHAPE, and this one addresses a coordinate. \
                  State that cell in its own sidecar instead: the root's {at} as <cell>.css"
-            ))
+            )))
         }
-        Ok(target) => TargetRead::Named(target),
-        Err(SelectorFault::Refused(code, message)) => {
-            diags.push(located(file, line, col_at, code, message));
-            TargetRead::Refused
-        }
-        Err(SelectorFault::Unresolved(why)) => TargetRead::Unresolved(why),
+        other => other,
     }
 }
 
@@ -499,14 +485,15 @@ struct Uncarried {
 impl Uncarried {
     /// The declaration named to the carrier that cannot take it. The reason is `why` ALONE — the
     /// carrier itself is [`Code::XlsxNotCarried`]'s, stated once in the registry and printed beside
-    /// every one of these.
+    /// every one of these. The author's text is ESCAPED: a comma-grouped selector or a wrapped
+    /// declaration holds the newline it was written across, and a message is one line of a table.
     fn finding(self, file: &str) -> Diagnostic {
         located(
             file,
             self.line,
             self.col,
             Code::XlsxNotCarried,
-            format!("{}: {}", self.text, self.why),
+            format!("{:?}: {}", self.text, self.why),
         )
     }
 }
@@ -629,7 +616,7 @@ fn index_of(pseudo: &str, whole: &str, extent: u32, axis: &str) -> Result<Idx, S
 
 /// Splits `An` or `An+B` into its two numbers, a bare `An` taking offset 0. Anything else — a
 /// keyword like `odd`, a signed or spaced offset — splits to nothing and falls through to the
-/// literal-index parse, which refuses it.
+/// literal-index parse, which resolves it to no index.
 fn split_periodic(k: &str) -> Option<(&str, &str)> {
     let (a, rest) = k.split_once('n')?;
     match rest.strip_prefix('+') {
@@ -640,9 +627,9 @@ fn split_periodic(k: &str) -> Option<(&str, &str)> {
 }
 
 /// `A` of 1 selects every line, which is `fsa1-cell`, and `A` of 0 selects one, which is a literal
-/// index — each already has a spelling, so the model resolves neither synonym to a target, and an
-/// offset at or past the period names the very lines a smaller one does. The FIRST line, though, is
-/// counted in the ROOT, so a period reaching past it is that root's refusal.
+/// index — each already has a spelling, and an offset at or past the period names the lines a
+/// smaller one does. Neither resolves, and each names the wrong NUMBER: the author wrote a period,
+/// and the fix is a number. The FIRST line is counted in the ROOT, so a period past it is a refusal.
 fn periodic_of(
     a: &str,
     b: &str,
@@ -652,8 +639,16 @@ fn periodic_of(
 ) -> Result<Idx, SelectorFault> {
     let a: u32 = a.parse().map_err(|_| unresolved())?;
     let b: u32 = b.parse().map_err(|_| unresolved())?;
-    if a < 2 || b >= a {
-        return Err(unresolved());
+    if a < 2 {
+        return Err(SelectorFault::Unresolved(format!(
+            "a periodic {axis} repeats every 2 or more, not every {a}"
+        )));
+    }
+    if b >= a {
+        return Err(SelectorFault::Unresolved(format!(
+            "a periodic {axis} offset runs 0 to {}, not {b}",
+            a - 1
+        )));
     }
     // Lines b, b+a, b+2a, … — but at offset 0 line 0 does not exist, so the first is a.
     let first = if b == 0 { a } else { b };
@@ -668,8 +663,9 @@ fn periodic_of(
     Ok(Idx::Every { a, b })
 }
 
-/// The ONE wording every selector FSA1 resolves to nothing is named to its carrier by: the rule is
-/// uncarried whole, and which spelling missed is the author's own text beside it.
+/// The wording for a selector that matches no form at all, where there is no number or part to name
+/// as the wrong one: the rule is uncarried whole, and the author's own text sits beside it. A case
+/// that CAN say which half missed states that instead — [`periodic_of`], [`resolve_target`].
 fn unresolved() -> SelectorFault {
     SelectorFault::Unresolved(
         "FSA1 resolves this selector to no cell or axis, so the whole rule is uncarried"
@@ -1079,47 +1075,58 @@ mod tests {
 
     /// A selector FSA1 resolves to no cell or axis is not the sidecar's fault: it loads, its bytes
     /// reach the page (PRES2), and the ONE carrier that drops it — the `.xlsx` — is told once, about
-    /// the RULE and not about each declaration under it.
+    /// the RULE and not about each declaration under it. The REASON is frozen per case: one that can
+    /// name the wrong number says so, and the generic line is what is left when none can.
     #[test]
     fn a_selector_the_model_resolves_to_nothing_leaves_the_whole_rule_uncarried() {
-        for selector in [
-            "fsa1-cell::before",
-            "fsa1-cell::after",
-            "fsa1-cell:nth-col(2)",
-            "::column",
-            "th",
-            "fsa1-row:nth-child(1n) fsa1-cell",
-            "fsa1-row:nth-child(0n+2) fsa1-cell",
-            "fsa1-row:nth-child(2n+2) fsa1-cell",
-            "fsa1-row:nth-child(odd) fsa1-cell",
-            "fsa1-row:nth-child(even) fsa1-cell",
+        const NO_FORM: &str =
+            "FSA1 resolves this selector to no cell or axis, so the whole rule is uncarried";
+        for (selector, reason) in [
+            ("fsa1-cell::before", NO_FORM),
+            ("fsa1-cell::after", NO_FORM),
+            ("fsa1-cell:nth-col(2)", NO_FORM),
+            ("::column", NO_FORM),
+            ("th", NO_FORM),
+            ("fsa1-row:nth-child(odd) fsa1-cell", NO_FORM),
+            ("fsa1-row:nth-child(even) fsa1-cell", NO_FORM),
             // A periodic part composes with nothing, there being no periodic CELL target.
-            "fsa1-row:nth-child(2n) fsa1-cell:nth-child(3)",
-            "fsa1-row:nth-child(3) fsa1-cell:nth-child(2n)",
-            "fsa1-row:first-child fsa1-cell:first-child",
+            ("fsa1-row:nth-child(2n) fsa1-cell:nth-child(3)", NO_FORM),
+            ("fsa1-row:nth-child(3) fsa1-cell:nth-child(2n)", NO_FORM),
+            (
+                "fsa1-row:nth-child(1n) fsa1-cell",
+                "a periodic row repeats every 2 or more, not every 1",
+            ),
+            (
+                "fsa1-row:nth-child(0n+2) fsa1-cell",
+                "a periodic row repeats every 2 or more, not every 0",
+            ),
+            (
+                "fsa1-row:nth-child(2n+2) fsa1-cell",
+                "a periodic row offset runs 0 to 1, not 2",
+            ),
+            (
+                "fsa1-cell:nth-child(3n+4)",
+                "a periodic column offset runs 0 to 2, not 4",
+            ),
+            (
+                "fsa1-row:first-child fsa1-cell:first-child",
+                "a selector states a region's SHAPE, and this one addresses a coordinate. \
+                 State that cell in its own sidecar instead: the root's A1 as <cell>.css",
+            ),
         ] {
             let message =
                 one_uncarried(&format!("@scope {{\n  {selector} {{ color: #3f0421 }}\n}}"));
-            assert!(
-                message.starts_with(&format!("{selector}: ")),
-                "{selector:?} -> {message}",
-            );
+            assert_eq!(message, format!("{selector:?}: {reason}"));
         }
-        // A coordinate earns its own reason; every other unresolved selector shares the one wording.
-        assert!(
-            one_uncarried(
-                "@scope {\n  fsa1-row:first-child fsa1-cell:first-child { color: #3f0421 }\n}"
-            )
-            .contains("addresses a coordinate"),
-        );
-        assert!(
-            one_uncarried("@scope {\n  th { color: #3f0421 }\n}")
-                .contains("resolves this selector to no cell or axis"),
-        );
         // ONE finding per RULE: two declarations the model cannot read either, under a selector it cannot resolve, are still the one rule the carrier drops.
         assert_eq!(
             uncarried("@scope {\n  th { color: crimson; box-shadow: none }\n}").len(),
             1,
+        );
+        // The author's own text is one line of a table, whatever it was written across.
+        assert_eq!(
+            one_uncarried("@scope {\n  th,\n  td { color: #3f0421 }\n}"),
+            format!("{:?}: {NO_FORM}", "th,\n  td"),
         );
     }
 
