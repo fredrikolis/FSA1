@@ -6,8 +6,8 @@ use std::path::Path;
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::figure::{Binding, Figure};
 use crate::names::{
-    CssEntry, FIGURE_SUFFIX, PRESENTATION_SUFFIX, css_entry, figure_occupancy, figure_range,
-    figure_stems, is_figure_entry,
+    CssEntry, FIGURE_SUFFIX, PRESENTATION_SUFFIX, css_entry, figure_occupancy, figure_stems,
+    is_figure_entry, stem_region,
 };
 use crate::placement::Placement;
 use crate::workbook::Workbook;
@@ -102,7 +102,7 @@ impl Figures {
                     continue;
                 }
                 // A range-form figure already states its placement, so a sidecar over it has nothing left to say and is a refusal rather than a second answer.
-                if let Some(rect) = figure_range(&stem) {
+                if let Some(rect) = stem_region(&stem) {
                     diags.push(Diagnostic::new(
                         Code::FigureSidecarClash,
                         Loc::file(&located),

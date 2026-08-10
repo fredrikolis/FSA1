@@ -248,6 +248,63 @@ fn path_tab_selects_the_named_tab_for_check() {
 }
 
 #[test]
+fn a_scope_filters_a_tab_qualified_sidecar_or_figure_loc() {
+    let tabbed = Fixture::new("scope-path-tab");
+    tabbed
+        .file("Sheet1", "A1", "1")
+        .file("Sheet2", "A1", "2")
+        .file("Sheet1", "Nope.css", "Nope");
+    let (code, out) = run(&["check", &at(&tabbed, "Sheet2")]);
+    assert_eq!(code, 0, "Sheet1's sidecar is out of Sheet2's scope:\n{out}");
+    assert!(!out.contains("unclaimed-sidecar"), "out of scope:\n{out}");
+    for scope in ["", "Sheet1"] {
+        let (code, out) = run(&["check", &at(&tabbed, scope)]);
+        assert_eq!(code, 3, "the sidecar is in scope of {scope:?}:\n{out}");
+        assert!(out.contains("unclaimed-sidecar"), "in scope:\n{out}");
+    }
+
+    let region = Fixture::new("scope-path-region");
+    region
+        .file("Sheet1", "A1:B2", "1\t2\n3\t4")
+        .file("Sheet1", "H3", "5")
+        .file("Sheet1", "A1:B2.css", "A1 { bogus-prop: 3 }");
+    for (scope, want) in [
+        ("Sheet1/H3", 0),
+        ("Sheet1/H1:H5", 0),
+        ("Sheet1/A1:B2", 3),
+        ("Sheet1/B2", 3),
+    ] {
+        let (code, out) = run(&["check", &at(&region, scope)]);
+        assert_eq!(code, want, "{scope} against the sidecar's root:\n{out}");
+        assert_eq!(
+            out.contains("presentation-selector"),
+            want == 3,
+            "{scope} reports the fault only when it meets the root:\n{out}"
+        );
+    }
+
+    let rooted = Fixture::new("scope-path-rootlevel");
+    rooted.file("Sheet1", "A1", "1");
+    std::fs::write(rooted.path().join("A1:B2.css"), "A1 { color: red }").unwrap();
+    for scope in ["", "Sheet1", "Sheet1/H1:H5"] {
+        let (code, out) = run(&["check", &at(&rooted, scope)]);
+        assert_eq!(code, 3, "a loc naming no tab is filtered by none:\n{out}");
+        assert!(out.contains("presentation-in-grid"), "kept:\n{out}");
+    }
+
+    let figure = Fixture::new("scope-path-figure");
+    figure
+        .file("Sheet1", "A1", "1")
+        .file("Sheet2", "A1", "2")
+        .file("Sheet1", "Chart1.json", "{");
+    let (code, out) = run(&["check", &at(&figure, "Sheet2")]);
+    assert_eq!(code, 0, "the figure's tab is out of scope:\n{out}");
+    let (code, out) = run(&["check", &at(&figure, "Sheet1")]);
+    assert_eq!(code, 3, "the figure's tab is in scope:\n{out}");
+    assert!(out.contains("figure-syntax"), "in scope:\n{out}");
+}
+
+#[test]
 fn check_scoped_on_an_unloadable_workbook_freezes_the_best_effort_region_filter() {
     let fx = Fixture::new("scope-loadfail");
     fx.file("Sheet1", "A1:D9", "one literal in a 9x4 range")
