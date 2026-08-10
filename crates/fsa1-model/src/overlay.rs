@@ -406,12 +406,20 @@ mod tests {
     /// Every fault at once, so an author fixes a sidecar in one pass rather than one refusal a run.
     #[test]
     fn a_refused_sidecar_is_refused_with_every_fault_at_once() {
-        let codes: Vec<Code> =
-            refusals(&[("A1:A2", "3\n4"), ("A1:A2.css", "  th { color: red }\n")])
-                .iter()
-                .map(|d| d.code)
-                .collect();
-        assert_eq!(codes, vec![Code::PresentationSelector]);
+        let codes: Vec<Code> = refusals(&[
+            ("A1:A2", "3\n4"),
+            (
+                "A1:A2.css",
+                "  fsa1-cell:nth-child(9) { color: #3f0421 }\n  fsa1-cell { color: #3f0421 !important }\n",
+            ),
+        ])
+        .iter()
+        .map(|d| d.code)
+        .collect();
+        assert_eq!(
+            codes,
+            vec![Code::PresentationSelector, Code::PresentationSyntax]
+        );
     }
 
     /// A sidecar's NAME is its root, so every MALFORMED root a range file refuses it refuses too,

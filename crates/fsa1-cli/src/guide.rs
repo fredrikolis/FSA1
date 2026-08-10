@@ -52,17 +52,20 @@ FUNCTIONS — the dynamic-array family, whose ARGUMENTS are the part you cannot 
 PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   The FILENAME is the scoping root — A1:C9.css, a bare A1.css, or an OPEN range A:A.css /
   1:1.css whose open axis reaches as far as the tab's own content. The file holds rules and
-  nothing else. The root is what the selectors count in: fsa1-cell ·
-  fsa1-row:first-child fsa1-cell · fsa1-cell:nth-child(k) · fsa1-row:nth-child(k) fsa1-cell
-  and the periodic An+B forms, all 1-based and relative to the root.
+  nothing else. The root is what the selectors count in, and these are the ones FSA1 RESOLVES:
+  fsa1-cell · fsa1-row:first-child fsa1-cell · fsa1-cell:nth-child(k) ·
+  fsa1-row:nth-child(k) fsa1-cell and the periodic An+B forms, all 1-based and relative to the
+  root. Any OTHER selector is written as you like — check takes it, the page paints it, and no
+  other carrier does: check --xlsx and pack --strict name the whole rule as xlsx-not-carried.
   An index is a literal :nth-child(k), 1-based within the root — :first-child and :last-child
   are k=1 and k=the last line, one selector each — or a periodic :nth-child(An+B), A of 2 or more
   and B under A, whose +0 may be dropped (2n = 2n+0). odd, even, 0n+1 and any space inside the
-  parens are refused. ANY whitespace joins the row and the cell compound.
+  parens resolve to nothing; an index OUTSIDE the root is refused. ANY whitespace joins the row
+  and the cell compound.
   Rules are written in ANY order and cascade as the browser does — specificity, then source
   order — so a row rule beats a column rule wherever both match, a selector written twice
   layers rather than being refused, and of two rules that tie the LAST one written wins.
-  NO selector names one cell — give that cell its own root, F9.css.
+  FSA1 resolves NO selector to one cell — give that cell its own root, F9.css.
   A stem-less .css is the tab's own default layer, beneath every rooted sidecar. Its indices
   count in the TAB's content, so once the tab holds one rooted sidecar every rule there is a
   bare fsa1-cell or declares nothing but width/height.

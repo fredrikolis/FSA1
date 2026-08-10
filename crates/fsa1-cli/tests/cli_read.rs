@@ -267,7 +267,11 @@ fn a_scope_filters_a_tab_qualified_sidecar_or_figure_loc() {
     region
         .file("Sheet1", "A1:B2", "1\t2\n3\t4")
         .file("Sheet1", "H3", "5")
-        .file("Sheet1", "A1:B2.css", "A1 { bogus-prop: 3 }");
+        .file(
+            "Sheet1",
+            "A1:B2.css",
+            "  fsa1-cell:nth-child(9) { color: #3f0421 }",
+        );
     for (scope, want) in [
         ("Sheet1/H3", 0),
         ("Sheet1/H1:H5", 0),

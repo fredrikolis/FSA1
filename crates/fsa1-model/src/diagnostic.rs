@@ -157,13 +157,13 @@ impl Code {
                 "a presentation sidecar holds `<selector> { <property>: <value>; ... }` rules and nothing else"
             }
             Code::PresentationSelector => {
-                "a presentation selector must be one of the eight region-relative forms, each index within the region"
+                "a presentation selector's indices count in the root it is read under -- the region its filename names, or the tab's own content where it names none -- and must fall inside it, a periodic's FIRST line included"
             }
             Code::PresentationProperty => {
                 "an axis size is declared only on a selector that names the axis being sized"
             }
             Code::XlsxNotCarried => {
-                "an .xlsx carries only what Excel models, so a declaration outside its properties, or a figure outside its charts, cannot be packed"
+                "an .xlsx carries only what Excel models, so a declaration outside its properties, a selector FSA1 resolves to no cell or axis, or a figure outside its charts, cannot be packed"
             }
             Code::FigureInRoot => "a figure states one tab's ranges, so it lives in a tab folder",
             Code::FigureSyntax => "a figure's body must parse as JSON",
@@ -255,9 +255,10 @@ impl Code {
                 "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, and drop `!important` and any at-rule"
             }
             Code::PresentationSelector => {
-                "use one of `fsa1-cell`, `fsa1-row:first-child fsa1-cell`, `fsa1-row:last-child fsa1-cell`, \
-                 `fsa1-row:nth-child(k) fsa1-cell`, `fsa1-cell:first-child`, `fsa1-cell:last-child`, `fsa1-cell:nth-child(k)`; \
-                 indices are 1-based and region-relative, and no selector names ONE cell -- give that cell its own <cell>.css"
+                "bring the index inside the root it is counted in: widen the root its filename names, renumber the index \
+                 (1-based, and a periodic's first line is its offset, or its period where the offset is 0), or move the rule \
+                 into a sidecar whose root already reaches it. A tab's own stem-less .css counts its indices in the TAB's \
+                 content, so where the tab states none, name the region on the file instead: <range>.css"
             }
             Code::PresentationProperty => {
                 "move the size onto a selector that names its own axis: `width` onto `fsa1-cell` or `fsa1-cell:nth-child(k)`, \
@@ -267,7 +268,8 @@ impl Code {
             Code::XlsxNotCarried => {
                 "restate the loss in what the .xlsx carries, else delete it: a declaration as `#rrggbb`, `<n>pt`, `<n>ch`, \
                  `<width> <style> <colour>` or a property's keyword; a figure as a mark Excel charts \
-                 (bar/line/area/point/arc) and only its keys. `check` and the page take both as written, Excel alone cannot"
+                 (bar/line/area/point/arc) and only its keys; a selector as one of the region-relative forms. \
+                 `check` and the page take each as written, Excel alone cannot"
             }
             Code::FigureInRoot => {
                 "move the `<name>.json` into the tab folder whose ranges it binds; a figure names no coordinate at the workbook root"

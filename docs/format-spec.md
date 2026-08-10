@@ -45,7 +45,7 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 
 ## PRES — presentation
 
-- **PRES1 · a selector addresses structure, never a coordinate.** A sidecar's selectors address the shape of its region — the whole of it, an edge row or column, an index, a periodic offset — and no selector names a single cell. One coordinate's presentation is stated by a sidecar whose ROOT is that coordinate.
+- **PRES1 · a selector addresses structure, never a coordinate.** The model resolves a sidecar's selectors onto the SHAPE of its region — the whole of it, an edge row or column, an index, a periodic offset — and never onto a single cell, so a selector naming a coordinate is carried by no FSA1 carrier: it reaches the page and no further. One coordinate's presentation is stated by a sidecar whose ROOT is that coordinate.
 - **PRES2 · the TRANSPARENT html form carries every sidecar's bytes unchanged and paints the cascade the model resolves.** That form applies a sidecar by copying its bytes into a scoped, layered `<style>` over the region its filename names, adding only wrappers, coordinates, track sizes and that layer — so what the page paints is the model's cascade — specificity, then source order, the browser's own two keys — for every declaration the model CARRIES, which is what `Overlay::cell_style` resolves and `pack` writes, and the author's own bytes for the rest, which reach the page and no other carrier. That byte-for-byte guarantee is over SIDECARS: a figure's spec is not carried unchanged but EXPANDED from its bindings and then re-spelled — every `<` in it becomes `\u003c` so the raw-text `<script>` holding it cannot be ended by a cell's own text — and drawn by the pinned Vega runtime. It is kept permanently as the form to read to learn what the format does.
 
 ## VAL — the value model
@@ -96,7 +96,9 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
   Those selectors, each WRITTEN in its ONE canonical spelling and READ in the spellings admitted
   for the target it names — `:first-child` and `:last-child` beside the literal indices 1 and the
   last line, a periodic `An` beside `An+0`, ANY whitespace between the row and the cell compound —
-  while `odd`, `even`, `0n+1` and a space inside the parentheses are refused;
+  while `odd`, `even`, `0n+1`, a space inside the parentheses and any other selector the model
+  resolves to no cell or axis leave the WHOLE rule uncarried, reaching the page and no further,
+  and an INDEX outside the root the filename names is refused;
   its rules in ANY order, cascading by specificity then source order and written
   back in the order they were read, the properties — a
   sidecar may declare ANY of them save a size on a selector naming no such axis, the model
