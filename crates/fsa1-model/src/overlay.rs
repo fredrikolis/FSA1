@@ -228,7 +228,8 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
                 diags.push(Diagnostic::new(
                     Code::PresentationSelector,
                     Loc::file(&file),
-                    "a tab's own stylesheet counts its indices in the tab's content, and this tab                      states none; name the region on the file instead: <range>.css"
+                    "a tab's own stylesheet counts its indices in the tab's content, and this tab \
+                     states none; name the region on the file instead: <range>.css"
                         .to_string(),
                 ));
                 return None;
