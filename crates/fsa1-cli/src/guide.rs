@@ -55,6 +55,9 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   nothing else. The root is what the selectors count in: fsa1-cell ·
   fsa1-row:first-child fsa1-cell · fsa1-cell:nth-child(k) · fsa1-row:nth-child(k) fsa1-cell
   and the periodic An+B forms, all 1-based and relative to the root.
+  Rules are written in ANY order and cascade as the browser does — specificity, then source
+  order — so a row rule beats a column rule wherever both match, a selector written twice
+  layers rather than being refused, and of two rules that tie the LAST one written wins.
   NO selector names one cell — give that cell its own root, F9.css.
   A stem-less .css is the tab's own default layer, beneath every rooted sidecar. Its indices
   count in the TAB's content, so once the tab holds one rooted sidecar every rule there is a

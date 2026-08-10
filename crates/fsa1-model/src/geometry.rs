@@ -1,5 +1,7 @@
 // Concern: which sheet axes a block's declarations size, and at what | Non-concern: reading a declaration, applying one, resolving two blocks over one axis | IO: (root, &Presentation) -> AxisRuns
 
+use std::collections::BTreeMap;
+
 use crate::declaration::{Chars, Declaration, Points};
 use crate::overlap::Rect;
 use crate::presentation::{Presentation, Target};
@@ -19,13 +21,13 @@ pub struct AxisRun<T> {
 /// them. The row and cell halves carry no width, the parser refusing one there.
 pub fn declared_widths(root: Rect, presentation: &Presentation) -> Vec<AxisRun<Chars>> {
     let mut base = None;
-    let mut overrides = Vec::new();
+    let mut overrides = BTreeMap::new();
     for rule in &presentation.rules {
         for declaration in &rule.declarations {
             match (rule.target, declaration) {
                 (Target::All, Declaration::Width(w)) => base = Some(*w),
                 (Target::Col(k), Declaration::Width(w)) => {
-                    overrides.push((root.min_col + k - 1, *w));
+                    overrides.insert(root.min_col + k - 1, *w);
                 }
                 _ => {}
             }
@@ -37,13 +39,13 @@ pub fn declared_widths(root: Rect, presentation: &Presentation) -> Vec<AxisRun<C
 /// [`declared_widths`] on the other axis: a block's row `r` is sheet row `root.min_row + r - 1`.
 pub fn declared_heights(root: Rect, presentation: &Presentation) -> Vec<AxisRun<Points>> {
     let mut base = None;
-    let mut overrides = Vec::new();
+    let mut overrides = BTreeMap::new();
     for rule in &presentation.rules {
         for declaration in &rule.declarations {
             match (rule.target, declaration) {
                 (Target::All, Declaration::Height(h)) => base = Some(*h),
                 (Target::Row(r), Declaration::Height(h)) => {
-                    overrides.push((root.min_row + r - 1, *h));
+                    overrides.insert(root.min_row + r - 1, *h);
                 }
                 _ => {}
             }
@@ -52,9 +54,15 @@ pub fn declared_heights(root: Rect, presentation: &Presentation) -> Vec<AxisRun<
     runs(root.min_row, root.max_row, base, &overrides)
 }
 
-/// `overrides` are ascending and within `lo..=hi`: a parsed presentation's rules ascend by target,
-/// and every index is one the parser bounded by the root's own extent.
-fn runs<T: Copy>(lo: u32, hi: u32, base: Option<T>, overrides: &[(u32, T)]) -> Vec<AxisRun<T>> {
+/// The map is what makes `overrides` ascending and one per index whatever order the sidecar wrote its
+/// rules in — the LAST rule naming an index having overwritten the earlier ones on its way in. Every
+/// key is within `lo..=hi`, being an index the parser bounded by the root's own extent.
+fn runs<T: Copy>(
+    lo: u32,
+    hi: u32,
+    base: Option<T>,
+    overrides: &BTreeMap<u32, T>,
+) -> Vec<AxisRun<T>> {
     let mut out = Vec::new();
     let mut at = lo;
     for (axis, size) in overrides {
@@ -135,5 +143,40 @@ mod tests {
             }],
         );
         assert!(widths("B2:D4", "  fsa1-cell { color: #3f0421 }").is_empty());
+    }
+
+    /// A sidecar's rules are read in any order, and the runs an axis is cut into are ascending
+    /// whatever that order was; a column declared twice takes the LAST width, once.
+    #[test]
+    fn the_runs_ascend_whatever_order_the_sizes_were_written_in() {
+        assert_eq!(
+            widths(
+                "A1:D1",
+                "  fsa1-cell:nth-child(3) { width: 20ch }\n  fsa1-cell:nth-child(2) { width: 10ch }",
+            ),
+            vec![
+                AxisRun {
+                    start: 1,
+                    end: 1,
+                    size: Chars(10.0)
+                },
+                AxisRun {
+                    start: 2,
+                    end: 2,
+                    size: Chars(20.0)
+                },
+            ],
+        );
+        assert_eq!(
+            widths(
+                "A1:D1",
+                "  fsa1-cell:nth-child(2) { width: 20ch }\n  fsa1-cell:nth-child(2) { width: 10ch }",
+            ),
+            vec![AxisRun {
+                start: 1,
+                end: 1,
+                size: Chars(10.0)
+            }],
+        );
     }
 }

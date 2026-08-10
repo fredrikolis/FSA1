@@ -1,4 +1,4 @@
-// Concern: a sidecar's rules — selectors, declarations, order, and which no carrier takes | Non-concern: a declaration's meaning, applying a style, the filename | IO: (root, text) <-> Rules + uncarried
+// Concern: a sidecar's rules — selectors, declarations, and which no carrier takes | Non-concern: a declaration's meaning, applying a style, the filename | IO: (root, text) <-> Rules + uncarried
 
 use crate::declaration::{DeclFault, Declaration, parse_declaration, syntax};
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -86,7 +86,6 @@ pub fn parse_rules_located(
     let mut diags: Vec<Diagnostic> = Vec::new();
     let mut uncarried: Vec<Uncarried> = Vec::new();
     let placed = read_rules(file, &mut cur, shape, &mut diags, &mut uncarried);
-    check_rule_order(file, &placed, shape, &mut diags);
     if placed.is_empty() && diags.is_empty() && uncarried.is_empty() {
         diags.push(located(
             file,
@@ -97,7 +96,7 @@ pub fn parse_rules_located(
         ));
     }
     if diags.is_empty() {
-        // Every rule reached `check_rule_order` and every rule reaches the CALLER, located: what a rule's place earns is not the model's to grant, and `rules_of` is the one point the emptied ones stop.
+        // Every rule reaches the CALLER, located and in written order: what a rule's place earns is not the model's to grant, and `rules_of` is the one point the emptied ones stop.
         Ok(SidecarRead {
             rules: placed
                 .into_iter()
@@ -167,9 +166,10 @@ fn read_rules(
     }
 }
 
-/// [`parse_rules`] read backward. The rules must already ascend by [`Target`] with each rule's
-/// declarations alphabetical, the one order this parses back from; a root holding no rule writes NO
-/// sidecar. `root` supplies the extent an index is spelled against, exactly as the filename does.
+/// [`parse_rules`] read backward, over the order the [`Presentation`] holds — WRITTEN order, which
+/// is the order the rules cascade in, so a sidecar read and spelled again is its own text. Each
+/// rule's declarations must already be alphabetical, the one order those parse back from, and a
+/// root holding no rule writes NO sidecar; `root` supplies the extent an index is spelled against.
 pub fn spell_rules(root: Rect, presentation: &Presentation) -> String {
     let shape = shape_of(root);
     let selectors: Vec<String> = presentation
@@ -199,12 +199,8 @@ pub fn spell_rules(root: Rect, presentation: &Presentation) -> String {
         })
         .collect();
     debug_assert!(
-        !rules.is_empty()
-            && presentation
-                .rules
-                .windows(2)
-                .all(|w| w[0].target < w[1].target),
-        "a written presentation holds rules, ascending by target",
+        !rules.is_empty(),
+        "a root holding no rule writes no sidecar",
     );
     spell_sidecar(&rules)
 }
@@ -341,8 +337,7 @@ fn resolve_target(
 ) -> Option<Target> {
     match parse_selector(selector, shape) {
         Ok(target) => {
-            let target = canonicalize(target, shape);
-            // PRES1, after canonicalisation: on a one-row or one-column root a cell selector folds to `Col`/`Row` and stays legal, so what is left truly addresses a coordinate.
+            // PRES1 over the target the selector NAMES: a cell selector addresses a coordinate on every root, a single line of one axis included.
             if let Target::Cell { row, col } = target {
                 let at = crate::Rect::cell(col - 1, row - 1).label();
                 diags.push(located(
@@ -487,75 +482,6 @@ impl Uncarried {
             format!("{}: {}", self.text, self.why),
         )
     }
-}
-
-fn check_rule_order(
-    file: &str,
-    placed: &[(u32, u32, Rule)],
-    shape: Shape,
-    diags: &mut Vec<Diagnostic>,
-) {
-    for window in placed.windows(2) {
-        let ((_, _, before), (line, col, after)) = (&window[0], &window[1]);
-        if after.target == before.target {
-            diags.push(located(
-                file,
-                *line,
-                *col,
-                Code::PresentationSyntax,
-                format!(
-                    "the selector `{}` is declared twice; give it one rule",
-                    spell(after.target, shape)
-                ),
-            ));
-        } else if after.target < before.target {
-            diags.push(located(
-                file,
-                *line,
-                *col,
-                Code::NonCanonicalPresentation,
-                format!(
-                    "rules run all, periodic rows, periodic columns, rows, columns then cells, each ascending: write `{}` before `{}`",
-                    spell(after.target, shape),
-                    spell(before.target, shape),
-                ),
-            ));
-        }
-    }
-}
-
-/// An axis of extent 1 carries no selector of its own: with H = 1 a row selector and a cell selector
-/// pick out the whole region and a column respectively, and folding them here is what leaves one
-/// spelling per appearance.
-fn canonicalize(target: Target, shape: Shape) -> Target {
-    let target = match target {
-        Target::RowEvery { a, b } => match lone(a, b, shape.rows) {
-            Some(row) => Target::Row(row),
-            None => target,
-        },
-        Target::ColEvery { a, b } => match lone(a, b, shape.cols) {
-            Some(col) => Target::Col(col),
-            None => target,
-        },
-        other => other,
-    };
-    let target = match target {
-        Target::Row(_) | Target::RowEvery { .. } if shape.rows == 1 => Target::All,
-        Target::Cell { col, .. } if shape.rows == 1 => Target::Col(col),
-        other => other,
-    };
-    match target {
-        Target::Col(_) | Target::ColEvery { .. } if shape.cols == 1 => Target::All,
-        Target::Cell { row, .. } if shape.cols == 1 => Target::Row(row),
-        other => other,
-    }
-}
-
-/// The one line `An+B` reaches inside `extent`, where it reaches only one — which a LITERAL index
-/// already spells, so leaving it periodic would give one appearance two spellings.
-fn lone(a: u32, b: u32, extent: u32) -> Option<u32> {
-    let first = if b == 0 { a } else { b };
-    (first <= extent && first + a > extent).then_some(first)
 }
 
 fn spell(target: Target, shape: Shape) -> String {
@@ -836,6 +762,13 @@ mod tests {
 
     const REGION: Shape = Shape { rows: 4, cols: 3 };
 
+    /// `#3f0421`, the colour these cases declare, as the value a resolved style holds it as.
+    const PLUM: Rgb = Rgb {
+        r: 0x3f,
+        g: 0x04,
+        b: 0x21,
+    };
+
     /// The root a `shape` spells when it is anchored at A1 — the one a test's rules are read under.
     fn root_of(shape: Shape) -> Rect {
         Rect {
@@ -958,18 +891,23 @@ mod tests {
         assert!(selector_refusal("fsa1-row:nth-child(7n) fsa1-cell").contains("first selects 7"));
     }
 
-    /// A period reaching ONE line of the region picks out exactly what a literal index does, so the
-    /// author is sent to the spelling that set already has rather than being given a second.
+    /// A target is what its selector NAMES, so a period reaching one line of the region stays the
+    /// period written — and reaches exactly the line a literal index would.
     #[test]
-    fn a_periodic_index_reaching_one_line_is_that_literal_index() {
-        let diag = refusal("@scope {\n  fsa1-row:nth-child(7n+3) fsa1-cell { color: #3f0421 }\n}");
-        assert_eq!(diag.code, Code::NonCanonicalPresentation);
-        assert!(
-            diag.message
-                .contains("write `fsa1-row:nth-child(3) fsa1-cell`"),
-            "{}",
-            diag.message
-        );
+    fn a_periodic_index_reaching_one_line_reaches_that_line() {
+        let p = parse(
+            "@scope {\n  fsa1-row:nth-child(7n+3) fsa1-cell { color: #3f0421 }\n}",
+            REGION,
+        )
+        .expect("a period naming one line is the period written");
+        assert_eq!(p.rules[0].target, Target::RowEvery { a: 7, b: 3 });
+        for row in 1..=REGION.rows {
+            assert_eq!(
+                crate::style::resolve(&p, row, 1).color.is_some(),
+                row == 3,
+                "row {row}"
+            );
+        }
     }
 
     /// One appearance, one spelling: each refusal below names a set some EXISTING form already
@@ -1015,21 +953,15 @@ mod tests {
         );
     }
 
-    /// An axis of extent 1 has nothing to alternate over, so a periodic index there selects exactly
-    /// what `fsa1-cell` does — and the author is told which spelling that set already has.
+    /// An axis of extent 1 has one line for a periodic index to reach, and the target is still the
+    /// period the selector names — at the rank a row selector has, not `fsa1-cell`'s.
     #[test]
-    fn a_periodic_index_on_a_single_line_axis_is_refused_for_the_form_that_says_it() {
+    fn a_periodic_index_on_a_single_line_axis_names_that_line() {
         let one_row = Shape { rows: 1, cols: 3 };
         let content = "@scope {\n  fsa1-row:nth-child(2n+1) fsa1-cell { color: #3f0421 }\n}";
-        let diag = parse(content, one_row)
-            .expect_err("a single-row region spells this `fsa1-cell`")
-            .remove(0);
-        assert_eq!(diag.code, Code::NonCanonicalPresentation);
-        assert!(
-            diag.message.contains("write `fsa1-cell`"),
-            "{}",
-            diag.message
-        );
+        let p = parse(content, one_row).expect("a one-row root carries the period written");
+        assert_eq!(p.rules[0].target, Target::RowEvery { a: 2, b: 1 });
+        assert!(crate::style::resolve(&p, 1, 1).color.is_some());
     }
 
     #[test]
@@ -1287,8 +1219,8 @@ mod tests {
     }
 
     /// The third column is the block with the named rewrite APPLIED, supplied rather than scraped out
-    /// of the message: a rewrite targets a whole declaration, a value alone, a selector, or an
-    /// ordering, so there is no one span to substitute into and no mechanical way to derive it today.
+    /// of the message: a rewrite targets a whole declaration, a value alone or a selector, so there is
+    /// no one span to substitute into and no mechanical way to derive it today.
     #[test]
     fn every_non_canonical_spelling_carries_a_rewrite_that_retires_it() {
         for (block, want, rewritten) in [
@@ -1327,11 +1259,6 @@ mod tests {
                 "fsa1-row:first-child fsa1-cell",
                 "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
             ),
-            (
-                "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n  fsa1-cell { color: #3f0421 }\n}",
-                "write `fsa1-cell` before `fsa1-cell:first-child`",
-                "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell:first-child { color: #3f0421 }\n}",
-            ),
         ] {
             let d = refusal(block);
             assert_eq!(d.code, Code::NonCanonicalPresentation, "{block:?}");
@@ -1348,28 +1275,10 @@ mod tests {
         }
     }
 
-    /// A rule's SELECTOR and its place among the others are the frame, and the frame does not care
-    /// what the typed model can read: the same two sidecars, differing only in whether the second
-    /// rule's declaration is carried, earn the same structural refusal. The rule emptied by typing
-    /// still leaves the MODEL, which has nothing to resolve from it.
+    /// A rule the typed model reads nothing from leaves the MODEL, which has nothing to resolve from
+    /// it, while the rule the model does carry stays.
     #[test]
-    fn a_rule_the_model_carries_nothing_from_still_answers_for_its_place() {
-        for (carried, uncarried, code) in [
-            (
-                "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n  fsa1-cell { color: #ffffff }\n}",
-                "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n  fsa1-cell { box-shadow: none }\n}",
-                Code::NonCanonicalPresentation,
-            ),
-            (
-                "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell { color: #ffffff }\n}",
-                "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell { box-shadow: none }\n}",
-                Code::PresentationSyntax,
-            ),
-        ] {
-            assert_eq!(refusal(carried).code, code, "{carried:?}");
-            let d = refusal(uncarried);
-            assert_eq!(d.code, code, "{uncarried:?} -> {}", d.message);
-        }
+    fn a_rule_typing_emptied_leaves_the_model() {
         let loaded = rules(
             "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell:first-child { box-shadow: none }\n}",
         );
@@ -1410,6 +1319,30 @@ mod tests {
                 spell_rules(root, &parsed),
                 text,
                 "{text:?} did not spell back to itself",
+            );
+        }
+    }
+
+    /// The order a sidecar is WRITTEN in is the order it cascades in, so the emitter writes what it
+    /// was handed rather than a sorted copy of it: a sidecar out of ascending order and one
+    /// repeating a selector each spell back to their own bytes, and back to the same rules again.
+    #[test]
+    fn a_sidecar_out_of_ascending_order_or_repeating_a_selector_spells_back_to_itself() {
+        for content in [
+            "@scope {\n  fsa1-cell:nth-child(2) { color: #d33333 }\n  fsa1-cell { color: #3f0421 }\n}",
+            "@scope {\n  fsa1-cell { color: #d33333 }\n  fsa1-cell { color: #3f0421 }\n}",
+        ] {
+            let text = body(content);
+            let root = root_of(REGION);
+            let parsed = parse_rules(&sidecar(REGION), root, &text)
+                .unwrap_or_else(|d| panic!("{text:?}: {:?}", d[0]));
+            let spelled = spell_rules(root, &parsed);
+            assert_eq!(spelled, text, "{text:?} did not spell back to itself");
+            assert_eq!(
+                parse_rules(&sidecar(REGION), root, &spelled)
+                    .unwrap_or_else(|d| panic!("{spelled:?}: {:?}", d[0])),
+                parsed,
+                "{text:?} did not read back to the rules it was written from",
             );
         }
     }
@@ -1569,17 +1502,19 @@ mod tests {
         );
     }
 
+    /// An axis of extent 1 still has a line, and the selector naming it loads at the rank CSS gives
+    /// it: a bare `fsa1-cell` written after a row rule is the less specific of the two and loses to
+    /// it. A CELL selector addresses a coordinate on such a root as on any other, which is PRES1.
     #[test]
-    fn an_axis_of_extent_one_carries_no_selector_of_its_own() {
+    fn an_axis_of_extent_one_carries_the_selector_that_names_it() {
         let one_row = Shape { rows: 1, cols: 3 };
-        let d = parse(
-            "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
+        let p = parse(
+            "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n  fsa1-cell { color: #ffffff }\n}",
             one_row,
         )
-        .unwrap_err()
-        .remove(0);
-        assert_eq!(d.code, Code::NonCanonicalPresentation);
-        assert!(d.message.contains("write `fsa1-cell`"), "{}", d.message);
+        .expect("a one-row root carries its row selector");
+        assert_eq!(p.rules[0].target, Target::Row(1));
+        assert_eq!(crate::style::resolve(&p, 1, 2).color, Some(PLUM));
 
         let d = parse(
             "@scope {\n  fsa1-row:first-child fsa1-cell:nth-child(2) { color: #3f0421 }\n}",
@@ -1587,28 +1522,28 @@ mod tests {
         )
         .unwrap_err()
         .remove(0);
-        assert!(
-            d.message.contains("write `fsa1-cell:nth-child(2)`"),
-            "{}",
-            d.message
-        );
+        assert_eq!(d.code, Code::PresentationSelector, "{}", d.message);
 
         let one_col = Shape { rows: 4, cols: 1 };
-        let d = parse(
+        let p = parse(
             "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n}",
             one_col,
         )
-        .unwrap_err()
-        .remove(0);
-        assert!(d.message.contains("write `fsa1-cell`"), "{}", d.message);
+        .expect("a one-column root carries its column selector");
+        assert_eq!(p.rules[0].target, Target::Col(1));
     }
 
+    /// Two rules of one target are two rules, applying in turn: the later wins property by property,
+    /// which is the cascade the browser runs and not a merge the parser does.
     #[test]
-    fn a_repeated_selector_is_refused() {
-        let d =
-            refusal("@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell { font-size: 11pt }\n}");
-        assert_eq!(d.code, Code::PresentationSyntax);
-        assert!(d.message.contains("twice"), "{}", d.message);
+    fn a_repeated_selector_cascades_in_source_order() {
+        let p = parse(
+            "@scope {\n  fsa1-cell { color: #d33333 }\n  fsa1-cell { color: #3f0421 }\n}",
+            REGION,
+        )
+        .expect("a selector written twice layers");
+        assert_eq!(p.rules.len(), 2, "{:?}", p.rules);
+        assert_eq!(crate::style::resolve(&p, 1, 1).color, Some(PLUM));
     }
 
     #[test]

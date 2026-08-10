@@ -166,7 +166,7 @@ impl Code {
                 "an axis size is declared only on a selector that names the axis being sized"
             }
             Code::NonCanonicalPresentation => {
-                "a presentation sidecar has one spelling per appearance"
+                "a selector has one canonical spelling, and a sidecar writes only that one"
             }
             Code::XlsxNotCarried => {
                 "an .xlsx carries only what Excel models, so a declaration outside its properties, or a figure outside its charts, cannot be packed"
@@ -271,7 +271,9 @@ impl Code {
                  Every other property is declared on any selector"
             }
             Code::NonCanonicalPresentation => {
-                "apply the rewrite the message names: index 1 is `:first-child` and the last index `:last-child`, an axis of extent 1 carries no selector of its own, and rules run all, then rows, then columns, then cells ascending"
+                "write the selector the message names -- only its SPELLING is at fault: index 1 is `:first-child`, \
+                 the region's last index `:last-child` (on an axis of extent 1 that one line is `:first-child`), \
+                 a periodic step drops a zero offset (`2n`, never `2n+0`), and ONE space joins the row and cell parts"
             }
             Code::XlsxNotCarried => {
                 "restate the loss in what the .xlsx carries, else delete it: a declaration as `#rrggbb`, `<n>pt`, `<n>ch`, \

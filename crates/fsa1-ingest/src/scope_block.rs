@@ -174,7 +174,7 @@ fn spell(rules: BTreeMap<Target, Vec<Declaration>>) -> Option<Presentation> {
 /// The one size a bare `fsa1-cell` may state for the whole block: EVERY axis of it sized, and all sizes
 /// agreeing. A `fsa1-cell` over a block holding one unsized axis would fabricate a size for that axis, which
 /// no finer rule can take back — the same hazard that keeps the modal rule off an unspellable default.
-/// It also subsumes the extent-1 case, where the block's one axis carries no selector of its own.
+/// At extent 1 the one line IS the axis, so its own size passes rather than needing a case of its own.
 fn modal_size<T: Copy + PartialEq>(extent: u32, sizes: &[(u32, T)]) -> Option<T> {
     let (first, rest) = sizes.split_first()?;
     (sizes.len() == extent as usize && rest.iter().all(|(_, size)| *size == first.1))
@@ -1151,8 +1151,9 @@ mod tests {
         );
     }
 
-    /// An axis of extent 1 carries no selector of its own, so a stray cell's own file — the shape
-    /// every partition reaches in the limit — can only ever spell `fsa1-cell`.
+    /// A line earns a selector of its own only by differing from the block, so a stray cell's own
+    /// file — the shape every partition reaches in the limit — holds the one cell that IS the block
+    /// and can only ever spell `fsa1-cell`.
     #[test]
     fn a_block_of_extent_one_spells_only_a_bare_td() {
         assert_eq!(block_of(1, 1, &[14.0]), "  fsa1-cell { font-size: 14pt }\n",);

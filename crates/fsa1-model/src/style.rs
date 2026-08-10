@@ -170,66 +170,45 @@ pub fn default_style() -> CellStyle {
     }
 }
 
-/// CSS specificity, which is NOT [`Target`]'s `Ord`: `fsa1-row:nth-child(r) fsa1-cell` is two compound selectors
-/// (0,1,2) where `fsa1-cell:nth-child(c)` is one (0,1,1), so a row rule outranks a column rule. A periodic
-/// form TIES with its axis's literal, both being one pseudo-class, so CSS breaks that on source
-/// order — and the writing order puts the periodic first, which giving it the lower slot IS.
+/// The selector's CSS specificity CLASS, which is NOT [`Target`]'s `Ord`: `fsa1-cell` is (0,0,1),
+/// `fsa1-cell:nth-child(c)` one compound selector (0,1,1), `fsa1-row:nth-child(r) fsa1-cell` two
+/// (0,1,2) and a cell selector (0,2,2) — so a row rule outranks a column rule. A periodic form TIES
+/// with its axis's literal, both being one pseudo-class, and CSS breaks that tie on source order.
 fn specificity(target: Target) -> u8 {
     match target {
         Target::All => 0,
-        Target::ColEvery { .. } => 1,
-        Target::Col(_) => 2,
-        Target::RowEvery { .. } => 3,
-        Target::Row(_) => 4,
-        Target::Cell { .. } => 5,
+        Target::Col(_) | Target::ColEvery { .. } => 1,
+        Target::Row(_) | Target::RowEvery { .. } => 2,
+        Target::Cell { .. } => 3,
     }
 }
 
-/// `row` and `col` are 1-based and region-relative, the basis `:nth-child(k)` counts in. At most six
-/// rules reach a coordinate, a duplicate target being refused at parse; they apply in ascending
-/// [`specificity`], each overwriting property by property.
+/// Whether a target selects the coordinate. A periodic index reaches lines `b`, `b+a`, `b+2a`, …,
+/// which is the `An+B` the selector spells.
+fn selects(target: Target, row: u32, col: u32) -> bool {
+    match target {
+        Target::All => true,
+        Target::Row(r) => row == r,
+        Target::Col(c) => col == c,
+        Target::RowEvery { a, b } => row % a == b,
+        Target::ColEvery { a, b } => col % a == b,
+        Target::Cell { row: r, col: c } => row == r && col == c,
+    }
+}
+
+/// `row` and `col` are 1-based and region-relative, the basis `:nth-child(k)` counts in. Every rule
+/// selecting the coordinate applies, ascending by [`specificity`] and, inside one class, in the order
+/// the sidecar wrote them — the browser's own two keys — each overwriting property by property.
 pub fn resolve(presentation: &Presentation, row: u32, col: u32) -> CellStyle {
-    debug_assert!(
-        presentation
-            .rules
-            .windows(2)
-            .all(|w| w[0].target < w[1].target),
-        "a parsed presentation's rules are strictly ascending by target",
-    );
-    // The slot IS the specificity, so the cascade order has one home rather than a second hand-kept ordering here.
-    let mut matched: [Option<&Rule>; 6] = [None; 6];
-    for target in [
-        Target::All,
-        Target::Row(row),
-        Target::Col(col),
-        Target::Cell { row, col },
-    ] {
-        if let Ok(i) = presentation
-            .rules
-            .binary_search_by(|rule| rule.target.cmp(&target))
-        {
-            matched[specificity(target) as usize] = Some(&presentation.rules[i]);
-        }
-    }
-    // No search for THIS line finds a rule selecting many; the run sits after `All`, last wins.
-    for rule in &presentation.rules {
-        match rule.target {
-            Target::All => {}
-            Target::RowEvery { a, b } | Target::ColEvery { a, b } => {
-                let line = if matches!(rule.target, Target::RowEvery { .. }) {
-                    row
-                } else {
-                    col
-                };
-                if line % a == b {
-                    matched[specificity(rule.target) as usize] = Some(rule);
-                }
-            }
-            _ => break,
-        }
-    }
+    let mut matched: Vec<&Rule> = presentation
+        .rules
+        .iter()
+        .filter(|rule| selects(rule.target, row, col))
+        .collect();
+    // Stable, so the written order is what breaks a tie inside one class — source order, as CSS has it.
+    matched.sort_by_key(|rule| specificity(rule.target));
     let mut style = CellStyle::default();
-    for rule in matched.into_iter().flatten() {
+    for rule in matched {
         for declaration in &rule.declarations {
             style.apply(declaration);
         }
@@ -323,6 +302,33 @@ mod tests {
             .map(Declaration::spell)
             .collect();
         assert_eq!(spelled.join("; "), DECLARATIONS);
+    }
+
+    /// A periodic index and a literal one tie on specificity, so the tie-break is SOURCE ORDER and a
+    /// sidecar is free to write them either way round: the colour written LAST is the one in force.
+    #[test]
+    fn a_tie_on_specificity_breaks_on_the_order_the_sidecar_wrote() {
+        let literal = "  fsa1-row:nth-child(2) fsa1-cell { color: #ff0000 }";
+        let periodic = "  fsa1-row:nth-child(2n) fsa1-cell { color: #0000ff }";
+        let red = Rgb { r: 255, g: 0, b: 0 };
+        let blue = Rgb { r: 0, g: 0, b: 255 };
+        let p = presentation_over("A1:B4", &format!("{literal}\n{periodic}"));
+        assert_eq!(resolve(&p, 2, 1).color, Some(blue));
+        let p = presentation_over("A1:B4", &format!("{periodic}\n{literal}"));
+        assert_eq!(resolve(&p, 2, 1).color, Some(red));
+    }
+
+    /// An axis of extent 1 carries the selector that names it, and that selector is a ROW one: it
+    /// outranks a column rule wherever both match, whichever of the two the sidecar wrote first.
+    #[test]
+    fn a_row_rule_outranks_a_column_rule_on_a_single_row_root() {
+        let row = "  fsa1-row:first-child fsa1-cell { color: #0000ff }";
+        let column = "  fsa1-cell:nth-child(2) { color: #ff0000 }";
+        let blue = Rgb { r: 0, g: 0, b: 255 };
+        let p = presentation_over("A1:C1", &format!("{row}\n{column}"));
+        assert_eq!(resolve(&p, 1, 2).color, Some(blue));
+        let p = presentation_over("A1:C1", &format!("{column}\n{row}"));
+        assert_eq!(resolve(&p, 1, 2).color, Some(blue));
     }
 
     /// The CSS reading of the two selectors, which the canonical WRITING order reverses; a
