@@ -1,4 +1,4 @@
-// Concern: one function per verb, naming its target, choosing its drawer and asking what its carrier will not take | Non-concern: parsing the flags | IO: (path + options) -> an outcome or a Refusal
+// Concern: one function per verb, naming its target, how much it reads, its drawer, and what its carrier drops | Non-concern: parsing the flags | IO: (path + options) -> an outcome or a Refusal
 
 use std::path::{Path, PathBuf};
 
@@ -50,7 +50,7 @@ fn view_at(
     format: Format,
     full: bool,
 ) -> Result<Rendered, Refusal> {
-    let resolved = address::resolve(target)?;
+    let resolved = address::resolve(target, address::Demand::Path)?;
     if resolved.workbook.sheet_names().is_empty() {
         let msg = format!(
             "{target:?} has no tabs (a tab is a sub-folder of cell/range files; name one as <workbook>/<tab>)"
@@ -64,13 +64,7 @@ fn view_at(
         (None, None) => ViewScope::Workbook,
     };
     // The same demand the path states, in the loaders' vocabulary: a file whose NAME the path never meets is not opened, so it neither draws, nor is named, nor refuses the render.
-    let demand = fsa1_model::Scope::new(
-        resolved
-            .tab
-            .and_then(|sheet| wb.sheet_name(sheet))
-            .map(str::to_string),
-        resolved.region(),
-    );
+    let demand = resolved.demand();
     // `tree` NAMES each figure and the table MARKS the cells it covers, so both presenters open one; `eval` and `trace` reach a different function and still never do.
     let (figures, mut notes) = load_figures_scoped(&resolved.root, &demand)?;
     let needs_axes = figures
@@ -335,7 +329,8 @@ pub struct EvalArgs<'a> {
 /// and a front end that scores that as a failure needs to be able to tell it from one that did not.
 pub fn eval(args: EvalArgs<'_>) -> Result<FormulaOutcome, Refusal> {
     let EvalArgs { target, formula } = args;
-    let resolved = address::resolve(target)?;
+    // An ad-hoc expression is not in the workbook, so no seed derives from it and a demand would read the files its references name as blank: it takes the whole workbook (decision 7).
+    let resolved = address::resolve(target, address::Demand::Whole)?;
     if resolved.workbook.sheet_names().is_empty() {
         let msg = format!("{target:?} has no tabs (a tab is a sub-folder of cell/range files)");
         return Err(fail(Kind::Validation, &msg));
@@ -354,7 +349,12 @@ pub struct TraceArgs<'a> {
 
 pub fn trace(args: TraceArgs<'_>) -> Result<TraceNode, Refusal> {
     let TraceArgs { target, dir, depth } = args;
-    let resolved = address::resolve(target)?;
+    // The reverse direction inverts the forward map of the files it LOADED, so an unread file holding a reference to the target would drop silently out of the answer; upstream has the closure itself.
+    let demand = match dir {
+        Direction::Upstream => address::Demand::Path,
+        Direction::Downstream => address::Demand::Whole,
+    };
+    let resolved = address::resolve(target, demand)?;
     if resolved.workbook.sheet_names().is_empty() {
         let msg = format!("{target:?} has no tabs (a tab is a sub-folder of cell/range files)");
         return Err(fail(Kind::Validation, &msg));

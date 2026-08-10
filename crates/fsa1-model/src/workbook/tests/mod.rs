@@ -1,4 +1,4 @@
-// Concern: pins the engine's demand-driven behaviour end to end | Non-concern: graph shape and traversal order | IO: workbooks -> asserted values and diagnostics
+// Concern: pins the engine's demand-driven behaviour end to end | Non-concern: graph shape and traversal order | IO: workbooks and on-disk trees -> asserted values, read sets and diagnostics
 use std::collections::HashSet;
 
 use super::*;
@@ -1564,4 +1564,155 @@ fn an_open_axis_never_overflows_the_positional_and_forging_functions() {
             "{f} must refuse, never overflow or abort"
         );
     }
+}
+
+/// A real temp-dir tree, which is the level the closure is observable at: [`Workbook::from_tabs`]
+/// hands the loader every file at once, so nothing it does can show which were opened.
+fn tree(tag: &str, files: &[(&str, &str, &str)]) -> std::path::PathBuf {
+    let base = temp_dir_for(tag);
+    for (tab, name, body) in files {
+        let dir = base.join(tab);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(crate::range_file_name(name)), body).unwrap();
+    }
+    base
+}
+
+fn scoped(dir: &std::path::Path, tab: &str, rect: Rect) -> Workbook {
+    Workbook::load_dir_scoped(
+        dir,
+        &crate::scope::Scope::new(Some(tab.to_string()), Some(rect)),
+    )
+    .expect("fs read ok")
+    .expect("loads clean")
+}
+
+/// Transitive: the demanded cell reaches tab 2 by a direct reference and tab 3 only through tab 2's
+/// own formula, so a one-round frontier would answer 0 rather than 42. A fourth tab no reference
+/// reaches is never opened.
+#[test]
+fn the_closure_pulls_a_reference_a_pulled_file_makes() {
+    let dir = tree(
+        "closure-transitive",
+        &[
+            ("Sheet1", "A1", "=Sheet2!A1"),
+            ("Sheet2", "A1", "=Sheet3!A1*2"),
+            ("Sheet3", "A1", "21"),
+            ("Sheet4", "A1", "999"),
+        ],
+    );
+    let wb = scoped(&dir, "Sheet1", Rect::cell(0, 0));
+    assert_eq!(wb.value_at(0, 0, 0), Value::Number(42.0));
+    assert!(
+        wb.tab_files(3).expect("Sheet4 is listed").is_empty(),
+        "no reference reaches Sheet4, so none of its files is opened"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A forger builds its reference at eval time, so the static closure cannot frame `Sheet2/A9`: the
+/// escape hatch promotes the frontier to every remaining file instead of answering blank.
+#[test]
+fn a_forger_in_a_demanded_cell_promotes_the_frontier_to_the_whole_workbook() {
+    let dir = tree(
+        "closure-forger",
+        &[
+            ("Sheet1", "A1", "=OFFSET(Sheet2!A1,8,0)"),
+            ("Sheet2", "A1", "1"),
+            ("Sheet2", "A9", "5"),
+        ],
+    );
+    let wb = scoped(&dir, "Sheet1", Rect::cell(0, 0));
+    assert_eq!(wb.value_at(0, 0, 0), Value::Number(5.0));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A figure's data range is a dependency no formula spells: without the binding seed the demanded
+/// `A1:B2` would expand to a dataset of blanks.
+#[test]
+fn an_in_scope_figures_binding_seeds_the_files_it_reads() {
+    let column: String = std::iter::once("v".to_string())
+        .chain((1..20).map(|i| i.to_string()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let dir = tree("closure-figure", &[("Sheet1", "D1:D20", &column)]);
+    let spec = r#"{"mark":"bar","data":{"name":"Sheet1!D1:D20"}}"#;
+    let entry = format!("{}.json", crate::range_file_name("A1:B2"));
+    std::fs::write(dir.join("Sheet1").join(entry), spec).unwrap();
+
+    let demand = crate::scope::Scope::new(
+        Some("Sheet1".to_string()),
+        Some(Rect {
+            min_col: 0,
+            min_row: 0,
+            max_col: 1,
+            max_row: 1,
+        }),
+    );
+    let wb = Workbook::load_dir_scoped(&dir, &demand)
+        .expect("fs read ok")
+        .expect("loads clean");
+    let figures = crate::figures::Figures::load_dir_scoped(&dir, &demand)
+        .expect("fs read ok")
+        .expect("the figure parses");
+    let (_, figure) = figures
+        .all()
+        .next()
+        .expect("the range-form figure is admitted");
+    let bound = figure.expand(&wb, 0).expect("the binding resolves");
+    let rows = bound["datasets"]["Sheet1!D1:D20"]
+        .as_array()
+        .expect("one dataset per binding");
+    assert_eq!(rows.len(), 19, "the header keys the 19 data rows");
+    assert_eq!(
+        rows[0]["v"],
+        serde_json::json!(1),
+        "the D values, not blanks"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A tab's content rect comes off the FULL listing: `A9` is outside the demand, and deriving the
+/// bound from the loaded subset would clamp `=SUM(A:A)` to row 1 and answer 1 — silently wrong.
+#[test]
+fn an_open_axis_clamps_against_content_a_file_outside_the_demand_declares() {
+    let dir = tree(
+        "closure-content",
+        &[
+            ("Sheet1", "A1", "1"),
+            ("Sheet1", "A9", "5"),
+            ("Sheet1", "B1", "=SUM(A:A)"),
+        ],
+    );
+    let wb = scoped(&dir, "Sheet1", Rect::cell(1, 0));
+    assert_eq!(wb.content_region(0).map(|r| r.max_row), Some(8));
+    assert_eq!(wb.value_at(0, 1, 0), Value::Number(6.0));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Decision 4's stated consequence: the overlap input is every LISTED filename, not the parsed
+/// subset, so a file that fails `parse_file` still declares the rectangle it collides on and the tab
+/// reports BOTH faults where it once reported only the dimension mismatch.
+#[test]
+fn a_file_that_will_not_parse_still_reports_the_overlap_its_name_declares() {
+    let dir = tree(
+        "listing-overlap",
+        &[
+            ("Bad", "A1:D9", "one literal in a 9x4 range"),
+            ("Bad", "B2", "7"),
+        ],
+    );
+    let diags = Workbook::load_dir(&dir)
+        .expect("fs read ok")
+        .expect_err("a broken tab refuses the load");
+    let has = |c: Code| diags.iter().any(|d| d.code == c);
+    assert!(
+        has(Code::DimensionMismatch),
+        "the unparseable grid is still graded: {diags:?}"
+    );
+    assert!(
+        has(Code::Overlap),
+        "A1:D9 x B2 comes off the listing, so it is reported too: {diags:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

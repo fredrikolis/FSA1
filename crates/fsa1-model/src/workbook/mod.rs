@@ -1,4 +1,4 @@
-// Concern: the loaded workbook, its tabs, its caches and the demand entry points | Non-concern: presentation, which it cannot reach (overlay.rs); the evaluate passes | IO: (dir or tabs) -> Workbook
+// Concern: the loaded workbook and what a skeleton or demand load reads into it | Non-concern: presentation (overlay.rs), evaluation | IO: (dir [+ demand], or tabs) -> Workbook
 //! Every demand runs a PLAN pass then an EVALUATE pass. The dependency graph between them is a
 //! CONTAINED optimization: its type never leaves this module, and it equals a naive per-cell
 //! evaluation, which the differential test below proves.
@@ -7,6 +7,7 @@ mod evaluate;
 mod forge;
 mod hash;
 mod plan;
+mod ref_rects;
 mod resolver;
 #[cfg(test)]
 mod tests;
@@ -14,7 +15,7 @@ mod trace;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fsa1_ast::{
     CellRef, Expr, RangeNode, Resolver, SheetId, Value, eval, eval_at, parse, system_now_secs,
@@ -22,12 +23,16 @@ use fsa1_ast::{
 };
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
+use crate::figure::Binding;
+use crate::figures::Figures;
+use crate::filename::parse_filename;
 use crate::grid::{Cell as GridCell, Grid};
 use crate::names::{
     NameRepr, NameScope, NameTable, RawNameEntry, figure_occupancy, is_cell_filename,
     is_figure_entry, is_presentation_entry,
 };
 use crate::overlap::{Rect, detect_overlaps};
+use crate::scope::Scope;
 use crate::{ParsedFile, figure_in_root, parse_file, presentation_in_grid};
 
 use forge::ForgeStore;
@@ -67,6 +72,10 @@ struct LoadedFile {
     region: Rect,
     grid: Grid,
     array_formula: bool,
+    /// Its demand-provenance: `false` where the demand named it, `true` where the closure pulled it
+    /// in through a reference. Written here and read by nothing yet — plan 51 grades a file by it.
+    #[allow(dead_code)]
+    pulled: bool,
 }
 
 /// The coordinate index is SPLIT because a tab post-import is overwhelmingly single-cell files:
@@ -77,6 +86,10 @@ struct LoadedFile {
 struct Tab {
     name: String,
     files: Vec<LoadedFile>,
+    /// How far the tab's declared cells reach, off the FULL listing rather than the loaded subset:
+    /// deriving it from `files` under a demand would let `=SUM(A:A)` clamp short and answer a
+    /// silently wrong number.
+    content: Option<Rect>,
     single: HashMap<(u32, u32), usize>,
     spans: Vec<(Rect, usize)>,
     by_name: HashMap<String, usize>,
@@ -84,7 +97,7 @@ struct Tab {
 
 impl Tab {
     /// File order is PRESERVED: a [`FileId`]'s second component indexes `files`.
-    fn new(name: String, files: Vec<LoadedFile>) -> Tab {
+    fn new(name: String, files: Vec<LoadedFile>, content: Option<Rect>) -> Tab {
         let mut single = HashMap::new();
         let mut spans = Vec::new();
         let mut by_name = HashMap::new();
@@ -100,6 +113,7 @@ impl Tab {
         Tab {
             name,
             files,
+            content,
             single,
             spans,
             by_name,
@@ -120,11 +134,47 @@ struct TabInput {
     occupied: Vec<(String, Rect)>,
 }
 
-type TabParts = (
-    Vec<(String, String)>,
-    Vec<RawNameEntry>,
-    Vec<(String, Rect)>,
-);
+/// One tab's FULL listing: every entry classified by NAME, with no range file's content read. The
+/// listing is complete whatever the demand, which is what keeps `content` and the overlap verdict
+/// total at no read cost.
+struct TabListing {
+    name: String,
+    entries: Vec<TabEntry>,
+    occupied: Vec<(String, Rect)>,
+    content: Option<Rect>,
+}
+
+/// A range file as its NAME alone describes it. `region` is `None` where the name states no extent —
+/// which is why no demand can exclude such an entry.
+struct TabEntry {
+    name: String,
+    path: PathBuf,
+    region: Option<Rect>,
+}
+
+/// One tab's listing as [`list_tab_dir`] classifies it: its range-file entries, the defined names it
+/// holds, and the rectangles its range-form figures fill.
+type TabParts = (Vec<TabEntry>, Vec<RawNameEntry>, Vec<(String, Rect)>);
+
+/// A listed entry's slot in the closure: `None` while unread, else what reading and parsing it gave.
+type ReadSlot = Option<Result<LoadedFile, Vec<Diagnostic>>>;
+
+/// What the root walk yields before a single cell is read: the tabs, and every defined-name entry
+/// the whole tree holds.
+struct Listing {
+    tabs: Vec<TabListing>,
+    raw_names: Vec<RawNameEntry>,
+}
+
+/// A tab as assembly takes it: what parsed, what refused, the regions the overlap check grades, and
+/// the content rect an open axis clamps against.
+struct TabLoad {
+    name: String,
+    files: Vec<LoadedFile>,
+    file_diags: Vec<Diagnostic>,
+    regions: Vec<(String, Rect)>,
+    content: Option<Rect>,
+}
 
 /// `(sheet index, zero-based col, zero-based row)`. Every grid cell is a DISTINCT computation, so
 /// the graph and the caches are keyed per cell, never per file.
@@ -298,50 +348,128 @@ impl Workbook {
     /// The outer `io::Result` reports a filesystem failure and the inner one the workbook's own
     /// refusals — kept apart, an unreadable directory not being a spreadsheet diagnostic.
     pub fn load_dir(root: &Path) -> std::io::Result<Result<Workbook, Vec<Diagnostic>>> {
-        let mut tabs: Vec<TabInput> = Vec::new();
-        // Read here, where the filesystem is present: the pure `names` module never touches it.
-        let mut raw_names: Vec<RawNameEntry> = Vec::new();
-        let mut root_faults: Vec<Diagnostic> = Vec::new();
-        let mut scratch = Vec::new();
-        let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let ft = entry.file_type()?;
-            let entry_name = entry.file_name().to_string_lossy().into_owned();
-            // Checked before the dir/file split, so a reserved name is excluded whichever kind it is on disk: `.git` is a directory and `.gitignore` a file, and either would otherwise be read.
-            if Self::is_reserved_entry(&entry_name) {
-                continue;
-            }
-            if ft.is_dir() {
-                let (files, names, occupied) = read_tab_dir(root, &entry_name, &entry.path())?;
-                tabs.push(TabInput {
-                    name: entry_name,
-                    files,
+        Workbook::load_dir_scoped(root, &Scope::unscoped())
+    }
+
+    /// The listing and name phases and NOTHING else: `sheet_names`, `content_region`, `tab_index`,
+    /// the overlap verdict and `name_table` are all complete, and every tab holds zero cells. It is
+    /// what a probe deciding a workbook root — and resolving a trailing defined name — needs before
+    /// the demand exists, so no path pays for a second content load.
+    pub fn load_skeleton(root: &Path) -> std::io::Result<Result<Workbook, Vec<Diagnostic>>> {
+        let listing = match list_dir(root)? {
+            Ok(listing) => listing,
+            Err(faults) => return Ok(Err(faults)),
+        };
+        let (names, diags) = NameTable::build(listing.raw_names);
+        let loads = listing
+            .tabs
+            .into_iter()
+            .map(|tab| {
+                let TabListing {
+                    name,
+                    entries,
                     occupied,
-                });
-                raw_names.extend(names);
-            } else if is_presentation_entry(&entry_name) {
-                // A sidecar styles COORDINATES, and a coordinate is a tab's; at the root it names none.
-                root_faults.push(presentation_in_grid(Loc::file(&entry_name)));
-            } else if is_figure_entry(&entry_name) {
-                // Without this arm it falls into `read_name_entry`'s `RefFile` arm and is claimed as a defined name.
-                root_faults.push(figure_in_root(Loc::file(&entry_name)));
-            } else if let Some(name) = read_name_entry(
-                root,
-                NameScope::Workbook,
-                &entry_name,
-                &entry.path(),
-                ft,
-                &mut scratch,
-            )? {
-                // A root-level A1-shaped regular file is neither a tab nor a name, so it is ignored.
-                raw_names.push(name);
+                    content,
+                } = tab;
+                TabLoad {
+                    name,
+                    files: Vec::new(),
+                    file_diags: Vec::new(),
+                    regions: listed_regions(&entries, occupied),
+                    content,
+                }
+            })
+            .collect();
+        Ok(assemble(loads, names, diags))
+    }
+
+    /// [`Workbook::load_dir`] under a demand. The listing, the names and the overlap verdict stay
+    /// total; the CELLS read are the demand's own files plus the transitive closure of the
+    /// rectangles their formulas — and the in-scope figures' bindings — reference. A file the
+    /// closure never frames is never opened, so it neither computes nor refuses.
+    pub fn load_dir_scoped(
+        root: &Path,
+        demand: &Scope,
+    ) -> std::io::Result<Result<Workbook, Vec<Diagnostic>>> {
+        let Listing { tabs, raw_names } = match list_dir(root)? {
+            Ok(listing) => listing,
+            Err(faults) => return Ok(Err(faults)),
+        };
+        let (names, name_diags) = NameTable::build(raw_names);
+        let sheets: Vec<String> = tabs.iter().map(|t| t.name.clone()).collect();
+        let content: Vec<Option<Rect>> = tabs.iter().map(|t| t.content).collect();
+        let mut read: Vec<Vec<ReadSlot>> = tabs
+            .iter()
+            .map(|t| t.entries.iter().map(|_| None).collect())
+            .collect();
+
+        let mut frontier = seed(&tabs, demand);
+        // Unscoped, the seed already admits every entry of every tab, so re-reading the figures to frame rectangles already framed buys nothing.
+        if demand.is_scoped() {
+            frame_rects(
+                &tabs,
+                &figure_rects(root, demand, &sheets)?,
+                &mut frontier,
+                false,
+            );
+        }
+        let mut scratch = Vec::new();
+        let mut forged = false;
+        while !frontier.is_empty() {
+            let mut rects: Vec<(u32, Rect)> = Vec::new();
+            for (ti, ei, pulled) in std::mem::take(&mut frontier) {
+                if read[ti][ei].is_some() {
+                    continue;
+                }
+                let entry = &tabs[ti].entries[ei];
+                let text = read_file_to_string(&entry.path, &mut scratch)?;
+                let parsed = parse_one(&names, &tabs[ti].name, &entry.name, &text, pulled);
+                if let Ok(file) = &parsed {
+                    for cell in &file.grid.cells {
+                        if let GridCell::Formula { expr, .. } = cell {
+                            rects.extend(ref_rects::ref_rects(expr, ti as u32, &sheets, &content));
+                            forged |= forge::expr_has_forger(expr);
+                        }
+                    }
+                }
+                read[ti][ei] = Some(parsed);
+            }
+            if forged {
+                // A forger builds its reference at eval time, so no static closure covers it: every remaining file joins the frontier, and the round that reads them adds none.
+                for (ti, tab) in tabs.iter().enumerate() {
+                    let unread = (0..tab.entries.len()).filter(|&ei| read[ti][ei].is_none());
+                    frontier.extend(unread.map(|ei| (ti, ei, true)));
+                }
+            } else {
+                frame_rects(&tabs, &rects, &mut frontier, true);
             }
         }
-        if !root_faults.is_empty() {
-            return Ok(Err(root_faults));
+
+        let mut loads = Vec::with_capacity(tabs.len());
+        for (ti, tab) in tabs.into_iter().enumerate() {
+            let TabListing {
+                name,
+                entries,
+                occupied,
+                content,
+            } = tab;
+            let mut files = Vec::new();
+            let mut file_diags = Vec::new();
+            for slot in read[ti].drain(..).flatten() {
+                match slot {
+                    Ok(file) => files.push(file),
+                    Err(d) => file_diags.extend(d),
+                }
+            }
+            loads.push(TabLoad {
+                name,
+                files,
+                file_diags,
+                regions: listed_regions(&entries, occupied),
+                content,
+            });
         }
-        Ok(Workbook::from_dir_parts(tabs, raw_names))
+        Ok(assemble(loads, names, name_diags))
     }
 
     /// An in-memory workbook has no symlinks, so a name here is always the ref-file representation.
@@ -378,13 +506,14 @@ impl Workbook {
         Workbook::from_dir_parts(cell_tabs, raw_names)
     }
 
-    /// Name resolution is a source rewrite AT LOAD, so the engine stays A1-only.
+    /// The in-memory path: every file handed in is read, so all of them are seeded and the tab's
+    /// content rect is the union of their names' regions, exactly as a full listing would give it.
     fn from_dir_parts(
         tabs: Vec<TabInput>,
         raw_names: Vec<RawNameEntry>,
     ) -> Result<Workbook, Vec<Diagnostic>> {
-        let (name_table, mut diags) = NameTable::build(raw_names);
-        let mut out_tabs = Vec::with_capacity(tabs.len());
+        let (name_table, diags) = NameTable::build(raw_names);
+        let mut loads = Vec::with_capacity(tabs.len());
         for tab in tabs {
             let TabInput {
                 name: tab_name,
@@ -392,67 +521,30 @@ impl Workbook {
                 occupied,
             } = tab;
             let mut loaded = Vec::new();
+            let mut file_diags = Vec::new();
             let mut regions: Vec<(String, Rect)> = Vec::new();
+            let mut content = None;
             for (fname, contents) in files {
-                // BEFORE deserializing, so the grid the engine sees carries only A1. An unresolvable name stays verbatim and loads as a located `#NAME?`.
-                let resolved = name_table.rewrite_tsv(&contents, &tab_name);
-                match parse_file(&fname, &resolved) {
-                    Ok(ParsedFile {
-                        region,
-                        declared_shape: _,
-                        grid,
-                        array_formula,
-                    }) => {
-                        regions.push((fname.clone(), region));
-                        loaded.push(LoadedFile {
-                            name: fname,
-                            region,
-                            grid,
-                            array_formula,
-                        });
-                    }
-                    Err(d) => diags.extend(d),
+                if let Some(region) = filename_region(&fname) {
+                    regions.push((fname.clone(), region));
+                    content = Rect::union(content, Some(region));
+                }
+                match parse_one(&name_table, &tab_name, &fname, &contents, false) {
+                    Ok(file) => loaded.push(file),
+                    Err(d) => file_diags.extend(d),
                 }
             }
             // After the cell files, so a colliding pair reads `<cell>  and  <figure>.json`.
             regions.extend(occupied);
-            diags.extend(detect_overlaps(&tab_name, &regions));
-            out_tabs.push(Tab::new(tab_name.clone(), loaded));
-        }
-        if diags.is_empty() {
-            let has_array_regions = out_tabs
-                .iter()
-                .any(|t| t.files.iter().any(|f| f.array_formula));
-            let has_forgers = out_tabs.iter().any(|t| {
-                t.files.iter().any(|f| {
-                    f.grid.cells.iter().any(|c| {
-                        matches!(c, GridCell::Formula { expr, .. } if forge::expr_has_forger(expr))
-                    })
-                })
+            loads.push(TabLoad {
+                name: tab_name,
+                files: loaded,
+                file_diags,
+                regions,
+                content,
             });
-            Ok(Workbook {
-                tabs: out_tabs,
-                names: name_table,
-                has_array_regions,
-                has_forgers,
-                forge: ForgeStore::default(),
-                now: system_now_serial(),
-                current_sheet: Cell::new(0),
-                memo: RefCell::new(HashMap::new()),
-                results: RefCell::new(HashMap::new()),
-                current_file: Cell::new(None),
-                arena: Arena::default(),
-                diagnostics: RefCell::new(Vec::new()),
-                #[cfg(test)]
-                eval_count: Cell::new(0),
-                #[cfg(test)]
-                pass_count: Cell::new(0),
-                #[cfg(test)]
-                covering_scan_steps: Cell::new(0),
-            })
-        } else {
-            Err(diags)
         }
+        assemble(loads, name_table, diags)
     }
 
     pub fn with_now(mut self, serial: f64) -> Workbook {
@@ -614,16 +706,10 @@ impl Workbook {
         self.tabs[idx].by_name.get(name).copied()
     }
 
-    /// How far the tab's CONTENT reaches — file regions only. A sidecar states no value, so a
+    /// How far the tab's CONTENT reaches — range-file names only. A sidecar states no value, so a
     /// block cannot move the bound an open-axis reference resolves against (VAL1).
     pub fn content_region(&self, sheet: u32) -> Option<Rect> {
-        let tab = self.tabs.get(sheet as usize)?;
-        tab.files.iter().map(|f| f.region).reduce(|acc, r| Rect {
-            min_col: acc.min_col.min(r.min_col),
-            min_row: acc.min_row.min(r.min_row),
-            max_col: acc.max_col.max(r.max_col),
-            max_row: acc.max_row.max(r.max_row),
-        })
+        self.tabs.get(sheet as usize)?.content
     }
 
     /// `None` for a gap. Overlaps are rejected at load, so at most one file covers a cell.
@@ -825,11 +911,65 @@ impl Workbook {
     }
 }
 
-/// Entries are sorted, for a deterministic load order. Three entry kinds are told apart HERE, and a
-/// sidecar is tested for first: its stem holds a range separator, so the cell arm below would
-/// otherwise take `A1:C3.css` and refuse it as a malformed range name. A dropped entry's CONTENT is
-/// never read, a range-form figure's occupied rectangle coming from its NAME alone.
-fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabParts> {
+/// The root walk, listing only: every tab in full, every root-level entry classified. A ROOT-level
+/// fault sits outside every tab, so no demand excludes it and it short-circuits the load.
+fn list_dir(root: &Path) -> std::io::Result<Result<Listing, Vec<Diagnostic>>> {
+    let mut tabs: Vec<TabListing> = Vec::new();
+    // Read here, where the filesystem is present: the pure `names` module never touches it.
+    let mut raw_names: Vec<RawNameEntry> = Vec::new();
+    let mut root_faults: Vec<Diagnostic> = Vec::new();
+    let mut scratch = Vec::new();
+    let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let ft = entry.file_type()?;
+        let entry_name = entry.file_name().to_string_lossy().into_owned();
+        // Checked before the dir/file split, so a reserved name is excluded whichever kind it is on disk: `.git` is a directory and `.gitignore` a file, and either would otherwise be read.
+        if Workbook::is_reserved_entry(&entry_name) {
+            continue;
+        }
+        if ft.is_dir() {
+            let (entries, names, occupied) = list_tab_dir(root, &entry_name, &entry.path())?;
+            let content = entries
+                .iter()
+                .fold(None, |acc, e| Rect::union(acc, e.region));
+            tabs.push(TabListing {
+                name: entry_name,
+                entries,
+                occupied,
+                content,
+            });
+            raw_names.extend(names);
+        } else if is_presentation_entry(&entry_name) {
+            // A sidecar styles COORDINATES, and a coordinate is a tab's; at the root it names none.
+            root_faults.push(presentation_in_grid(Loc::file(&entry_name)));
+        } else if is_figure_entry(&entry_name) {
+            // Without this arm it falls into `read_name_entry`'s `RefFile` arm and is claimed as a defined name.
+            root_faults.push(figure_in_root(Loc::file(&entry_name)));
+        } else if let Some(name) = read_name_entry(
+            root,
+            NameScope::Workbook,
+            &entry_name,
+            &entry.path(),
+            ft,
+            &mut scratch,
+        )? {
+            // A root-level A1-shaped regular file is neither a tab nor a name, so it is ignored.
+            raw_names.push(name);
+        }
+    }
+    Ok(if root_faults.is_empty() {
+        Ok(Listing { tabs, raw_names })
+    } else {
+        Err(root_faults)
+    })
+}
+
+/// Entries are sorted, for a deterministic load order. A sidecar is tested for first: its stem holds
+/// a range separator, so the cell arm below would take `A1:C3.css` and refuse it as a malformed
+/// range name. A range file's CONTENT is left for the closure to ask for; a NAME entry's is read
+/// whatever the demand, `rewrite_tsv` having to resolve what a demanded formula spells to parse it.
+fn list_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabParts> {
     let mut files = Vec::new();
     let mut names = Vec::new();
     let mut occupied = Vec::new();
@@ -854,7 +994,12 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
             continue;
         }
         if ft.is_file() && is_cell_filename(&name) {
-            files.push((name, read_file_to_string(&f.path(), &mut scratch)?));
+            let region = filename_region(&name);
+            files.push(TabEntry {
+                name,
+                path: f.path(),
+                region,
+            });
         } else if let Some(entry) = read_name_entry(
             root,
             NameScope::Sheet(tab_name.to_string()),
@@ -867,6 +1012,185 @@ fn read_tab_dir(root: &Path, tab_name: &str, dir: &Path) -> std::io::Result<TabP
         }
     }
     Ok((files, names, occupied))
+}
+
+/// The A1 rectangle a range file's NAME declares, or `None` where the name declares nothing
+/// parseable — an entry a demand can therefore never exclude.
+fn filename_region(name: &str) -> Option<Rect> {
+    parse_filename(name).ok().map(|f| f.region)
+}
+
+/// The overlap check's input, off the FULL listing rather than the parsed subset: every range
+/// filename that states a rectangle, then the range-form figures, so a colliding pair reads
+/// `<cell>  and  <figure>.json`.
+fn listed_regions(entries: &[TabEntry], occupied: Vec<(String, Rect)>) -> Vec<(String, Rect)> {
+    let mut out: Vec<(String, Rect)> = entries
+        .iter()
+        .filter_map(|e| e.region.map(|r| (e.name.clone(), r)))
+        .collect();
+    out.extend(occupied);
+    out
+}
+
+/// The closure's seed: in each wanted tab, every range file whose filename region meets the demanded
+/// rect, plus every entry whose filename states no extent. An unscoped or tab-only demand seeds
+/// every file in every wanted tab.
+fn seed(tabs: &[TabListing], demand: &Scope) -> Vec<(usize, usize, bool)> {
+    let mut out = Vec::new();
+    for (ti, tab) in tabs.iter().enumerate() {
+        if !demand.wants(Some(&tab.name), None) {
+            continue;
+        }
+        for (ei, entry) in tab.entries.iter().enumerate() {
+            if entry
+                .region
+                .is_none_or(|r| demand.wants(Some(&tab.name), Some(r)))
+            {
+                out.push((ti, ei, false));
+            }
+        }
+    }
+    out
+}
+
+/// The frontier step: every entry whose FILENAME region meets one of `rects` on that rect's own
+/// sheet. A rect carries its sheet, so a cross-tab reference is an ordinary member, and admission is
+/// never widened beyond a file's own name.
+fn frame_rects(
+    tabs: &[TabListing],
+    rects: &[(u32, Rect)],
+    out: &mut Vec<(usize, usize, bool)>,
+    pulled: bool,
+) {
+    for &(sheet, rect) in rects {
+        let Some(tab) = tabs.get(sheet as usize) else {
+            continue;
+        };
+        for (ei, entry) in tab.entries.iter().enumerate() {
+            if entry.region.is_some_and(|r| r.intersect(&rect).is_some()) {
+                out.push((sheet as usize, ei, pulled));
+            }
+        }
+    }
+}
+
+/// The figure half of the seed: a figure's data range is a dependency no formula spells, so an
+/// in-scope figure's bindings are rectangles the closure must frame or it draws an empty dataset.
+/// A figure that will not parse seeds nothing — the workbook load does not grade one, and `check`
+/// reports it off its own read. Cost accepted: an in-scope figure is opened twice.
+fn figure_rects(
+    root: &Path,
+    demand: &Scope,
+    sheets: &[String],
+) -> std::io::Result<Vec<(u32, Rect)>> {
+    let Ok(figures) = Figures::load_dir_scoped(root, demand)? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for (tab, figure) in figures.all() {
+        let Some(home) = sheet_index(sheets, tab) else {
+            continue;
+        };
+        for text in figure.bindings() {
+            let Ok(binding) = Binding::parse(&text) else {
+                continue;
+            };
+            let sheet = match &binding.tab {
+                None => Some(home),
+                Some(name) => sheet_index(sheets, name),
+            };
+            if let Some(sheet) = sheet {
+                out.push((sheet, binding.rect));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn sheet_index(sheets: &[String], name: &str) -> Option<u32> {
+    sheets.iter().position(|s| s == name).map(|i| i as u32)
+}
+
+/// A range file's content, name-resolved BEFORE deserializing so the grid the engine sees carries
+/// only A1. An unresolvable name stays verbatim and loads as a located `#NAME?`.
+fn parse_one(
+    names: &NameTable,
+    tab: &str,
+    fname: &str,
+    contents: &str,
+    pulled: bool,
+) -> Result<LoadedFile, Vec<Diagnostic>> {
+    let resolved = names.rewrite_tsv(contents, tab);
+    parse_file(fname, &resolved).map(
+        |ParsedFile {
+             region,
+             declared_shape: _,
+             grid,
+             array_formula,
+         }| LoadedFile {
+            name: fname.to_string(),
+            region,
+            grid,
+            array_formula,
+            pulled,
+        },
+    )
+}
+
+/// The phase every entry point ends in: the overlap verdict off each tab's full listing — fatal
+/// whatever the demand, because the coordinate index it guards admits at most one file per
+/// coordinate — then the caches a demand-driven evaluation reads.
+fn assemble(
+    tabs: Vec<TabLoad>,
+    names: NameTable,
+    mut diags: Vec<Diagnostic>,
+) -> Result<Workbook, Vec<Diagnostic>> {
+    let mut out_tabs = Vec::with_capacity(tabs.len());
+    for tab in tabs {
+        let TabLoad {
+            name,
+            files,
+            file_diags,
+            regions,
+            content,
+        } = tab;
+        diags.extend(file_diags);
+        diags.extend(detect_overlaps(&name, &regions));
+        out_tabs.push(Tab::new(name, files, content));
+    }
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+    let has_array_regions = out_tabs
+        .iter()
+        .any(|t| t.files.iter().any(|f| f.array_formula));
+    let has_forgers = out_tabs.iter().any(|t| {
+        t.files.iter().any(|f| {
+            f.grid.cells.iter().any(
+                |c| matches!(c, GridCell::Formula { expr, .. } if forge::expr_has_forger(expr)),
+            )
+        })
+    });
+    Ok(Workbook {
+        tabs: out_tabs,
+        names,
+        has_array_regions,
+        has_forgers,
+        forge: ForgeStore::default(),
+        now: system_now_serial(),
+        current_sheet: Cell::new(0),
+        memo: RefCell::new(HashMap::new()),
+        results: RefCell::new(HashMap::new()),
+        current_file: Cell::new(None),
+        arena: Arena::default(),
+        diagnostics: RefCell::new(Vec::new()),
+        #[cfg(test)]
+        eval_count: Cell::new(0),
+        #[cfg(test)]
+        pass_count: Cell::new(0),
+        #[cfg(test)]
+        covering_scan_steps: Cell::new(0),
+    })
 }
 
 /// `None` for an A1-shaped regular file, which is a cell, for a presentation sidecar, or for an

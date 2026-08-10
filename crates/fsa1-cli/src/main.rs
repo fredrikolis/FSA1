@@ -962,9 +962,10 @@ USAGE:
     render ./budget/Summary/total  draw the region an FS4 defined name resolves to
 
 DESCRIPTION:
-  Render the path's scope to grids. The whole workbook loads (so cross-tab refs resolve); the path
-  selects the scope — every tab, one tab, or one region — and `render` and `tree` are the same code over
-  it, differing only in whether it is drawn as a table or as nested nodes. Values are demand-driven and
+  Render the path's scope to grids. ONLY the path's scope is READ — the files whose names it meets,
+  plus the cells their formulas and their figures reference (cross-tab refs included), and nothing else;
+  the path selects the scope — every tab, one tab, or one region — and `render` and `tree` are the same
+  code over it, differing only in whether it is drawn as a table or as nested nodes. Values are demand-driven and
   computed in ONE pass over the whole scope, so no two cells of a view can disagree. Default mode is
   COMBINED (a literal shows its value; a formula shows `<value> ← =<formula>`, reusing the same value
   and source spellings --mode values|functions produce). A multi-tab view heads each grid with its tab
@@ -1042,8 +1043,8 @@ DESCRIPTION:
   lets an agent validate just the cells IT authored on an import that carries pre-existing (GRID6) error
   cells elsewhere. A file-level diagnostic (no single cell, e.g. a whole-tab overlap) is reported
   whenever its tab is in scope. An unscoped check (a bare <wb> path) is the whole workbook — and a
-  workbook that will not load is itself the failure (exit 3), scoped or not. A REGION in the path
-  also narrows what is READ, so what it never opens it never grades: a <name>.json figure is out of
+  workbook that will not load is itself the failure (exit 3), scoped or not. A TAB or REGION in the
+  path also narrows what is READ, so what it never opens it never grades: a <name>.json figure is out of
   every region scope (rename it <range>.json to make it participate), and a sidecar is in one when
   its name shares a column or a row with the region — `A100:A200.css` sizes column A of `A1:B5`.
 
@@ -1091,7 +1092,8 @@ DESCRIPTION:
   Evaluate a formula against a loaded workbook and emit its value. Read-only — no writes, no mutation.
   Unqualified references (A1, A1:A5) bind to the path tab (wb/Tab), else the first tab (wb); cross-tab
   (Tab!A1) and ranges resolve. A region selector on the path (wb/Tab/A1) is refused — eval has no
-  region.
+  region. The WHOLE workbook is read: your formula is not in it, so nothing in it says which files
+  your references need, and a narrower read would sum unopened cells as blank.
 
 ARGUMENTS:
   <path>            (required) <wb> or <wb>/<tab> — the tab unqualified references resolve against.
@@ -1132,6 +1134,8 @@ DESCRIPTION:
   DOWNSTREAM consumers (the cells that read it) — the same engine dependency relation, transposed.
   The walk is cycle-safe (a cycle is reported, not looped) and shows a shared cell once (marked
   repeated). Each node carries its value and, unless it lies on a cycle, its computation hash.
+  Upstream reads the cell and the cells it references, transitively, and nothing else. --dependents
+  reads the WHOLE workbook: which cells read yours is answerable only by opening every one of them.
 
 ARGUMENTS:
   <path>            (required) <wb>/<tab>/<A1> — the single cell to trace (a range is refused).
@@ -1182,7 +1186,9 @@ DESCRIPTION:
   expands under values/combined. A name shows what it resolves to: a symlinked cell/range shows its
   target A1 reference; a named formula/constant shows its definition (functions), computed value
   (values), or both (combined). Rooting at a <wb>/<tab> path shows that tab's cells and its sheet-scoped
-  names only; workbook-scoped names appear in the whole-workbook view. A <wb>/<tab>/<A1:B9> path shows
+  names only; workbook-scoped names appear in the whole-workbook view. A TAB or REGION in the path also
+  narrows what is READ — the files whose names it meets, plus the cells their formulas and their figures
+  reference (cross-tab refs included), and nothing else. A <wb>/<tab>/<A1:B9> path shows
   EXACTLY that viewport's cells — ALL of them, the per-range cap does NOT apply (an explicit region is
   shown in full). READ-ONLY: leaves the workbook byte-identical (CORE3) and writes nothing under it at
   all, .cache/ included — as does every other command.
@@ -1209,7 +1215,7 @@ EXIT CODES:
   0   Success (tree drawn)
   1   I/O failure
   2   Invalid arguments (unknown flag/mode, or a non-A1 trailing selector)
-  3   Validation error (the workbook would not load)
+  3   Validation error (the path's scope would not load; a fault outside it is never read, so never raised)
   24  Not found (no such workbook directory, or no such tab)
 
 SEE ALSO:

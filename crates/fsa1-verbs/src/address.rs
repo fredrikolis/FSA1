@@ -1,4 +1,4 @@
-// Concern: resolves a <wb>[/<tab>[/<A1>|<name>]] path to a workbook, tab and region | Non-concern: what a verb does with it | IO: (a path) -> a target, or a refusal
+// Concern: resolves a <wb>[/<tab>[/<A1>|<name>]] path to a workbook, tab and region | Non-concern: what a verb does with it | IO: (a path, a demand) -> a target loaded under it, or a refusal
 //! The workbook/tab boundary cannot be found by splitting the path on `/`, because the workbook path
 //! itself contains `/` (`/tmp/x/Model`, `./demo`). It is found by load-probing each candidate prefix;
 //! a trailing component's meaning then follows its position and whether it is a folder.
@@ -6,24 +6,38 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fsa1_model::{Diagnostic, NameTarget, Rect, Workbook, is_cell_filename, parse_viewport};
+use fsa1_model::{Diagnostic, NameTarget, Rect, Scope, Workbook, is_cell_filename, parse_viewport};
 
 use crate::refusal::{Kind, Refusal, bad_arg, fail, refused};
 
-/// The whole workbook always loads, so cross-tab refs resolve whatever the path selected. `root` is
-/// carried out because presentation is a SECOND load off the same directory, which a verb that draws
-/// it performs itself.
+/// What a verb wants READ. `Path` is the path's own tab and region, which the loader answers by
+/// filename; `Whole` is every file in every tab, which the two directions with no
+/// filename-answerable frontier need — a reverse trace inverts the forward map of the files it
+/// LOADED, and an ad-hoc formula is not in the workbook, so neither seeds anything.
+#[derive(Clone, Copy)]
+pub enum Demand {
+    Path,
+    Whole,
+}
+
+/// The path's scope is what loads — its own files and the closure they reference, cross-tab refs
+/// included — so a file the path never names is never opened. `root` is carried out because
+/// presentation is a SECOND load off the same directory, which a verb that draws it performs itself.
 pub struct Resolved {
     pub root: PathBuf,
     pub workbook: Workbook,
     pub tab: Option<u32>,
     region: Option<Rect>,
+    /// The scope `workbook` was actually READ under, kept rather than re-derived so the second load
+    /// a verb performs asks the identical question.
+    demand: Scope,
     /// The raw selector text, kept for a located refusal message.
     selector: Option<String>,
 }
 
 /// A decomposition that does not require a successful load, for `check` — which must scope a workbook
-/// that fails to load. `loaded` is the probe's own `load_dir(root)`, carried out so `check` reuses it.
+/// that fails to load. `loaded` is the ONE content load under the path's own demand, carried out so
+/// `check` reuses it.
 pub struct Decomposed {
     pub root: PathBuf,
     pub tab: Option<String>,
@@ -151,8 +165,10 @@ fn parent_base(p: &Path) -> Option<(PathBuf, String)> {
     Some((parent, base))
 }
 
+/// The probe reads NO cells: `structure` must settle the workbook root, and resolve a trailing
+/// defined name, before the demand is known.
 fn probe_scope(p: &Path) -> Probe {
-    let loaded = Workbook::load_dir(p);
+    let loaded = Workbook::load_skeleton(p);
     match &loaded {
         Ok(Ok(wb)) if !wb.sheet_names().is_empty() => Probe {
             wb_path: p.to_path_buf(),
@@ -184,7 +200,7 @@ fn as_tab_of_parent(p: &Path) -> Option<Probe> {
     if !shaped_and_owns(&parent, &base) {
         return None;
     }
-    let loaded = Workbook::load_dir(&parent);
+    let loaded = Workbook::load_skeleton(&parent);
     Some(Probe {
         wb_path: parent,
         class: Class::Tab(base),
@@ -214,6 +230,7 @@ struct Structure {
     /// A peeled final non-A1 segment, resolved to a region by `resolve`/`decompose` — which hold the
     /// loaded workbook the lookup needs.
     name: Option<String>,
+    /// The SKELETON: the listing and name phases, no cells.
     loaded: io::Result<Result<Workbook, Vec<Diagnostic>>>,
 }
 
@@ -327,84 +344,123 @@ fn tab_position_error(prefix: &Path) -> Result<Structure, Refusal> {
 
 pub fn decompose(path: &str) -> Result<Decomposed, Refusal> {
     let s = structure(path)?;
+    let mut tab = s.tab.clone();
+    let mut region = s.region;
     // On a workbook that does not load, the name stays unresolved and `check` surfaces `loaded`.
     if let Some(name) = &s.name
-        && let Ok(Ok(wb)) = &s.loaded
+        && let Ok(Ok(skeleton)) = &s.loaded
     {
-        let scope = s
-            .tab
-            .clone()
-            .or_else(|| wb.sheet_names().first().map(|x| x.to_string()))
-            .unwrap_or_default();
-        let (tab, rect) = resolve_name(wb, name, &scope)?;
-        let tab_name = wb.sheet_names().get(tab as usize).map(|s| s.to_string());
-        return Ok(Decomposed {
-            root: s.root,
-            tab: tab_name,
-            region: Some(rect),
-            loaded: s.loaded,
-        });
+        let scope = name_scope(skeleton, s.tab.as_deref());
+        let (idx, rect) = resolve_name(skeleton, name, &scope)?;
+        tab = skeleton
+            .sheet_names()
+            .get(idx as usize)
+            .map(|t| t.to_string());
+        region = Some(rect);
     }
+    let loaded = Workbook::load_dir_scoped(&s.root, &Scope::new(tab.clone(), region));
     Ok(Decomposed {
         root: s.root,
-        tab: s.tab,
-        region: s.region,
-        loaded: s.loaded,
+        tab,
+        region,
+        loaded,
     })
 }
 
 /// An empty Root resolves to an empty `Resolved`; the caller's "has no tabs" guard is what refuses it.
-pub fn resolve(path: &str) -> Result<Resolved, Refusal> {
-    let s = structure(path)?;
-    match s.loaded {
-        Ok(Ok(wb)) => {
-            if let Some(name) = &s.name {
-                let scope = s
-                    .tab
-                    .clone()
-                    .or_else(|| wb.sheet_names().first().map(|x| x.to_string()))
-                    .unwrap_or_default();
-                let (tab, rect) = resolve_name(&wb, name, &scope)?;
-                return Ok(Resolved {
-                    root: s.root,
-                    workbook: wb,
-                    tab: Some(tab),
-                    region: Some(rect),
-                    selector: s.selector,
-                });
-            }
-            let tab = match &s.tab {
-                Some(name) => match wb.tab_index(name) {
-                    Some(idx) => Some(idx),
-                    None => {
-                        return Err(fail(
-                            Kind::NotFound,
-                            &format!(
-                                "no tab named {name:?} in {:?} (tabs: {:?})",
-                                s.root.display(),
-                                wb.sheet_names()
-                            ),
-                        ));
-                    }
-                },
-                None => None,
-            };
-            Ok(Resolved {
-                root: s.root,
-                workbook: wb,
-                tab,
-                region: s.region,
-                selector: s.selector,
-            })
+pub fn resolve(path: &str, demand: Demand) -> Result<Resolved, Refusal> {
+    let Structure {
+        root,
+        tab,
+        region,
+        selector,
+        name,
+        loaded,
+    } = structure(path)?;
+    let skeleton = match loaded {
+        Ok(Ok(wb)) => wb,
+        Ok(Err(diags)) => return Err(refused(diags)),
+        Err(e) if is_not_a_dir(&e) => {
+            return Err(fail(
+                Kind::NotFound,
+                &format!("no such workbook directory {:?}", root.display()),
+            ));
         }
+        Err(e) => {
+            return Err(fail(
+                Kind::Io,
+                &format!("cannot read {:?}: {e}", root.display()),
+            ));
+        }
+    };
+    let (tab, region) = settle(&skeleton, &root, tab.as_deref(), name.as_deref(), region)?;
+    let scope = match demand {
+        Demand::Whole => Scope::unscoped(),
+        Demand::Path => Scope::new(
+            tab.and_then(|i| skeleton.sheet_name(i)).map(str::to_string),
+            region,
+        ),
+    };
+    Ok(Resolved {
+        workbook: load_scoped(&root, &scope)?,
+        root,
+        tab,
+        region,
+        demand: scope,
+        selector,
+    })
+}
+
+/// The tab a bare defined name is looked up against: the path's own, else the workbook's first.
+fn name_scope(wb: &Workbook, tab: Option<&str>) -> String {
+    tab.map(str::to_string)
+        .or_else(|| wb.sheet_names().first().map(|x| x.to_string()))
+        .unwrap_or_default()
+}
+
+/// The tab and region the path settles on, read off the SKELETON — a trailing defined name must
+/// resolve before there is a demand to load cells under.
+fn settle(
+    wb: &Workbook,
+    root: &Path,
+    tab: Option<&str>,
+    name: Option<&str>,
+    region: Option<Rect>,
+) -> Result<(Option<u32>, Option<Rect>), Refusal> {
+    if let Some(name) = name {
+        let scope = name_scope(wb, tab);
+        let (idx, rect) = resolve_name(wb, name, &scope)?;
+        return Ok((Some(idx), Some(rect)));
+    }
+    let Some(name) = tab else {
+        return Ok((None, region));
+    };
+    match wb.tab_index(name) {
+        Some(idx) => Ok((Some(idx), region)),
+        None => Err(fail(
+            Kind::NotFound,
+            &format!(
+                "no tab named {name:?} in {:?} (tabs: {:?})",
+                root.display(),
+                wb.sheet_names()
+            ),
+        )),
+    }
+}
+
+/// The ONE content load: the skeleton settled the structure, and this reads the cells the demand and
+/// its closure name. No path loads a workbook's cells twice.
+fn load_scoped(root: &Path, scope: &Scope) -> Result<Workbook, Refusal> {
+    match Workbook::load_dir_scoped(root, scope) {
+        Ok(Ok(wb)) => Ok(wb),
         Ok(Err(diags)) => Err(refused(diags)),
         Err(e) if is_not_a_dir(&e) => Err(fail(
             Kind::NotFound,
-            &format!("no such workbook directory {:?}", s.root.display()),
+            &format!("no such workbook directory {:?}", root.display()),
         )),
         Err(e) => Err(fail(
             Kind::Io,
-            &format!("cannot read {:?}: {e}", s.root.display()),
+            &format!("cannot read {:?}: {e}", root.display()),
         )),
     }
 }
@@ -413,6 +469,12 @@ impl Resolved {
     /// `None` leaves the caller on everything the tab states, presentation included.
     pub fn region(&self) -> Option<Rect> {
         self.region
+    }
+
+    /// The demand this resolution states, in the loaders' vocabulary — the very scope the cells were
+    /// read under, so presentation and figures answer it identically.
+    pub fn demand(&self) -> Scope {
+        self.demand.clone()
     }
 
     pub fn as_single_cell(&self) -> Result<(u32, u32), Refusal> {
@@ -494,7 +556,7 @@ mod tests {
     fn whole_workbook_is_root_with_no_tab_or_region() {
         let t = Tmp::new("whole");
         t.file("Model", "A1", "1").file("Other", "A1", "2");
-        let r = resolve(&t.root()).unwrap();
+        let r = resolve(&t.root(), Demand::Path).unwrap();
         assert_eq!(r.tab, None, "a bare workbook path selects no explicit tab");
         assert_eq!(r.region(), None);
     }
@@ -503,7 +565,7 @@ mod tests {
     fn single_tab_workbook_resolves_the_lone_tab() {
         let t = Tmp::new("single");
         t.file("Model", "A1", "1");
-        let r = resolve(&t.at("Model")).unwrap();
+        let r = resolve(&t.at("Model"), Demand::Path).unwrap();
         let idx = r.workbook.tab_index("Model").unwrap();
         assert_eq!(r.tab, Some(idx), "the lone non-empty tab resolves as a Tab");
         assert_eq!(r.region(), None);
@@ -513,7 +575,7 @@ mod tests {
     fn wb_slash_b2_is_a_tab_when_b2_is_a_folder() {
         let t = Tmp::new("b2folder");
         t.file("Model", "A1", "1").file("B2", "A1", "9");
-        let r = resolve(&t.at("B2")).unwrap();
+        let r = resolve(&t.at("B2"), Demand::Path).unwrap();
         let idx = r.workbook.tab_index("B2").unwrap();
         assert_eq!(r.tab, Some(idx), "a folder named B2 is a tab");
         assert_eq!(r.region(), None, "a tab folder carries no selector");
@@ -523,7 +585,7 @@ mod tests {
     fn wb_slash_b2_is_a_selector_on_the_default_tab_when_not_a_folder() {
         let t = Tmp::new("b2sel");
         t.file("Model", "A1", "1");
-        let r = resolve(&t.at("B2")).unwrap();
+        let r = resolve(&t.at("B2"), Demand::Path).unwrap();
         assert_eq!(r.tab, None, "a bare selector attaches to the default tab");
         assert_eq!(r.region(), Some(Rect::cell(1, 1)), "B2 is the 1x1 rect");
     }
@@ -532,7 +594,7 @@ mod tests {
     fn wb_slash_tab_slash_region_resolves_the_explicit_tab_and_rect() {
         let t = Tmp::new("region");
         t.file("Model", "A1", "1");
-        let r = resolve(&t.at("Model/B2:C3")).unwrap();
+        let r = resolve(&t.at("Model/B2:C3"), Demand::Path).unwrap();
         let idx = r.workbook.tab_index("Model").unwrap();
         assert_eq!(r.tab, Some(idx));
         assert_eq!(
@@ -555,7 +617,8 @@ mod tests {
         t.file("Model", "A1", "header");
         t.file("Cash Flows", "B2", "888");
         std::fs::write(t.at("Model/flow"), "../Cash Flows/B2").expect("write the ref-file alias");
-        let r = resolve(&t.at("Model/flow")).expect("the parent resolves the cross-sheet name");
+        let r = resolve(&t.at("Model/flow"), Demand::Path)
+            .expect("the parent resolves the cross-sheet name");
         let tab = r.tab.expect("the name resolved onto a tab");
         assert_eq!(
             r.workbook.sheet_names()[tab as usize],
@@ -568,7 +631,7 @@ mod tests {
     fn broken_root_surfaces_load_diags_and_is_not_a_tab_of_parent() {
         let t = Tmp::new("broken");
         t.file("Model", "A1:D9", "one literal in a 9x4 range");
-        let code = err_kind(resolve(&t.root()));
+        let code = err_kind(resolve(&t.root(), Demand::Path));
         assert_eq!(code, Kind::Validation, "a broken root refuses");
     }
 
@@ -576,7 +639,7 @@ mod tests {
     fn empty_root_under_a_plain_parent_is_an_empty_root() {
         let t = Tmp::new("emptyroot");
         t.dir("E");
-        let r = resolve(&t.at("E")).unwrap();
+        let r = resolve(&t.at("E"), Demand::Path).unwrap();
         assert!(
             r.workbook.sheet_names().is_empty(),
             "an empty Root carries no tabs (the command guard fires)"
@@ -588,7 +651,7 @@ mod tests {
     fn empty_tab_of_a_workbook_resolves_as_an_empty_tab() {
         let t = Tmp::new("emptytab");
         t.file("Model", "A1", "1").dir("EmptyTab");
-        let r = resolve(&t.at("EmptyTab")).unwrap();
+        let r = resolve(&t.at("EmptyTab"), Demand::Path).unwrap();
         let idx = r.workbook.tab_index("EmptyTab").unwrap();
         assert_eq!(
             r.tab,
@@ -605,7 +668,7 @@ mod tests {
     fn all_empty_tabs_workbook_reads_an_empty_tab_as_an_empty_root() {
         let t = Tmp::new("allempty");
         t.dir("A").dir("B");
-        let r = resolve(&t.at("A")).unwrap();
+        let r = resolve(&t.at("A"), Demand::Path).unwrap();
         assert!(
             r.workbook.sheet_names().is_empty(),
             "an all-empty-tabs workbook's empty tab reads as an empty Root"
@@ -616,7 +679,7 @@ mod tests {
     fn named_cell_ref_resolves_to_its_target_rect() {
         let t = Tmp::new("name-cell");
         t.file("Model", "A1", "1").file("Model", "total", "=B5");
-        let r = resolve(&t.at("Model/total")).unwrap();
+        let r = resolve(&t.at("Model/total"), Demand::Path).unwrap();
         let idx = r.workbook.tab_index("Model").unwrap();
         assert_eq!(r.tab, Some(idx), "the name resolves on its scope tab");
         assert_eq!(r.region(), Some(Rect::cell(1, 4)), "B5 is the 1x1 rect");
@@ -626,7 +689,7 @@ mod tests {
     fn named_range_resolves_to_its_target_rect() {
         let t = Tmp::new("name-range");
         t.file("Model", "A1", "1").file("Model", "Days", "=A2:A4");
-        let r = resolve(&t.at("Model/Days")).unwrap();
+        let r = resolve(&t.at("Model/Days"), Demand::Path).unwrap();
         assert_eq!(
             r.region(),
             Some(Rect {
@@ -645,7 +708,7 @@ mod tests {
         t.file("Model", "A1", "1")
             .file("Model", "elsewhere", "=Assumptions!B6")
             .file("Assumptions", "B6", "42");
-        let r = resolve(&t.at("Model/elsewhere")).unwrap();
+        let r = resolve(&t.at("Model/elsewhere"), Demand::Path).unwrap();
         let assumptions = r.workbook.tab_index("Assumptions").unwrap();
         assert_eq!(
             r.tab,
@@ -660,7 +723,7 @@ mod tests {
         let t = Tmp::new("name-expr");
         t.file("Model", "A1", "1")
             .file("Model", "Rate", "=Base*1.05");
-        let code = err_kind(resolve(&t.at("Model/Rate")));
+        let code = err_kind(resolve(&t.at("Model/Rate"), Demand::Path));
         assert_eq!(
             code,
             Kind::InvalidArguments,
@@ -672,7 +735,7 @@ mod tests {
     fn unknown_final_non_a1_segment_is_a_bad_args_refusal() {
         let t = Tmp::new("name-unknown");
         t.file("Model", "A1", "1");
-        let code = err_kind(resolve(&t.at("Model/nope")));
+        let code = err_kind(resolve(&t.at("Model/nope"), Demand::Path));
         assert_eq!(
             code,
             Kind::InvalidArguments,
@@ -684,7 +747,7 @@ mod tests {
     fn non_final_missing_tab_is_a_no_tab_named_refusal() {
         let t = Tmp::new("notab");
         t.file("Model", "A1", "1");
-        let code = err_kind(resolve(&t.at("Nope/A1")));
+        let code = err_kind(resolve(&t.at("Nope/A1"), Demand::Path));
         assert_eq!(
             code,
             Kind::NotFound,

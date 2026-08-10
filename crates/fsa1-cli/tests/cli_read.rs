@@ -1470,8 +1470,8 @@ fn accept19_broken_empty_singletab_and_broken_sibling() {
     );
     let (code, out) = run(&["check", &at(&sib, "Good")]);
     assert_eq!(
-        code, 3,
-        "a bare tab scope surfaces the load fault (best-effort):\n{out}"
+        code, 0,
+        "a tab demand never opens Bad; it was a finding here only while the whole workbook loaded and its bare-filename loc named no tab to filter it by:\n{out}"
     );
     assert!(
         !out.contains("no tab named") && !out.contains("no such workbook"),
