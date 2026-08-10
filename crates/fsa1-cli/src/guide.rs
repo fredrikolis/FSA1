@@ -57,8 +57,8 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   and the periodic An+B forms, all 1-based and relative to the root.
   An index is a literal :nth-child(k), 1-based within the root — :first-child and :last-child
   are k=1 and k=the last line, one selector each — or a periodic :nth-child(An+B), A of 2 or more
-  and B under A, whose +0 may be dropped (2n = 2n+0). NOTHING else spells one: odd, even, 0n+1
-  and any space inside the parens are refused. ANY whitespace joins the row and the cell compound.
+  and B under A, whose +0 may be dropped (2n = 2n+0). odd, even, 0n+1 and any space inside the
+  parens are refused. ANY whitespace joins the row and the cell compound.
   Rules are written in ANY order and cascade as the browser does — specificity, then source
   order — so a row rule beats a column rule wherever both match, a selector written twice
   layers rather than being refused, and of two rules that tie the LAST one written wins.
