@@ -682,7 +682,7 @@ fn pack_writes_a_hand_authored_figure_as_a_native_chart() {
     let (code, out) = run_in(cwd.path(), &["pack", "--strict", book.to_str().unwrap()]);
     assert_eq!(code, 0, "a representable figure packs strictly:\n{out}");
     assert!(out.contains("1 chart(s) written"), "{out}");
-    assert!(out.contains("every figure crossed"), "{out}");
+    assert!(out.contains("every item crossed into the .xlsx"), "{out}");
     let packed = std::fs::read(cwd.path().join("book.xlsx")).expect("the .xlsx");
     let names = zip_entries(&packed);
     for part in ["xl/charts/chart1.xml", "xl/drawings/drawing1.xml"] {
@@ -703,7 +703,7 @@ fn pack_drops_a_figure_excel_cannot_draw_and_strict_refuses_it() {
         "a dropped figure is a report, not a failure:\n{out}"
     );
     assert!(out.contains("0 chart(s) written"), "{out}");
-    assert!(out.contains("pack fidelity report (1 figure(s))"), "{out}");
+    assert!(out.contains("pack fidelity report (1 item(s))"), "{out}");
     assert!(out.contains("Sheet1/sales.json"), "{out}");
     assert!(
         out.contains("\"boxplot\""),
@@ -715,12 +715,67 @@ fn pack_drops_a_figure_excel_cannot_draw_and_strict_refuses_it() {
         "{names:?}"
     );
 
-    let (code, _, err) = run_err_in(cwd.path(), &["pack", "--strict", book.to_str().unwrap()]);
+    let (code, out, err) = run_err_in(cwd.path(), &["pack", "--strict", book.to_str().unwrap()]);
     assert_eq!(
         code, 3,
         "--strict refuses rather than leaving it out:\n{err}"
     );
-    assert!(err.contains("\"boxplot\""), "{err}");
+    assert!(
+        err.contains("remove what an .xlsx cannot carry") && !err.contains("\"boxplot\""),
+        "the one line names no single item:\n{err}"
+    );
+    assert!(
+        out.contains("\"boxplot\""),
+        "the located list names it:\n{out}"
+    );
+}
+
+/// A workbook whose one tab holds a table and a sidecar over it, and NO figure at all.
+fn styled_workbook(cwd: &Path, basename: &str, css: &str) -> PathBuf {
+    let tab = cwd.join(basename).join("Sheet1");
+    std::fs::create_dir_all(&tab).expect("create tab dir");
+    std::fs::write(tab.join(fsa1_model::range_file_name("A1:B2")), "a\tb\nc\td")
+        .expect("write the table");
+    std::fs::write(tab.join(fsa1_model::range_file_name("A1:B2.css")), css).expect("write the css");
+    cwd.join(basename)
+}
+
+/// A DECLARATION no .xlsx carries has the same disposition a dropped figure has, in a workbook
+/// stating no figure at all: the file is WRITTEN and the loss is named, and only `--strict` refuses.
+/// This is the disposition that changed — it used to refuse and write nothing — so it is frozen at
+/// the surface an agent reads, exit code and file both.
+#[test]
+fn pack_drops_a_declaration_no_xlsx_carries_and_strict_refuses_it() {
+    let cwd = Fixture::new("pack-declaration-drop");
+    let book = styled_workbook(cwd.path(), "book", "fsa1-cell { box-shadow: none }\n");
+    let (code, out) = run_in(cwd.path(), &["pack", book.to_str().unwrap()]);
+    assert_eq!(
+        code, 0,
+        "an uncarried declaration is a report, not a failure:\n{out}"
+    );
+    assert!(out.contains("pack fidelity report (1 item(s))"), "{out}");
+    assert!(
+        out.contains("Sheet1/A1:B2.css:1:13"),
+        "the located row:\n{out}"
+    );
+    assert!(out.contains("box-shadow"), "{out}");
+    // The written file is half the answer: a report that named a loss still packed the workbook.
+    assert!(cwd.path().join("book.xlsx").is_file(), "the .xlsx:\n{out}");
+    // A run that exits 0 states no severity, so a client reading the table cannot read failure into it.
+    assert!(!out.contains("severity") && !out.contains("error"), "{out}");
+
+    std::fs::remove_file(cwd.path().join("book.xlsx")).expect("clear the derived path");
+    let (code, out, err) = run_err_in(cwd.path(), &["pack", "--strict", book.to_str().unwrap()]);
+    assert_eq!(code, 3, "--strict refuses instead:\n{err}");
+    assert!(err.contains("remove what an .xlsx cannot carry"), "{err}");
+    assert!(
+        out.contains("box-shadow"),
+        "the located list names it:\n{out}"
+    );
+    assert!(
+        !cwd.path().join("book.xlsx").exists(),
+        "a refusal writes nothing"
+    );
 }
 
 /// The part names a zip holds, read without a zip crate: each local file header states its name at a

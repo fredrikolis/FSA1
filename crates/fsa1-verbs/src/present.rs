@@ -455,36 +455,63 @@ fn clip(line: &str, width: usize) -> String {
     out
 }
 
+/// The verdict form: a severity column, because the caller is judging and its exit code agrees.
 pub fn diagnostics_table(diags: &[Diagnostic]) -> String {
+    located_table(diags, true)
+}
+
+/// The REPORT form: the same rows without the severity column. A code's severity says how bad the
+/// finding is, never what the run did about it — so a verb that names a loss it accepted (a `pack`
+/// that wrote the file and exits 0) must not print `error` beside work it completed on purpose. The
+/// same code keeps its severity for whoever does refuse on it: `pack --strict` and `check --xlsx`.
+pub fn findings_table(diags: &[Diagnostic]) -> String {
+    located_table(diags, false)
+}
+
+fn located_table(diags: &[Diagnostic], severity: bool) -> String {
     let mut table = Table::new();
     table.load_preset(ASCII_FULL);
-    table.set_header(vec![
+    let row = |first: Cell, rest: [Cell; 4]| {
+        let mut cells = Vec::with_capacity(5);
+        if severity {
+            cells.push(first);
+        }
+        cells.extend(rest);
+        cells
+    };
+    table.set_header(row(
         Cell::new("severity"),
-        Cell::new("code"),
-        Cell::new("location"),
-        Cell::new("message"),
-        Cell::new("help"),
-    ]);
+        [
+            Cell::new("code"),
+            Cell::new("location"),
+            Cell::new("message"),
+            Cell::new("help"),
+        ],
+    ));
 
     if diags.is_empty() {
-        table.add_row(vec![
+        table.add_row(row(
             Cell::new("ok"),
-            Cell::new("none"),
-            Cell::new("-"),
-            Cell::new("no diagnostics: the workbook is clean"),
-            Cell::new("-"),
-        ]);
+            [
+                Cell::new("none"),
+                Cell::new("-"),
+                Cell::new("no diagnostics: the workbook is clean"),
+                Cell::new("-"),
+            ],
+        ));
         return table.to_string();
     }
 
     for d in diags {
-        table.add_row(vec![
+        table.add_row(row(
             Cell::new(severity_str(d)),
-            Cell::new(d.code.code_str()),
-            Cell::new(d.loc.to_string()),
-            Cell::new(&d.message),
-            Cell::new(d.code.help()),
-        ]);
+            [
+                Cell::new(d.code.code_str()),
+                Cell::new(d.loc.to_string()),
+                Cell::new(&d.message),
+                Cell::new(d.code.help()),
+            ],
+        ));
     }
     table.to_string()
 }

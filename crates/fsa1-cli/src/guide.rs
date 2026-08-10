@@ -69,8 +69,8 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   A rule may declare ANY property but a SIZE the selector does not name the axis of: width is a
   column's and height a row's, so either on a selector naming neither — a periodic one, or the
   cross axis — is refused presentation-property. What FSA1 RESOLVES is the sixteen an .xlsx
-  holds — the ones just named; anything else renders and nothing more, and pack refuses it as
-  xlsx-not-carried, naming the file and the line, rather than dropping it in silence.
+  holds — the ones just named; anything else renders and nothing more, and pack writes the .xlsx
+  and names it as xlsx-not-carried with its file and line, which check --xlsx says before you pack.
   render --format html writes the TRANSPARENT form (PRES2): every sidecar's own bytes reach
   the page unchanged, in a <style> scoped to the region its filename names and layered in the
   model's cascade order — so what the page paints is what check resolved and pack writes,
@@ -128,8 +128,10 @@ COMMANDS  (the tab and A1 cell/range are PART OF THE PATH: <wb>[/<tab>[/<A1>]])
                                           --format html writes one standalone styled document to stdout,
                                           always VALUES with each formula in its formula bar, and so
                                           takes no --mode
-  fsa1-cli check  <path>               lint; non-zero on error. A tab/region in the path (wb/Tab or
-                                          wb/Tab/A1:B2) checks ONLY the cells you authored
+  fsa1-cli check  <path> [--xlsx]      lint; non-zero on error. A tab/region in the path (wb/Tab or
+                                          wb/Tab/A1:B2) checks ONLY the cells you authored; --xlsx
+                                          also names what an .xlsx export would not carry, writing
+                                          no file
   fsa1-cli eval   <wb>[/<tab>] --formula '=SUM(A1:A5)'   evaluate a formula against the workbook
                                           (unqualified refs bind to the path tab, else the first tab)
   fsa1-cli trace  <wb>/<tab>/<A1> [--dependents]   a cell's upstream deps / downstream consumers

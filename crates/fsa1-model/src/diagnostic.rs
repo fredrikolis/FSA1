@@ -169,7 +169,7 @@ impl Code {
                 "a presentation sidecar has one spelling per appearance"
             }
             Code::XlsxNotCarried => {
-                "an .xlsx carries only the properties FSA1 models, so a declaration outside them cannot be packed"
+                "an .xlsx carries only what Excel models, so a declaration outside its properties, or a figure outside its charts, cannot be packed"
             }
             Code::FigureInRoot => "a figure states one tab's ranges, so it lives in a tab folder",
             Code::FigureSyntax => "a figure's body must parse as JSON",
@@ -274,7 +274,9 @@ impl Code {
                 "apply the rewrite the message names: index 1 is `:first-child` and the last index `:last-child`, an axis of extent 1 carries no selector of its own, and rules run all, then rows, then columns, then cells ascending"
             }
             Code::XlsxNotCarried => {
-                "restate the declaration in a property the .xlsx carries -- a colour as `#rrggbb`, a size as `<n>pt`, a width as `<n>ch`, a border as `<width> <style> <colour>`, a keyword from its property's set -- or delete it; `check` and the page take it as written, Excel alone cannot"
+                "restate the loss in what the .xlsx carries, else delete it: a declaration as `#rrggbb`, `<n>pt`, `<n>ch`, \
+                 `<width> <style> <colour>` or a property's keyword; a figure as a mark Excel charts \
+                 (bar/line/area/point/arc) and only its keys. `check` and the page take both as written, Excel alone cannot"
             }
             Code::FigureInRoot => {
                 "move the `<name>.json` into the tab folder whose ranges it binds; a figure names no coordinate at the workbook root"

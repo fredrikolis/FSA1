@@ -34,7 +34,7 @@ pub fn list() -> Vec<Value> {
             "inputSchema": schema(json!({
                 "source": { "type": "string", "description": "the workbook directory to pack" },
                 "dest": { "type": "string", "description": "output .xlsx path; derived from the directory name when omitted" },
-                "strict": { "type": "boolean", "description": "refuse rather than write where a figure reaches no Excel chart" },
+                "strict": { "type": "boolean", "description": "refuse rather than write an .xlsx that leaves anything out -- a presentation declaration it cannot carry, or a figure that reaches no Excel chart; without it the file is written and each loss is named" },
                 // Listed from the vocabulary, never by hand: a client should not need a refused call to learn the set.
                 "format": { "type": "string", "enum": fsa1_verbs::PackFormat::choices(), "description": "the format written; xlsx when omitted, and the extension a derived dest takes" }
             }), &["source"])
@@ -51,7 +51,10 @@ pub fn list() -> Vec<Value> {
         json!({
             "name": "check",
             "description": format!("Lint a workbook, a tab or a range: broken references, overlapping ranges, malformed filenames, cycles. {FS_NOTE}"),
-            "inputSchema": schema(json!({ "target": target }), &["target"])
+            "inputSchema": schema(json!({
+                "target": target,
+                "xlsx": { "type": "boolean", "description": "also report what an .xlsx export will not carry, writing nothing" }
+            }), &["target"])
         }),
         json!({
             "name": "eval",
@@ -82,7 +85,11 @@ pub fn call(params: &Value) -> Value {
             let text = if r.diagnostics.is_empty() {
                 format!("fsa1: {}: {}", r.kind.as_str(), r.message)
             } else {
-                let lines: Vec<String> = r.diagnostics.iter().map(|d| d.to_string()).collect();
+                // A refusal carrying both keeps its one line above the findings; one carrying only findings still leads with them.
+                let mut lines: Vec<String> = r.diagnostics.iter().map(|d| d.to_string()).collect();
+                if !r.message.is_empty() {
+                    lines.insert(0, r.message.clone());
+                }
                 format!("fsa1: {}: {}", r.kind.as_str(), lines.join("\n"))
             };
             json!({ "content": [{ "type": "text", "text": text }], "isError": true })
@@ -132,8 +139,10 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
             Ok(join_notes(r.text, &r.notes))
         }
         "check" => {
+            let xlsx = args.get("xlsx").and_then(Value::as_bool).unwrap_or(false);
             let diags = ops::check(ops::CheckArgs {
                 target: &str_arg(args, "target")?,
+                format: xlsx.then_some(fsa1_verbs::PackFormat::Xlsx),
             })?;
             if diags.is_empty() {
                 return Ok("verdict: clean (0 error, 0 warning)".to_string());
@@ -243,10 +252,10 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
                 p.sheets,
                 p.charts
             );
-            // A figure Excel draws no chart for is one note per figure, which is what a client acts on.
+            // What the .xlsx did not carry is one located note per item, which is what a client acts on.
             Ok(join_notes(
                 text,
-                &p.not_drawn
+                &p.losses
                     .iter()
                     .map(ToString::to_string)
                     .collect::<Vec<String>>(),

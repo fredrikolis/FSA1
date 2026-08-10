@@ -6,7 +6,7 @@ pub mod ops;
 pub mod pack_format;
 pub mod present;
 pub mod refusal;
+mod xlsx_loss;
 
-pub use charts::FigureNotDrawn;
 pub use pack_format::PackFormat;
 pub use refusal::{Kind, Refusal};

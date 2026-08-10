@@ -187,10 +187,12 @@ fn cmd_view(rest: &[String], presenter: Presenter) -> u8 {
 /// `Resolved`: it must still scope and report against a root that never loaded.
 fn cmd_check(rest: &[String]) -> u8 {
     let mut path: Option<String> = None;
+    let mut xlsx = false;
 
     for arg in rest {
         let (flag, _inline) = split_flag(arg);
         match flag {
+            "--xlsx" => xlsx = true,
             f if f.starts_with('-') => return bad_arg(&format!("unknown flag {f:?}")),
             _ => {
                 if path.replace(arg.clone()).is_some() {
@@ -203,7 +205,10 @@ fn cmd_check(rest: &[String]) -> u8 {
         return bad_arg("check needs a <path> like ./budget or ./budget/Sheet1/H3");
     };
 
-    match fsa1_verbs::ops::check(fsa1_verbs::ops::CheckArgs { target: &path }) {
+    match fsa1_verbs::ops::check(fsa1_verbs::ops::CheckArgs {
+        target: &path,
+        format: xlsx.then_some(PackFormat::Xlsx),
+    }) {
         Ok(diags) => output::emit_diagnostics(&diags),
         Err(e) => refused(e),
     }
@@ -741,7 +746,7 @@ fn cmd_pack(rest: &[String]) -> u8 {
                  fsa1-cli unpack {dest}   # read it back into a workbook, in the CURRENT directory\n",
                 p.sheets,
                 p.charts,
-                render_pack_report(&p.not_drawn),
+                render_pack_report(&p.losses),
             );
             0
         }
@@ -749,22 +754,19 @@ fn cmd_pack(rest: &[String]) -> u8 {
     }
 }
 
-/// What the pack left out, one located line per figure, in the same shape the unpack report uses.
+/// What the pack left out, drawn as the table every other finding is drawn in — minus the severity
+/// column, which would read `error` beside an exit 0 and put the two halves of one answer at odds.
 /// Empty is a first-class answer and says so — never a silence a reader has to interpret.
-fn render_pack_report(not_drawn: &[fsa1_verbs::FigureNotDrawn]) -> String {
-    if not_drawn.is_empty() {
-        return "\npack fidelity: every figure crossed as a native Excel chart\n".to_string();
+fn render_pack_report(losses: &[fsa1_model::Diagnostic]) -> String {
+    if losses.is_empty() {
+        return "\npack fidelity: every item crossed into the .xlsx\n".to_string();
     }
-    let lines: Vec<String> = not_drawn
-        .iter()
-        .map(|loss| format!("  {} -- {}", loss.figure, loss.why))
-        .collect();
     format!(
-        "\npack fidelity report ({} figure(s)) -- Excel draws no chart for the following, and each \
-         is left out of the .xlsx; simplify the spec and pack again, or run with --strict to refuse \
-         instead:\n{}\n",
-        not_drawn.len(),
-        lines.join("\n"),
+        "\npack fidelity report ({} item(s)) -- the .xlsx does not carry the following, and each is \
+         left out of it; restate or remove what is named and pack again, or run with --strict to \
+         refuse instead:\n{}\n",
+        losses.len(),
+        fsa1_verbs::present::findings_table(losses),
     )
 }
 
@@ -795,7 +797,11 @@ pub(crate) fn refused(r: fsa1_verbs::Refusal) -> u8 {
         fsa1_verbs::Kind::NotFound => ErrorCode::NotFound,
         fsa1_verbs::Kind::Io => ErrorCode::Io,
     };
+    // A refusal carrying BOTH says its one line first and locates every finding under it; either half alone keeps the shape it already had.
     if !r.diagnostics.is_empty() {
+        if !r.message.is_empty() {
+            emit_error(code, &r.message);
+        }
         return emit_validation_diagnostics(&r.diagnostics);
     }
     fail(code, &r.message)
@@ -849,7 +855,7 @@ const GLOBAL_HELP: &str = r#"fsa1-cli — render, lint, and evaluate a spreadshe
 
 USAGE:
   fsa1-cli render <path> [--mode <combined|values|functions>] [--format <ascii|html>]   # <path>: <wb>[/<tab>[/<A1>]]
-  fsa1-cli check  <path>                                         # <path>: <wb>[/<tab>[/<A1>]]
+  fsa1-cli check  <path> [--xlsx]                                 # <path>: <wb>[/<tab>[/<A1>]]
   fsa1-cli eval   <path> --formula '=<formula>'                  # <path>: <wb>[/<tab>]
   fsa1-cli trace  <path> [--dependents] [--depth <N>]           # <path>: <wb>/<tab>/<A1> (one cell)
   fsa1-cli tree   <path> [--mode <combined|values|functions>]    # <path>: <wb>[/<tab>[/<A1>]]
@@ -876,7 +882,8 @@ COMMANDS:
            pointing at the offending file(s). Exits non-zero if any error-severity diagnostic. Name a
            tab/region IN THE PATH (wb/Tab or wb/Tab/A1:B2) to report ONLY the diagnostics inside that
            tab/range (exits 0 if that scope is clean) — validate just the cells you authored on an
-           import that carries unrelated pre-existing error cells.
+           import that carries unrelated pre-existing error cells. --xlsx additionally asks what an
+           .xlsx export would NOT carry — the same losses `pack` reports — while writing no file.
   eval     Evaluate an ad-hoc --formula against the loaded workbook and emit its value. Unqualified refs
            bind to the path tab (wb/Tab), else the first tab (wb). Read-only.
   trace    Report a cell's upstream dependencies (or downstream consumers with --dependents) as a
@@ -1014,7 +1021,7 @@ SEE ALSO:
 const CHECK_HELP: &str = r#"fsa1-cli check — lint a filesystem spreadsheet
 
 USAGE:
-  fsa1-cli check <path>
+  fsa1-cli check <path> [--xlsx]
 
   <path> is <wb>[/<tab>[/<A1>|<Name>]] — a tab/region or defined NAME in the path scopes the report:
     check ./budget                 lint the whole workbook
@@ -1037,10 +1044,14 @@ DESCRIPTION:
 ARGUMENTS:
   <path>            (required) <wb>[/<tab>[/<A1>]] — the workbook, optionally narrowed to a tab/region.
 
+OPTIONS:
+  --xlsx            also report what an .xlsx export will not carry; exit 3 if anything will be lost.
+
 EXAMPLES:
   fsa1-cli check ./budget
   fsa1-cli check ./budget/Sheet1/H3             # validate just the cell you authored
   fsa1-cli check ./budget/Sheet1/A1:D20
+  fsa1-cli check ./budget --xlsx                # ask what a pack would leave out, writing nothing
 
 OUTPUT:
   An ASCII report on stdout: one row per diagnostic with its severity, stable code, located pointer
@@ -1357,6 +1368,11 @@ DESCRIPTION:
   DROPPED with one named loss saying what stopped it, so an author can simplify the spec and pack
   again. No raster is ever emitted.
 
+  An .xlsx is the one carrier with a CLOSED property list, so a PRESENTATION declaration outside it —
+  a sidecar property no .xlsx holds, or a value it cannot state — is dropped the same way and named
+  the same way, at its file and line. Both halves are one report under one code, xlsx-not-carried:
+  what `check --xlsx` answers before a byte is written is exactly what a pack leaves out.
+
 ARGUMENTS:
   <workbook-dir>    (required) The FSA1 workbook directory to serialize (tabs = sub-folders). With no
                     <dst>, its basename names the derived ./<basename>.xlsx in the current directory.
@@ -1364,9 +1380,10 @@ ARGUMENTS:
                     exist). Omitted, the name derives as above.
 
 OPTIONS:
-  --strict          (optional) Refuse rather than write an .xlsx that leaves a figure out, naming the
-                    figure and what stopped it. Nothing is written on a refusal. The default writes
-                    the .xlsx and REPORTS each dropped figure.
+  --strict          (optional) Refuse rather than write an .xlsx that leaves ANYTHING out — a
+                    presentation declaration it cannot carry or a figure Excel draws no chart for —
+                    locating each. Nothing is written on a refusal. The default writes the .xlsx and
+                    REPORTS every such loss.
   --target <fmt>    (optional) The output format. Defaults to xlsx, the only format supported today;
                     any other value is refused, naming the accepted choices. It picks the extension a
                     DERIVED name takes and never overrides a <dst> you gave. Exists so a future
@@ -1379,22 +1396,26 @@ EXAMPLES:
 
 OUTPUT:
   A terse confirmation on stdout naming the source, the destination, the sheet count and the number of
-  charts drawn, followed by one located line per figure Excel draws no chart for.
+  charts drawn, followed by the fidelity report: an ASCII table with one located row per thing the
+  .xlsx does not carry — each presentation declaration and each figure Excel draws no chart for —
+  under the stable code xlsx-not-carried. It carries no severity column: every row names a loss the
+  written file already took, so the exit code, not the row, is the verdict. Nothing lost says so.
 
 EXIT CODES:
   0   Success (.xlsx written)
   1   I/O failure (the destination could not be written — including a <dst> whose parent is absent)
   2   Invalid arguments (incl. a <workbook-dir> with no basename, e.g. `.`, `..`, `/`, when <dst> is
       omitted, or a --target other than xlsx)
-  3   Validation error (the workbook would not load, has no tabs to pack, or --strict was given and a
-      figure packs to no chart)
+  3   Validation error (the workbook would not load, has no tabs to pack, a sidecar would not parse,
+      or --strict was given and something — a declaration or a figure — does not cross)
   4   Conflict (the output — the given <dst>, else the derived ./<basename>.xlsx — already exists,
       refused, nothing written)
   24  Not found (no such workbook directory)
 
 SEE ALSO:
-  fsa1-cli unpack     Convert a real spreadsheet file into an FSA1 workbook
-  fsa1-cli --guide    Terse guide to the on-disk model
+  fsa1-cli unpack       Convert a real spreadsheet file into an FSA1 workbook
+  fsa1-cli check --xlsx Ask the same fidelity question without writing a file
+  fsa1-cli --guide      Terse guide to the on-disk model
 "#;
 
 const CONVERT_HELP: &str = r#"fsa1-cli convert — re-spell a workbook's range file names for another OS

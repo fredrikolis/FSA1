@@ -388,6 +388,38 @@ fn unpack_reads_strict_and_refuses_what_a_lossy_unpack_accepts() {
     );
 }
 
+/// `xlsx` is a capability an agent can only reach if the schema offers it AND the handler reads it.
+/// The tree the plain call calls clean is the one the flagged call finds a loss in, so an `xlsx`
+/// accepted and then dropped fails here rather than silently answering the other question.
+#[test]
+fn check_reads_xlsx_and_reports_what_a_plain_check_calls_clean() {
+    let root = scratch("check-xlsx");
+    for (rel, body) in [
+        ("Sheet1/A1:B2", "a\tb\nc\td"),
+        ("Sheet1/A1:B2.css", "  fsa1-cell { color: crimson }\n"),
+    ] {
+        let full = root.join(fsa1_model::range_file_path(std::path::Path::new(rel)));
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, body).unwrap();
+    }
+    let target = root.display().to_string();
+    let r = talk(&[
+        &call("check", serde_json::json!({ "target": target })),
+        &call(
+            "check",
+            serde_json::json!({ "target": target, "xlsx": true }),
+        ),
+    ]);
+    let (plain, flagged) = (text_of(&r[0]), text_of(&r[1]));
+    std::fs::remove_dir_all(&root).ok();
+    assert_eq!(plain, "verdict: clean (0 error, 0 warning)", "{plain}");
+    assert!(
+        flagged.starts_with("verdict: rejected (1 error, 0 warning)")
+            && flagged.contains("xlsx-not-carried"),
+        "{flagged}"
+    );
+}
+
 /// `format` names the one thing `pack` writes, so naming it changes nothing and naming anything else
 /// is refused with the choices — never a silently different file.
 #[test]

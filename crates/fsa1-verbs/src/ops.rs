@@ -1,4 +1,4 @@
-// Concern: one function per verb, naming its target, choosing its drawer and refusing what its carrier cannot take | Non-concern: parsing the flags | IO: (path + options) -> an outcome or a Refusal
+// Concern: one function per verb, naming its target, choosing its drawer and asking what its carrier will not take | Non-concern: parsing the flags | IO: (path + options) -> an outcome or a Refusal
 
 use std::path::{Path, PathBuf};
 
@@ -9,10 +9,10 @@ use fsa1_model::{
 };
 
 use crate::address;
-use crate::charts::FigureNotDrawn;
 use crate::pack_format::PackFormat;
 use crate::present;
 use crate::refusal::{Kind, Refusal, bad_arg, fail, refused};
+use crate::xlsx_loss::losses;
 
 /// Which drawer finishes a view — the identity of the verb that asked, never one of its options, so
 /// it is settled here by [`render`] and [`tree`] and no front end names it.
@@ -255,9 +255,12 @@ pub fn tree(args: TreeArgs<'_>) -> Result<Rendered, Refusal> {
     )
 }
 
-/// Every parameter `check` has. One field today, so the next one has an obvious home.
+/// Every parameter `check` has. `format` asks the SECOND question — what an export in that format
+/// will not carry — which `None` leaves unasked; the vocabulary is `pack`'s, so a format added there
+/// is askable here with no field of its own.
 pub struct CheckArgs<'a> {
     pub target: &'a str,
+    pub format: Option<PackFormat>,
 }
 
 /// A workbook that will not load is itself the finding, so this reads a `Decomposed` rather than a
@@ -278,10 +281,14 @@ pub fn check(args: CheckArgs<'_>) -> Result<Vec<Diagnostic>, Refusal> {
             Err(fail(Kind::Io, &msg))
         }
         // Best-effort: a bare-filename loc carries no tab, so a scope cannot exclude it on that axis, and with no `Workbook` to resolve against a binding is graded on its SYNTAX and no further.
-        Ok(Err(load_diags)) => Ok(in_scope(load_diags, &scope)
-            .chain(in_scope(sidecar_diags(&decomposed.root)?, &scope))
-            .chain(in_scope(figure_diags(&decomposed.root, None)?, &scope))
-            .collect()),
+        Ok(Err(load_diags)) => {
+            let (sidecar, _) = sidecar_diags(&decomposed.root)?;
+            let (figure, _) = figure_diags(&decomposed.root, None)?;
+            Ok(in_scope(load_diags, &scope)
+                .chain(in_scope(sidecar, &scope))
+                .chain(in_scope(figure, &scope))
+                .collect())
+        }
         Ok(Ok(wb)) => {
             if let Some(name) = scope.tab()
                 && wb.tab_index(name).is_none()
@@ -294,8 +301,15 @@ pub fn check(args: CheckArgs<'_>) -> Result<Vec<Diagnostic>, Refusal> {
             }
             // The values first and the sidecars after, the order this verb reports on either branch.
             let mut found = wb.lint_scoped(&scope);
-            found.extend(in_scope(sidecar_diags(&decomposed.root)?, &scope));
-            found.extend(in_scope(figure_diags(&decomposed.root, Some(&wb))?, &scope));
+            let (sidecar, overlay) = sidecar_diags(&decomposed.root)?;
+            found.extend(in_scope(sidecar, &scope));
+            let (figure, figures) = figure_diags(&decomposed.root, Some(&wb))?;
+            found.extend(in_scope(figure, &scope));
+            // A sidecar that would not parse leaves no overlay to grade, but it stops only ITS half — the figure half is asked here whatever the presentation did, and the sidecar's own fault is already in the table above.
+            if args.format.is_some() {
+                let (_, not_drawn) = crate::charts::charts(&wb, &figures);
+                found.extend(in_scope(losses(&wb, overlay.as_ref(), &not_drawn), &scope));
+            }
             Ok(found)
         }
     }
@@ -380,9 +394,9 @@ pub struct Packed {
     pub dest: PathBuf,
     pub sheets: usize,
     pub charts: usize,
-    /// One line per figure Excel draws no chart for. Empty is the ordinary case, and distinct from a
-    /// workbook that states no figure at all — which has none either way.
-    pub not_drawn: Vec<FigureNotDrawn>,
+    /// Everything the written file does not carry, located. Empty is the ordinary case, and distinct
+    /// from a workbook that states neither presentation nor figures — which loses nothing either way.
+    pub losses: Vec<Diagnostic>,
 }
 
 /// Every parameter `pack` has. `dest` is taken verbatim when given; `format` governs only the name
@@ -394,8 +408,8 @@ pub struct PackArgs<'a> {
     pub strict: bool,
 }
 
-/// `strict` refuses rather than writing a workbook whose figures do not all cross, which is the same
-/// bar `unpack --strict` sets on the way in.
+/// `strict` refuses rather than writing a workbook that does not wholly cross, which is the same bar
+/// `unpack --strict` sets on the way in. Without it the file is written and the losses are NAMED.
 pub fn pack(args: PackArgs<'_>) -> Result<Packed, Refusal> {
     let PackArgs {
         folder,
@@ -414,29 +428,24 @@ pub fn pack(args: PackArgs<'_>) -> Result<Packed, Refusal> {
         return Err(fail(Kind::Validation, &msg));
     }
     let overlay = load_overlay(folder)?;
-    // The one carrier with a closed property list, so what `check` accepted and the page painted stops HERE rather than being dropped from the .xlsx in silence. Found by the read that loaded the overlay, never by a second one.
-    let not_carried: Vec<Diagnostic> = (0..wb.sheet_names().len() as u32)
-        .flat_map(|sheet| overlay.scopes(&wb, sheet))
-        .flat_map(|scope| scope.uncarried.to_vec())
-        .collect();
-    if !not_carried.is_empty() {
-        return Err(refused(not_carried));
-    }
     let figures = figures_to_draw(folder)?;
     let (charts, not_drawn) = crate::charts::charts(&wb, &figures);
-    if strict && let Some(loss) = not_drawn.first() {
-        let msg = format!(
-            "cannot strictly pack this workbook: {loss}; simplify the spec to one Excel draws, or \
-             pack without --strict to write the .xlsx with that figure left out"
-        );
-        return Err(fail(Kind::Validation, &msg));
+    let losses = losses(&wb, Some(&overlay), &not_drawn);
+    if strict && !losses.is_empty() {
+        return Err(Refusal {
+            kind: Kind::Validation,
+            message: "cannot strictly pack this workbook: remove what an .xlsx cannot carry, or \
+                      pack without --strict to write it with these left out"
+                .to_string(),
+            diagnostics: losses,
+        });
     }
     fsa1_xlsx::write_xlsx(&wb, &overlay, &charts, &dest)
         .map(|()| Packed {
             dest,
             sheets: wb.sheet_names().len(),
             charts: charts.len(),
-            not_drawn,
+            losses,
         })
         .map_err(|e| fail(pack_kind(&e), &e.to_string()))
 }
@@ -547,15 +556,16 @@ pub fn load(path: &Path) -> Result<fsa1_model::Workbook, Refusal> {
 
 /// `check` parses presentation to LINT it, so a sidecar's refusals are findings rather than a reason
 /// to stop. A directory it cannot READ is neither: a pass that could not run reports no faults and
-/// must not be mistaken for one that found none.
-fn sidecar_diags(root: &Path) -> Result<Vec<fsa1_model::Diagnostic>, Refusal> {
+/// must not be mistaken for one that found none. What LOADED rides out beside them, because the
+/// export question is answered off exactly this read and no second one.
+fn sidecar_diags(root: &Path) -> Result<(Vec<Diagnostic>, Option<Overlay>), Refusal> {
     match Overlay::load_dir(root) {
         Err(e) => {
             let msg = format!("cannot read {:?}: {e}", root.display());
             Err(fail(Kind::Io, &msg))
         }
-        Ok(Err(diags)) => Ok(diags),
-        Ok(Ok(_)) => Ok(Vec::new()),
+        Ok(Err(diags)) => Ok((diags, None)),
+        Ok(Ok(overlay)) => Ok((Vec::new(), Some(overlay))),
     }
 }
 
@@ -566,26 +576,28 @@ fn sidecar_diags(root: &Path) -> Result<Vec<fsa1_model::Diagnostic>, Refusal> {
 fn figure_diags(
     root: &Path,
     wb: Option<&fsa1_model::Workbook>,
-) -> Result<Vec<fsa1_model::Diagnostic>, Refusal> {
+) -> Result<(Vec<Diagnostic>, Figures), Refusal> {
     let figures = match Figures::load_dir(root) {
         Err(e) => {
             let msg = format!("cannot read {:?}: {e}", root.display());
             return Err(fail(Kind::Io, &msg));
         }
-        Ok(Err(diags)) => return Ok(diags),
+        Ok(Err(diags)) => return Ok((diags, Figures::default())),
         Ok(Ok(figures)) => figures,
     };
     let Some(wb) = wb else {
-        return Ok(figures.binding_syntax());
+        let diags = figures.binding_syntax();
+        return Ok((diags, figures));
     };
-    Ok(figures
+    let diags: Vec<Diagnostic> = figures
         .all()
         .filter_map(|(tab, figure)| {
             let sheet = wb.tab_index(tab)?;
             figure.expand(wb, sheet).err()
         })
         .flatten()
-        .collect())
+        .collect();
+    Ok((diags, figures))
 }
 
 fn in_scope<'a>(

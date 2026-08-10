@@ -72,7 +72,7 @@ One table, both paths. Optional arguments are in brackets.
 | verb | MCP arguments | `fsa1-cli` command |
 |---|---|---|
 | `render` | `target`, `mode` (`combined\|values\|functions`), `format` (`ascii\|html`) | `fsa1-cli render <path> [--mode <m>] [--format <f>]` |
-| `check` | `target` | `fsa1-cli check <path>` |
+| `check` | `target`, `xlsx` (boolean) | `fsa1-cli check <path> [--xlsx]` |
 | `eval` | `target`, `formula` | `fsa1-cli eval <path> --formula '=<formula>'` |
 | `trace` | `target` (one cell), `direction` (`upstream\|downstream`), `depth` | `fsa1-cli trace <path> [--dependents] [--depth <N>]` |
 | `unpack` | `source`, `dest`, `decomposition`, `strict` | `fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]` |
@@ -89,7 +89,8 @@ One table, both paths. Optional arguments are in brackets.
   ranges it binds — except under a region path, which is a rectangle of cells and lists no figure.
   `format: html` draws the figure itself.
 - `check` lints overlap, dimension mismatch, cycles and broken references. Scope it to a tab or range
-  to lint only that.
+  to lint only that. `xlsx` (the CLI's `--xlsx`) additionally asks what an `.xlsx` export would NOT
+  carry — the same losses `pack` names — and writes no file; it defaults to off on both surfaces.
 - `eval` evaluates an ad-hoc formula against the workbook, writing nothing. An error value like
   `#REF!` is the ANSWER, not a failure.
 - `trace` walks exactly one cell's dependency chain. **Upstream is the DEFAULT and has no flag at
@@ -104,7 +105,9 @@ One table, both paths. Optional arguments are in brackets.
   is used VERBATIM, so its parent directory must already exist (`pack` creates none). Omitted, the
   output name is DERIVED as `./<workbook-basename>.xlsx` in the current directory. MCP `format` is the
   CLI's `--target`; `xlsx` is the only value either accepts, and it names the DERIVED extension only.
-  `strict` (the CLI's `--strict`) refuses rather than writing an `.xlsx` that leaves a figure out.
+  `strict` (the CLI's `--strict`) refuses rather than writing an `.xlsx` that leaves anything out — a
+  presentation declaration it cannot carry, or a figure Excel draws no chart for. Without it the file
+  is written and every such loss is NAMED, located, under the code `xlsx-not-carried`.
 
 There is no write tool, and none is needed: **a cell is a file**. Create, change and move cells with
 your own file tools, then use `check` or `render` to confirm the workbook still loads.

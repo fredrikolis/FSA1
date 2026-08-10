@@ -209,11 +209,11 @@ fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
         strict: false,
     })
     .map_err(|e| format!("pack failed: {}", e.message))?;
-    if !packed_report.not_drawn.is_empty() {
+    if !packed_report.losses.is_empty() {
         return Err(format!(
-            "pack drew no chart for {:?}",
+            "pack could not carry {:?}",
             packed_report
-                .not_drawn
+                .losses
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<String>>()
