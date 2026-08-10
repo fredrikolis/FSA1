@@ -66,9 +66,15 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   refused. check parses and validates the sheet and reports its
   faults; pack carries it into the .xlsx as fonts, fills, borders, alignment, column widths
   and row heights.
+  A rule may declare ANY property but a SIZE the selector does not name the axis of: width is a
+  column's and height a row's, so either on a selector naming neither — a periodic one, or the
+  cross axis — is refused presentation-property. What FSA1 RESOLVES is the sixteen an .xlsx
+  holds — the ones just named; anything else renders and nothing more, and pack refuses it as
+  xlsx-not-carried, naming the file and the line, rather than dropping it in silence.
   render --format html writes the TRANSPARENT form (PRES2): every sidecar's own bytes reach
   the page unchanged, in a <style> scoped to the region its filename names and layered in the
-  model's cascade order — so what the page paints is what check resolved and pack writes.
+  model's cascade order — so what the page paints is what check resolved and pack writes,
+  plus the author's own bytes for every declaration the model does not carry.
 
 FIGURES — <tab>/<stem>.json, a Vega-Lite spec bound to the tab's ranges
   Any .json entry of a tab with a non-empty stem is a figure, and a figure is the only JSON

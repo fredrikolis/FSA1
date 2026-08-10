@@ -46,7 +46,7 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 ## PRES — presentation
 
 - **PRES1 · a selector addresses structure, never a coordinate.** A sidecar's selectors address the shape of its region — the whole of it, an edge row or column, an index, a periodic offset — and no selector names a single cell. One coordinate's presentation is stated by a sidecar whose ROOT is that coordinate.
-- **PRES2 · the TRANSPARENT html form carries every sidecar's bytes unchanged and paints the cascade the model resolves.** That form applies a sidecar by copying its bytes into a scoped, layered `<style>` over the region its filename names, adding only wrappers, coordinates, track sizes and that layer — so what the page paints is what `Overlay::cell_style` resolves and `pack` writes. That byte-for-byte guarantee is over SIDECARS: a figure's spec is not carried unchanged but EXPANDED from its bindings and then re-spelled — every `<` in it becomes `\u003c` so the raw-text `<script>` holding it cannot be ended by a cell's own text — and drawn by the pinned Vega runtime. It is kept permanently as the form to read to learn what the format does.
+- **PRES2 · the TRANSPARENT html form carries every sidecar's bytes unchanged and paints the cascade the model resolves.** That form applies a sidecar by copying its bytes into a scoped, layered `<style>` over the region its filename names, adding only wrappers, coordinates, track sizes and that layer — so what the page paints is the model's cascade for every declaration the model CARRIES, which is what `Overlay::cell_style` resolves and `pack` writes, and the author's own bytes for the rest, which reach the page and no other carrier. That byte-for-byte guarantee is over SIDECARS: a figure's spec is not carried unchanged but EXPANDED from its bindings and then re-spelled — every `<` in it becomes `\u003c` so the raw-text `<script>` holding it cannot be ended by a cell's own text — and drawn by the pinned Vega runtime. It is kept permanently as the form to read to learn what the format does.
 
 ## VAL — the value model
 
@@ -93,7 +93,10 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
   and so reach into every block, where the tab holds ANY rooted sidecar each of the layer's rules
   selects the whole region or declares only an axis size; the file holds rules directly and no
   prelude, and needs no range file beside it.
-  Those selectors, the properties, their one canonical spelling, and the
+  Those selectors, each in its ONE canonical spelling and its rules ascending by the target they
+  name, the properties — a sidecar may declare ANY of them save a size on a selector naming no such
+  axis, the model carrying the ones it resolves onto a coordinate or an axis and the rest reaching
+  the page and no further — and the
   contention between sidecars — the roots of one tab are DISJOINT, or nest with the inner root a
   SINGLE cell, and that inner cell layers last and wins property by property; a scope is applied
   over one subtree, so crossing roots and a multi-cell root inside another are refused. A FIGURE's

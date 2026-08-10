@@ -13,7 +13,7 @@ use crate::filename::{parse_filename, parse_root};
 use crate::geometry::{AxisRun, declared_heights, declared_widths};
 use crate::names::{CssEntry, css_entry, figure_stems, is_tab_layer, presentation_stem};
 use crate::overlap::Rect;
-use crate::presentation::{Presentation, parse_rules, parse_rules_located, rules_of};
+use crate::presentation::{Presentation, parse_rules_located, rules_of};
 use crate::sidecar_scope::{
     Sidecar, SidecarScope, area, check_scope_nesting, check_tab_layer, scopes,
 };
@@ -234,7 +234,7 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
                 return None;
             };
             match parse_rules_located(&file, root, &text) {
-                Ok(rules) => Some((root, file, text, rules)),
+                Ok(read) => Some((root, file, text, read)),
                 Err(d) => {
                     diags.extend(d);
                     None
@@ -244,15 +244,16 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
         let blocks = read_sidecars(&tab, sidecars, content, &mut diags);
         check_scope_nesting(&blocks, &mut diags);
         // The layer's rules are judged BEFORE they are stripped of their positions, so a refusal on one lands on the line the author wrote it.
-        let default = read.map(|(root, file, text, rules)| {
+        let default = read.map(|(root, file, text, read)| {
             if !blocks.is_empty() {
-                check_tab_layer(&file, &rules, &mut diags);
+                check_tab_layer(&file, &read.rules, &mut diags);
             }
             Sidecar {
                 root,
                 file,
                 text,
-                presentation: rules_of(rules),
+                presentation: rules_of(read.rules),
+                uncarried: read.uncarried,
             }
         });
         out.insert(tab, TabOverlay { default, blocks });
@@ -316,15 +317,16 @@ fn read_sidecars(
             // An open root clamps to the tab's content, so a tab stating none reaches nothing: a no-op, never a refusal.
             Ok(root) => match root.resolve(content) {
                 None => continue,
-                Some(region) => match parse_rules(&located, region, &text) {
+                Some(region) => match parse_rules_located(&located, region, &text) {
                     // Keyed by the RESOLVED region: contention is settled there, so two names reaching one region are what cannot be ordered.
-                    Ok(presentation) => read.push((
+                    Ok(parsed) => read.push((
                         region.label(),
                         Sidecar {
                             root: region,
                             file: located,
                             text,
-                            presentation,
+                            presentation: rules_of(parsed.rules),
+                            uncarried: parsed.uncarried,
                         },
                     )),
                     Err(d) => diags.extend(d),
@@ -409,10 +411,7 @@ mod tests {
                 .iter()
                 .map(|d| d.code)
                 .collect();
-        assert_eq!(
-            codes,
-            vec![Code::PresentationSelector, Code::PresentationValue],
-        );
+        assert_eq!(codes, vec![Code::PresentationSelector]);
     }
 
     /// A sidecar's NAME is its root, so every MALFORMED root a range file refuses it refuses too,

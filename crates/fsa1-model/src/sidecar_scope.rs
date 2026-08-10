@@ -5,26 +5,30 @@ use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::overlap::Rect;
 use crate::presentation::{LocatedRule, Presentation, Target};
 
-/// One sidecar: its root, its `<tab>/<name>`, its text VERBATIM as read, and the rules parsed from
-/// that text. The text is retained because a carrier that re-spells presentation copies the authored
-/// bytes rather than re-deriving them from the typed rules.
+/// One sidecar: its root, its `<tab>/<name>`, its text VERBATIM as read, the rules parsed from that
+/// text, and the declarations no typed rule took. The text is retained because a carrier that
+/// re-spells presentation copies the authored bytes rather than re-deriving them from the typed
+/// rules; `uncarried` is retained because the read that found them is the read that parsed the rules.
 #[derive(Clone, Debug)]
 pub(crate) struct Sidecar {
     pub root: Rect,
     pub file: String,
     pub text: String,
     pub presentation: Presentation,
+    pub uncarried: Vec<Diagnostic>,
 }
 
 /// One scoping root and the bytes stated over it. `file` is `<tab>/<name>` exactly as a diagnostic
 /// spells it, so a carrier locates its own refusals without a second walk of the tree, and
-/// `tab_layer` separates the layer beneath every block from a block.
+/// `tab_layer` separates the layer beneath every block from a block. `uncarried` is what a carrier
+/// with a CLOSED property list refuses: located already, from the read that built this scope.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SidecarScope<'a> {
     pub root: Rect,
     pub file: String,
     pub text: &'a str,
     pub tab_layer: bool,
+    pub uncarried: &'a [Diagnostic],
 }
 
 /// Every sidecar a tab holds, in cascade order — the tab layer first, then the blocks widest root
@@ -47,6 +51,7 @@ fn scope_of(sidecar: &Sidecar, tab_layer: bool) -> SidecarScope<'_> {
         file: sidecar.file.clone(),
         text: &sidecar.text,
         tab_layer,
+        uncarried: &sidecar.uncarried,
     }
 }
 
@@ -90,15 +95,16 @@ fn nests(a: Rect, b: Rect) -> bool {
 }
 
 /// Decision 4: a tab layer's root is the whole content where a block's is a region of it, so an
-/// index in the layer reaches into every block. A size is exempt, reaching no cell either way, which
-/// leaves the encoder's own layer — an axis selector declaring a size alone — loadable over blocks.
+/// index in the layer reaches into every block. Exempt is a rule DECLARING only a size, reaching no
+/// cell either way — the encoder's own layer. Never a vacuous one: a rule the model carries nothing
+/// from reaches every block on the author's bytes, so it answers for its index like any other.
 pub(crate) fn check_tab_layer(file: &str, layer: &[LocatedRule], diags: &mut Vec<Diagnostic>) {
     for located in layer {
-        let sized_only = located
-            .rule
-            .declarations
-            .iter()
-            .all(|d| matches!(d, Declaration::Width(_) | Declaration::Height(_)));
+        let declarations = &located.rule.declarations;
+        let sized_only = !declarations.is_empty()
+            && declarations
+                .iter()
+                .all(|d| matches!(d, Declaration::Width(_) | Declaration::Height(_)));
         if located.rule.target == Target::All || sized_only {
             continue;
         }
@@ -191,5 +197,28 @@ mod tests {
             (".css", "  fsa1-cell:nth-child(2) { width: 13ch }\n"),
         ];
         Overlay::from_tabs(&[("Sheet1", files)]).expect("a size-only layer rule is no fault");
+    }
+
+    /// An index in the tab layer reaches into every block on the BYTES the author wrote, and the
+    /// reach does not care what the typed model can read: the same two layers, differing only in
+    /// whether the rule's declaration is carried, earn the one refusal on the one line.
+    #[test]
+    fn a_tab_layer_rule_the_model_carries_nothing_from_still_answers_for_its_index() {
+        for layer in [
+            "  fsa1-cell:first-child { color: #ffffff }\n",
+            "  fsa1-cell:first-child { box-shadow: none }\n",
+        ] {
+            let diags = refusals(&[
+                ("A1:B2", "1\t2\n3\t4"),
+                ("A1:B2.css", "  fsa1-cell { color: #3f0421 }\n"),
+                (".css", layer),
+            ]);
+            assert_eq!(
+                diags.iter().map(|d| d.code).collect::<Vec<_>>(),
+                vec![Code::TabLayerIndex],
+                "{layer:?} -> {diags:?}"
+            );
+            assert_eq!(diags[0].loc.to_string(), "Sheet1/.css:1:3", "{layer:?}");
+        }
     }
 }

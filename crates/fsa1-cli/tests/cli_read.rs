@@ -1491,13 +1491,17 @@ fn a_malformed_sidecar_reaches_only_the_verbs_that_read_presentation() {
     let fx = Fixture::new("sidecar-routing");
     fx.file("Sheet1", "A1", "20000")
         .file("Sheet1", "B1", "=A1*2")
-        .file("Sheet1", "A1:B1.css", "  fsa1-cell { color: crimson }\n");
+        .file(
+            "Sheet1",
+            "A1:B1.css",
+            "  fsa1-cell { color: #d33333 !important }\n",
+        );
     let root = fx.path().to_str().unwrap();
 
     let (code, out) = run(&["check", root]);
     assert_eq!(code, 3, "check reports the sidecar located; got:\n{out}");
     assert!(
-        out.contains("presentation-value") && out.contains("Sheet1/A1:B1.css"),
+        out.contains("presentation-syntax") && out.contains("Sheet1/A1:B1.css"),
         "check names the fault and where it is:\n{out}"
     );
 

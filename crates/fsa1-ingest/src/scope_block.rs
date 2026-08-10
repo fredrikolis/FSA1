@@ -498,9 +498,9 @@ fn normal_font_family(ctx: &Ctx<'_>) -> Option<Declaration> {
     family(ctx.normal.name.as_deref()?)
 }
 
-/// The family grammar read from fsa1-model, as [`points`] reads [`Points::font_size`]: a face holding
-/// any character a declaration value may not — a quote, a comma, a `:`, a `!`, a line break — has no
-/// declaration at all, on either leg, and crosses as a named loss instead.
+/// The family grammar read from fsa1-model, as [`points`] reads [`Points::font_size`]: it is the
+/// WRITE leg's own, so a face holding a quote, a comma, a `:`, a `!` or a line break gets no
+/// declaration here and crosses as a named loss. The read leg leaves such a face UNCARRIED instead.
 fn family(name: &str) -> Option<Declaration> {
     Declaration::font_family(name)
 }
@@ -1332,6 +1332,17 @@ mod tests {
         for name in adversarial_families() {
             reparses(&faced(&name), &format!("family {name:?}"));
         }
+    }
+
+    /// The write leg's grammar is now its OWN: the read leg leaves an imported face it cannot spell
+    /// uncarried instead of refusing it, and this is what says the encoder still emits no such face
+    /// — a CSS list crosses as a named loss rather than as a declaration nothing reads back.
+    #[test]
+    fn a_face_the_encoder_cannot_spell_still_earns_no_declaration() {
+        for name in ["Arial, Helvetica", "\"Times New Roman\"", "Two  Spaces"] {
+            assert_eq!(family(name), None, "{name:?}");
+        }
+        assert!(family("Arial").is_some());
     }
 
     /// The one way a size fails to cross now the tab layer spans every axis: a number no `width` or

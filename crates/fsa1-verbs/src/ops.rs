@@ -1,4 +1,4 @@
-// Concern: one function per verb, naming its target, choosing its drawer and refusing an option its carrier cannot take | Non-concern: parsing the flags | IO: (path + options) -> an outcome or a Refusal
+// Concern: one function per verb, naming its target, choosing its drawer and refusing what its carrier cannot take | Non-concern: parsing the flags | IO: (path + options) -> an outcome or a Refusal
 
 use std::path::{Path, PathBuf};
 
@@ -414,6 +414,14 @@ pub fn pack(args: PackArgs<'_>) -> Result<Packed, Refusal> {
         return Err(fail(Kind::Validation, &msg));
     }
     let overlay = load_overlay(folder)?;
+    // The one carrier with a closed property list, so what `check` accepted and the page painted stops HERE rather than being dropped from the .xlsx in silence. Found by the read that loaded the overlay, never by a second one.
+    let not_carried: Vec<Diagnostic> = (0..wb.sheet_names().len() as u32)
+        .flat_map(|sheet| overlay.scopes(&wb, sheet))
+        .flat_map(|scope| scope.uncarried.to_vec())
+        .collect();
+    if !not_carried.is_empty() {
+        return Err(refused(not_carried));
+    }
     let figures = figures_to_draw(folder)?;
     let (charts, not_drawn) = crate::charts::charts(&wb, &figures);
     if strict && let Some(loss) = not_drawn.first() {

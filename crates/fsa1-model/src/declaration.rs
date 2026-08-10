@@ -1,9 +1,9 @@
-// Concern: the declaration vocabulary — each property's type, unit and range | Non-concern: selectors, rule order, the holding block | IO: (text) -> Declaration; (f64) -> a measure; (Declaration) -> CSS
+// Concern: declaration vocabulary — a property's type, unit, range and the punctuation it bars | Non-concern: selectors, rule order | IO: (text) -> Declaration; (f64) -> a measure; (Declaration) -> CSS
 
 use crate::diagnostic::Code;
 
-/// One decimal-and-unit value: what [`measure`] reads, and the messages it refuses with. `spell` is
-/// the value type's own, never a second copy of its format.
+/// One decimal-and-unit value: what [`measure`] reads, and the wordings it leaves a value uncarried
+/// with.
 struct Measure {
     what: &'static str,
     unit: &'static str,
@@ -11,13 +11,11 @@ struct Measure {
     example: &'static str,
     lo: f64,
     hi: f64,
-    spell: fn(f64) -> String,
 }
 
 /// Each range is Excel's own, which is what the value has to round-trip through as a `sz`, a `<row
-/// ht>` or a `<col width>`. It also bounds the canonical spelling: outside it, the shortest decimal
-/// form runs to hundreds of characters and the rewrite a refusal names stops being one an author can
-/// act on. An axis may measure zero, a collapsed one having no extent at all; a font may not.
+/// ht>` or a `<col width>`. An axis may measure zero, a collapsed one having no extent at all; a
+/// font may not.
 const FONT_SIZE: Measure = Measure {
     what: "font size",
     unit: "pt",
@@ -25,7 +23,6 @@ const FONT_SIZE: Measure = Measure {
     example: "11pt",
     lo: 1.0,
     hi: 409.0,
-    spell: |n| Points(n).spell(),
 };
 
 const ROW_HEIGHT: Measure = Measure {
@@ -35,7 +32,6 @@ const ROW_HEIGHT: Measure = Measure {
     example: "15pt",
     lo: 0.0,
     hi: 409.5,
-    spell: |n| Points(n).spell(),
 };
 
 const COLUMN_WIDTH: Measure = Measure {
@@ -45,7 +41,6 @@ const COLUMN_WIDTH: Measure = Measure {
     example: "10ch",
     lo: 0.0,
     hi: 255.0,
-    spell: |n| Chars(n).spell(),
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,11 +217,10 @@ impl Border {
     }
 }
 
-/// Every character a declaration VALUE may not hold, with the refusal each earns — ONE statement,
-/// read before dispatch by [`parse_declaration`] and by the write leg through
-/// [`Declaration::font_family`], so an emitted value can never be one the parser refuses. `;`, `{`
-/// and `}` never survive the read leg's cursor; the write leg has no cursor and needs them named.
-const VALUE_FORBIDDEN: &[(char, Code, &str)] = &[
+/// Every character a declaration VALUE may not hold without ending the segment the cursor is reading
+/// or the rule around it — the FRAME the reader needs named, `!important` moving a cell off the
+/// track its own coordinates name and a second `:` being ambiguous with a missing `;`.
+const FRAME_FORBIDDEN: &[(char, Code, &str)] = &[
     (
         '!',
         Code::PresentationSyntax,
@@ -252,39 +246,27 @@ const VALUE_FORBIDDEN: &[(char, Code, &str)] = &[
         Code::PresentationSyntax,
         "a declaration holds no `}`; it is what closes the rule",
     ),
-    (
-        '(',
-        Code::PresentationValue,
-        "a presentation value is a literal, never a function",
-    ),
-    (
-        ')',
-        Code::PresentationValue,
-        "a presentation value is a literal, never a function",
-    ),
-    (
-        ',',
-        Code::PresentationValue,
-        "a presentation value is one value, never a list",
-    ),
-    (
-        '"',
-        Code::PresentationValue,
-        "a presentation value is written unquoted",
-    ),
-    (
-        '\'',
-        Code::PresentationValue,
-        "a presentation value is written unquoted",
-    ),
 ];
 
-/// The one read of [`VALUE_FORBIDDEN`] either leg gets, so neither can grow a list of its own.
-fn value_fault(value: &str) -> Option<(Code, &'static str)> {
-    VALUE_FORBIDDEN
+/// Every character a family NAME may not hold: the WRITE leg's own list, read by
+/// [`Declaration::font_family`] alone, so the encoder's grammar is stated once. The read leg leaves
+/// a face outside it UNCARRIED rather than refusing it.
+const FAMILY_FORBIDDEN: &[char] = &['!', ':', ';', '{', '}', '(', ')', ',', '"', '\''];
+
+/// The one read of [`FRAME_FORBIDDEN`] the reader gets, so it cannot grow a list of its own.
+fn frame_fault(value: &str) -> Option<(Code, &'static str)> {
+    FRAME_FORBIDDEN
         .iter()
         .find(|(c, _, _)| value.contains(*c))
         .map(|(_, code, why)| (*code, *why))
+}
+
+/// What one declaration's text broke. A `Frame` is the reader's own — the segment or the rule ended
+/// where it stands — and stays a located refusal; every other fault leaves the declaration out of
+/// the [`crate::Rule`] entirely, saying why, and the sidecar LOADS.
+pub(crate) enum DeclFault {
+    Frame(Code, String),
+    Uncarried(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -306,12 +288,12 @@ pub enum Declaration {
 
 impl Declaration {
     /// One unquoted name whose words are separated by single spaces: CSS family names are unquoted
-    /// space-separated identifiers, which is also why declarations need their `;`. [`VALUE_FORBIDDEN`]
-    /// read by a WRITER, as [`Points::font_size`] reads [`FONT_SIZE`], so the leg that emits a
-    /// declaration cannot admit a name the leg that parses one refuses.
+    /// space-separated identifiers, which is also why declarations need their `;`.
+    /// [`FAMILY_FORBIDDEN`] read by a WRITER, as [`Points::font_size`] reads [`FONT_SIZE`], so the
+    /// leg that emits a declaration only ever spells a name it can read back.
     pub fn font_family(name: &str) -> Option<Declaration> {
         let spellable = !name.is_empty()
-            && value_fault(name).is_none()
+            && !name.contains(FAMILY_FORBIDDEN)
             && name.split(' ').all(|word| {
                 !word.is_empty() && !word.chars().any(|c| c.is_whitespace() || c.is_control())
             });
@@ -366,9 +348,9 @@ impl Declaration {
     }
 }
 
-pub(crate) fn parse_declaration(text: &str) -> Result<Declaration, (Code, String)> {
+pub(crate) fn parse_declaration(text: &str) -> Result<Declaration, DeclFault> {
     let Some((property, value)) = text.split_once(':') else {
-        return Err(syntax(&format!(
+        return Err(frame(&format!(
             "a declaration is `<property>: <value>`; found {text:?}"
         )));
     };
@@ -376,39 +358,33 @@ pub(crate) fn parse_declaration(text: &str) -> Result<Declaration, (Code, String
     // A rewrite must be a text the reader can receive back: the caller trims each segment, so an empty half would name one ending in whitespace, which trims to the refused text again.
     match (property.is_empty(), value.is_empty()) {
         (true, true) => {
-            return Err(syntax(
+            return Err(frame(
                 "a declaration is `<property>: <value>`; found a bare `:`",
             ));
         }
         (true, false) => {
-            return Err(syntax(&format!(
+            return Err(frame(&format!(
                 "a declaration is `<property>: <value>`; the value {value:?} is given no property"
             )));
         }
         (false, true) => {
-            return Err(syntax(&format!(
+            return Err(frame(&format!(
                 "a declaration is `<property>: <value>`; the property {property:?} is given no value"
             )));
         }
         (false, false) => {}
     }
-    // The verbatim compare the selector gets, over the declaration's INSIDE only: `color :` and `color:` spell one appearance, while padding around `{`, `}` and `;` is frame the format's own example column-aligns.
-    if text != format!("{property}: {value}") {
-        return Err(non_canonical(&format!(
-            "a declaration is `<property>: <value>`: write `{property}: {value}`"
+    // Kept now that `(` is no longer barred, where it only changes the WORDING: a computed value otherwise reaches the property table below and is named a malformed colour, or size, or keyword — every branch describing the type it is not, and none the one thing wrong with it.
+    if value.contains("calc(") {
+        return Err(DeclFault::Uncarried(format!(
+            "a presentation value is a literal, never computed: {text:?}"
         )));
     }
-    // Ahead of the character sweep below, which would name `(` where the author wrote a computation.
-    if value.contains("calc(") {
-        return Err((
-            Code::PresentationValue,
-            format!("a presentation value is a literal, never computed: {text:?}"),
-        ));
+    if let Some((code, why)) = frame_fault(value) {
+        return Err(DeclFault::Frame(code, format!("{why}: {text:?}")));
     }
-    if let Some((code, why)) = value_fault(value) {
-        return Err((code, format!("{why}: {text:?}")));
-    }
-    match property {
+    let carried = match property {
+        "background" => background_shorthand(value),
         "background-color" => color(value).map(Declaration::BackgroundColor),
         "border-top" => border(Edge::Top, value),
         "border-bottom" => border(Edge::Bottom, value),
@@ -416,16 +392,11 @@ pub(crate) fn parse_declaration(text: &str) -> Result<Declaration, (Code, String
         "border-right" => border(Edge::Right, value),
         "color" => color(value).map(Declaration::Color),
         "font-family" => Declaration::font_family(value).ok_or_else(|| {
-            (
-                Code::PresentationValue,
-                format!(
-                    "a font family is one unquoted name, e.g. `Times New Roman`; found {value:?}"
-                ),
-            )
+            format!("a font family is one unquoted name, e.g. `Times New Roman`; found {value:?}")
         }),
         "font-size" => measure(value, &FONT_SIZE).map(|n| Declaration::FontSize(Points(n))),
         "font-style" => keyword(value, FONT_STYLES, "font style").map(Declaration::FontStyle),
-        "font-weight" => font_weight(value),
+        "font-weight" => keyword(value, FONT_WEIGHTS, "font weight").map(Declaration::FontWeight),
         "height" => measure(value, &ROW_HEIGHT).map(|n| Declaration::Height(Points(n))),
         "text-align" => keyword(value, TEXT_ALIGNS, "text alignment").map(Declaration::TextAlign),
         "text-decoration" => {
@@ -438,19 +409,24 @@ pub(crate) fn parse_declaration(text: &str) -> Result<Declaration, (Code, String
             keyword(value, WHITE_SPACES, "white-space mode").map(Declaration::WhiteSpace)
         }
         "width" => measure(value, &COLUMN_WIDTH).map(|n| Declaration::Width(Chars(n))),
-        "background" => Err(background_shorthand(value)),
-        _ => Err((
-            Code::PresentationProperty,
-            format!("{property:?} is not a supported presentation property"),
+        _ => Err(format!(
+            "{property:?} is not a supported presentation property"
         )),
-    }
+    };
+    carried.map_err(DeclFault::Uncarried)
 }
 
 const FONT_STYLES: &[(&str, FontStyle)] =
     &[("normal", FontStyle::Normal), ("italic", FontStyle::Italic)];
 
-const FONT_WEIGHTS: &[(&str, FontWeight)] =
-    &[("normal", FontWeight::Normal), ("bold", FontWeight::Bold)];
+/// The canonical word first: [`spell_keyword`] reads this table backward and takes the first row a
+/// variant appears in, so the numeric spellings sit after the words they mean.
+const FONT_WEIGHTS: &[(&str, FontWeight)] = &[
+    ("normal", FontWeight::Normal),
+    ("bold", FontWeight::Bold),
+    ("400", FontWeight::Normal),
+    ("700", FontWeight::Bold),
+];
 
 const TEXT_DECORATIONS: &[(&str, TextDecoration)] = &[
     ("none", TextDecoration::None),
@@ -476,17 +452,14 @@ const WHITE_SPACES: &[(&str, WhiteSpace)] = &[
     ("nowrap", WhiteSpace::Nowrap),
 ];
 
-/// The admissible spellings come from the same table the value is read with, so a refusal can never
-/// name a set the parser does not accept.
-fn keyword<T: Copy>(value: &str, table: &[(&str, T)], what: &str) -> Result<T, (Code, String)> {
+/// The admissible spellings come from the same table the value is read with, so the reason a value
+/// is uncarried can never name a set the parser does not accept.
+fn keyword<T: Copy>(value: &str, table: &[(&str, T)], what: &str) -> Result<T, String> {
     match table.iter().find(|(k, _)| *k == value) {
         Some((_, v)) => Ok(*v),
-        None => Err((
-            Code::PresentationValue,
-            format!(
-                "{value:?} is not a {what}; write one of {}",
-                table.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(", ")
-            ),
+        None => Err(format!(
+            "{value:?} is not a {what}; write one of {}",
+            table.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(", ")
         )),
     }
 }
@@ -500,18 +473,6 @@ fn spell_keyword<T: Copy + PartialEq>(value: T, table: &[(&'static str, T)]) -> 
         .expect("every keyword variant comes from the table that spells it")
 }
 
-fn font_weight(value: &str) -> Result<Declaration, (Code, String)> {
-    match value {
-        "400" => Err(non_canonical(
-            "a font weight is written `normal`, never `400`",
-        )),
-        "700" => Err(non_canonical(
-            "a font weight is written `bold`, never `700`",
-        )),
-        _ => keyword(value, FONT_WEIGHTS, "font weight").map(Declaration::FontWeight),
-    }
-}
-
 /// The one number a measure admits, or `None` where it admits none — read by the parser below AND by
 /// a writer through [`Points::font_size`], so a value the write leg emits can never be one the read
 /// leg refuses. An axis may measure zero, so `-0` is in range where `-1` is not, and a surviving sign
@@ -521,63 +482,38 @@ fn canonical(n: f64, m: &Measure) -> Option<f64> {
     (m.lo..=m.hi).contains(&n).then_some(n)
 }
 
-fn measure(value: &str, m: &Measure) -> Result<f64, (Code, String)> {
+fn measure(value: &str, m: &Measure) -> Result<f64, String> {
     let (what, unit, plural) = (m.what, m.unit, m.plural);
     let bad = || {
-        (
-            Code::PresentationValue,
-            format!(
-                "a {what} is a number of {plural}, e.g. `{}`; found {value:?}",
-                m.example
-            ),
+        format!(
+            "a {what} is a number of {plural}, e.g. `{}`; found {value:?}",
+            m.example
         )
     };
     let digits = value.strip_suffix(unit).ok_or_else(bad)?;
     let Ok(n) = digits.parse::<f64>() else {
         return Err(bad());
     };
-    let Some(n) = canonical(n, m) else {
-        return Err((
-            Code::PresentationValue,
-            format!(
-                "a {what} is between {}{unit} and {}{unit}; found {value:?}",
-                m.lo, m.hi
-            ),
-        ));
-    };
-    // `+11pt`, `011pt`, `11.0pt` and `1.1e1pt` all mean 11pt, and one appearance takes one spelling.
-    if value != (m.spell)(n) {
-        return Err(non_canonical(&format!(
-            "a {what} is written in plain {plural}: write `{}`",
-            (m.spell)(n)
-        )));
-    }
-    Ok(n)
+    canonical(n, m).ok_or_else(|| {
+        format!(
+            "a {what} is between {}{unit} and {}{unit}; found {value:?}",
+            m.lo, m.hi
+        )
+    })
 }
 
-fn border(edge: Edge, value: &str) -> Result<Declaration, (Code, String)> {
+fn border(edge: Edge, value: &str) -> Result<Declaration, String> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     let [width, style, tint] = parts.as_slice() else {
-        return Err((
-            Code::PresentationValue,
-            format!(
-                "a border takes all three of width, style and colour, e.g. `1px solid #3f0421`; found {value:?}"
-            ),
+        return Err(format!(
+            "a border takes all three of width, style and colour, e.g. `1px solid #3f0421`; found {value:?}"
         ));
     };
-    if value != format!("{width} {style} {tint}") {
-        return Err(non_canonical(&format!(
-            "a border's three parts take one space each: write `{width} {style} {tint}`"
-        )));
-    }
     let Some((line, _, _)) = BORDER_LINES
         .iter()
         .find(|(_, w, s)| w == width && s == style)
     else {
-        return Err((
-            Code::PresentationValue,
-            format!("no border edge is `{width} {style}`"),
-        ));
+        return Err(format!("no border edge is `{width} {style}`"));
     };
     Ok(Declaration::Border {
         edge,
@@ -588,28 +524,13 @@ fn border(edge: Edge, value: &str) -> Result<Declaration, (Code, String)> {
     })
 }
 
-fn color(value: &str) -> Result<Rgb, (Code, String)> {
+fn color(value: &str) -> Result<Rgb, String> {
     let Some(hex) = value.strip_prefix('#') else {
         return Err(not_a_colour(value));
     };
     match hex.len() {
-        6 => {
-            let rgb = parse_hex6(hex).ok_or_else(|| not_a_colour(value))?;
-            if hex.bytes().any(|b| b.is_ascii_uppercase()) {
-                return Err(non_canonical(&format!(
-                    "a colour is written in lowercase hex: write `{}`",
-                    rgb.spell()
-                )));
-            }
-            Ok(rgb)
-        }
-        3 => {
-            let rgb = expand_hex3(hex).ok_or_else(|| not_a_colour(value))?;
-            Err(non_canonical(&format!(
-                "a colour is written in full: write `{}`",
-                rgb.spell()
-            )))
-        }
+        6 => parse_hex6(hex).ok_or_else(|| not_a_colour(value)),
+        3 => expand_hex3(hex).ok_or_else(|| not_a_colour(value)),
         _ => Err(not_a_colour(value)),
     }
 }
@@ -627,31 +548,21 @@ fn expand_hex3(hex: &str) -> Option<Rgb> {
     parse_hex6(&doubled)
 }
 
-fn not_a_colour(value: &str) -> (Code, String) {
-    (
-        Code::PresentationValue,
-        format!("{value:?} is not a colour; a colour is written `#rrggbb` in lowercase hex"),
-    )
+fn not_a_colour(value: &str) -> String {
+    format!("{value:?} is not a colour; a colour is written `#rrggbb` in lowercase hex")
 }
 
 /// `background` is only a spelling of `background-color` when it carries a bare colour; carrying a
 /// gradient or an image it is a property with no counterpart at all.
-fn background_shorthand(value: &str) -> (Code, String) {
+fn background_shorthand(value: &str) -> Result<Declaration, String> {
     match color(value) {
-        Ok(rgb) => non_canonical(&format!(
-            "a fill is written `background-color`: write `background-color: {}`",
-            rgb.spell()
-        )),
-        Err((Code::NonCanonicalPresentation, message)) => (Code::NonCanonicalPresentation, message),
-        Err(_) => (
-            Code::PresentationProperty,
-            format!("\"background\" is not a supported presentation property: {value:?}"),
-        ),
+        Ok(rgb) => Ok(Declaration::BackgroundColor(rgb)),
+        Err(why) => Err(format!("`background` carries a colour alone: {why}")),
     }
 }
 
-fn non_canonical(message: &str) -> (Code, String) {
-    (Code::NonCanonicalPresentation, message.to_string())
+fn frame(message: &str) -> DeclFault {
+    DeclFault::Frame(Code::PresentationSyntax, message.to_string())
 }
 
 pub(crate) fn syntax(message: &str) -> (Code, String) {

@@ -37,8 +37,8 @@ pub enum Code {
     PresentationSyntax,
     PresentationSelector,
     PresentationProperty,
-    PresentationValue,
     NonCanonicalPresentation,
+    XlsxNotCarried,
     FigureInRoot,
     FigureSyntax,
     FigureBinding,
@@ -73,8 +73,8 @@ impl Code {
         Code::PresentationSyntax,
         Code::PresentationSelector,
         Code::PresentationProperty,
-        Code::PresentationValue,
         Code::NonCanonicalPresentation,
+        Code::XlsxNotCarried,
         Code::FigureInRoot,
         Code::FigureSyntax,
         Code::FigureBinding,
@@ -109,8 +109,8 @@ impl Code {
             Code::PresentationSyntax => "presentation-syntax",
             Code::PresentationSelector => "presentation-selector",
             Code::PresentationProperty => "presentation-property",
-            Code::PresentationValue => "presentation-value",
             Code::NonCanonicalPresentation => "non-canonical-presentation",
+            Code::XlsxNotCarried => "xlsx-not-carried",
             Code::FigureInRoot => "figure-in-root",
             Code::FigureSyntax => "figure-syntax",
             Code::FigureBinding => "figure-binding",
@@ -163,13 +163,13 @@ impl Code {
                 "a presentation selector must be one of the eight region-relative forms, each index within the region"
             }
             Code::PresentationProperty => {
-                "a presentation rule carries only the supported properties"
-            }
-            Code::PresentationValue => {
-                "a presentation value must match its property's value grammar"
+                "an axis size is declared only on a selector that names the axis being sized"
             }
             Code::NonCanonicalPresentation => {
                 "a presentation sidecar has one spelling per appearance"
+            }
+            Code::XlsxNotCarried => {
+                "an .xlsx carries only the properties FSA1 models, so a declaration outside them cannot be packed"
             }
             Code::FigureInRoot => "a figure states one tab's ranges, so it lives in a tab folder",
             Code::FigureSyntax => "a figure's body must parse as JSON",
@@ -258,7 +258,7 @@ impl Code {
                 "move the trailing `@scope { ... }` block's rules into a sidecar beside the range file, named `<range>.css` for the absolute A1 range they styled, and drop the `@scope { ... }` frame"
             }
             Code::PresentationSyntax => {
-                "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, give each selector one rule and each property one declaration, and drop `!important` and any at-rule"
+                "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, give each selector one rule, and drop `!important` and any at-rule"
             }
             Code::PresentationSelector => {
                 "use one of `fsa1-cell`, `fsa1-row:first-child fsa1-cell`, `fsa1-row:last-child fsa1-cell`, \
@@ -266,15 +266,15 @@ impl Code {
                  indices are 1-based and region-relative, and no selector names ONE cell -- give that cell its own <cell>.css"
             }
             Code::PresentationProperty => {
-                "use only color, background-color, font-weight, font-style, text-decoration, font-size, font-family, text-align, \
-                 vertical-align, white-space, border-top/-bottom/-left/-right, and the two axis sizes: `width` on `fsa1-cell` \
-                 or `fsa1-cell:nth-child(k)`, `height` on `fsa1-cell` or `fsa1-row:nth-child(k) fsa1-cell`"
-            }
-            Code::PresentationValue => {
-                "colours are lowercase `#rrggbb`, font sizes and row heights are `<n>pt`, a column width is `<n>ch`, a border takes all three of `<width> <style> <colour>` (e.g. `1px solid #3f0421`), and a keyword comes from its property's closed set"
+                "move the size onto a selector that names its own axis: `width` onto `fsa1-cell` or `fsa1-cell:nth-child(k)`, \
+                 `height` onto `fsa1-cell` or `fsa1-row:nth-child(k) fsa1-cell` -- a periodic selector names no one axis and carries no size. \
+                 Every other property is declared on any selector"
             }
             Code::NonCanonicalPresentation => {
-                "apply the rewrite the message names: index 1 is `:first-child` and the last index `:last-child`, an axis of extent 1 carries no selector of its own, rules run all, then rows, then columns, then cells ascending, declarations are alphabetical"
+                "apply the rewrite the message names: index 1 is `:first-child` and the last index `:last-child`, an axis of extent 1 carries no selector of its own, and rules run all, then rows, then columns, then cells ascending"
+            }
+            Code::XlsxNotCarried => {
+                "restate the declaration in a property the .xlsx carries -- a colour as `#rrggbb`, a size as `<n>pt`, a width as `<n>ch`, a border as `<width> <style> <colour>`, a keyword from its property's set -- or delete it; `check` and the page take it as written, Excel alone cannot"
             }
             Code::FigureInRoot => {
                 "move the `<name>.json` into the tab folder whose ranges it binds; a figure names no coordinate at the workbook root"

@@ -1,6 +1,6 @@
-// Concern: a sidecar's rules — selectors, declarations, order | Non-concern: a declaration's meaning, applying a style, the filename | IO: (root, text) <-> Rules; text -> a selector + its declarations
+// Concern: a sidecar's rules — selectors, declarations, order, and which no carrier takes | Non-concern: a declaration's meaning, applying a style, the filename | IO: (root, text) <-> Rules + uncarried
 
-use crate::declaration::{Declaration, parse_declaration, syntax};
+use crate::declaration::{DeclFault, Declaration, parse_declaration, syntax};
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::overlap::Rect;
 use fsa1_ast::Shape;
@@ -34,7 +34,7 @@ pub struct Presentation {
 /// `Shape` the selectors are region-relative to, so which index is `:last-child` — and whether an
 /// axis carries a selector of its own at all — follows from the name.
 pub fn parse_rules(file: &str, root: Rect, content: &str) -> Result<Presentation, Vec<Diagnostic>> {
-    parse_rules_located(file, root, content).map(rules_of)
+    parse_rules_located(file, root, content).map(|read| rules_of(read.rules))
 }
 
 /// One rule and where in the sidecar it was written, in ONE value: a caller cannot pair a rule with
@@ -49,27 +49,45 @@ pub struct LocatedRule {
 /// A sidecar's rules in written order, each carrying its own line and column.
 pub type LocatedRules = Vec<LocatedRule>;
 
-/// The rules alone, in written order.
+/// A sidecar READ once: every rule the author WROTE — emptied by typing or not — and every
+/// declaration the model does not carry, already stated as findings. Both come off the ONE pass over
+/// the text, so the carrier that must refuse what it cannot take never re-reads the author's bytes to
+/// learn what that is, and a check judging a rule's PLACE sees the rule whatever typing left in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidecarRead {
+    pub rules: LocatedRules,
+    pub uncarried: Vec<Diagnostic>,
+}
+
+/// The rules the MODEL carries, in written order: a rule typing emptied is dropped here, there being
+/// nothing in it left to resolve. Every check judging a rule's FRAME runs over the located rules,
+/// before this, so dropping one from the model never exempts it from what its place already earned.
 pub fn rules_of(located: LocatedRules) -> Presentation {
     Presentation {
-        rules: located.into_iter().map(|l| l.rule).collect(),
+        rules: located
+            .into_iter()
+            .filter(|l| !l.rule.declarations.is_empty())
+            .map(|l| l.rule)
+            .collect(),
     }
 }
 
-/// [`parse_rules`] keeping each rule's position. A caller refusing a rule for something outside the
-/// sidecar — what its ROOT is, or what the tab around it holds — locates that refusal from here
+/// [`parse_rules`] keeping each rule's position, and every declaration the model does not carry
+/// beside them. A caller refusing a rule for something outside the sidecar — what its ROOT is, what
+/// the tab around it holds, or what its own carrier cannot take — locates that refusal from here
 /// rather than reading the text again.
 pub fn parse_rules_located(
     file: &str,
     root: Rect,
     content: &str,
-) -> Result<LocatedRules, Vec<Diagnostic>> {
+) -> Result<SidecarRead, Vec<Diagnostic>> {
     let shape = shape_of(root);
     let mut cur = Cursor::new(content, 1);
     let mut diags: Vec<Diagnostic> = Vec::new();
-    let placed = read_rules(file, &mut cur, shape, &mut diags);
+    let mut uncarried: Vec<Uncarried> = Vec::new();
+    let placed = read_rules(file, &mut cur, shape, &mut diags, &mut uncarried);
     check_rule_order(file, &placed, shape, &mut diags);
-    if placed.is_empty() && diags.is_empty() {
+    if placed.is_empty() && diags.is_empty() && uncarried.is_empty() {
         diags.push(located(
             file,
             1,
@@ -79,10 +97,14 @@ pub fn parse_rules_located(
         ));
     }
     if diags.is_empty() {
-        Ok(placed
-            .into_iter()
-            .map(|(line, col, rule)| LocatedRule { rule, line, col })
-            .collect())
+        // Every rule reached `check_rule_order` and every rule reaches the CALLER, located: what a rule's place earns is not the model's to grant, and `rules_of` is the one point the emptied ones stop.
+        Ok(SidecarRead {
+            rules: placed
+                .into_iter()
+                .map(|(line, col, rule)| LocatedRule { rule, line, col })
+                .collect(),
+            uncarried: uncarried.into_iter().map(|u| u.finding(file)).collect(),
+        })
     } else {
         Err(diags)
     }
@@ -95,6 +117,7 @@ fn read_rules(
     cur: &mut Cursor<'_>,
     shape: Shape,
     diags: &mut Vec<Diagnostic>,
+    uncarried: &mut Vec<Uncarried>,
 ) -> Vec<(u32, u32, Rule)> {
     let mut placed: Vec<(u32, u32, Rule)> = Vec::new();
     loop {
@@ -116,19 +139,10 @@ fn read_rules(
         }
         cur.bump();
         let target = resolve_target(file, selector, line, col, shape, diags);
-        let faults_before = diags.len();
-        let declarations = parse_declarations(file, cur, target, shape, diags);
+        let faults_before = (diags.len(), uncarried.len());
+        let declarations = parse_declarations(file, cur, target, shape, diags, uncarried);
         let Some(target) = target else { continue };
-        if !declarations.is_empty() {
-            placed.push((
-                line,
-                col,
-                Rule {
-                    target,
-                    declarations,
-                },
-            ));
-        } else if diags.len() == faults_before {
+        if declarations.is_empty() && faults_before == (diags.len(), uncarried.len()) {
             diags.push(located(
                 file,
                 line,
@@ -139,7 +153,17 @@ fn read_rules(
                     spell(target, shape)
                 ),
             ));
+            continue;
         }
+        // A rule whose declarations the model cannot read is still a rule the author WROTE: its selector and its position are the frame, and the frame is judged whether or not typing left anything behind. `rules_of` is what drops the emptied rule from the model afterwards.
+        placed.push((
+            line,
+            col,
+            Rule {
+                target,
+                declarations,
+            },
+        ));
     }
 }
 
@@ -363,8 +387,9 @@ fn parse_declarations(
     target: Option<Target>,
     shape: Shape,
     diags: &mut Vec<Diagnostic>,
+    uncarried: &mut Vec<Uncarried>,
 ) -> Vec<Declaration> {
-    let mut parsed: Vec<(u32, u32, Declaration)> = Vec::new();
+    let mut parsed: Vec<Declaration> = Vec::new();
     let mut after_separator = false;
     loop {
         cur.skip_ws();
@@ -406,13 +431,20 @@ fn parse_declarations(
                 "a declaration list has no empty segment; drop the extra `;`".to_string(),
             ));
         } else {
-            let read = parse_declaration(text).and_then(|d| match axis_fault(&d, target, shape) {
-                Some(fault) => Err(fault),
-                None => Ok(d),
-            });
-            match read {
-                Ok(d) => parsed.push((line, col, d)),
-                Err((code, message)) => diags.push(located(file, line, col, code, message)),
+            match parse_declaration(text) {
+                Ok(d) => match axis_fault(&d, target, shape) {
+                    Some((code, message)) => diags.push(located(file, line, col, code, message)),
+                    None => parsed.push(d),
+                },
+                Err(DeclFault::Frame(code, message)) => {
+                    diags.push(located(file, line, col, code, message));
+                }
+                Err(DeclFault::Uncarried(why)) => uncarried.push(Uncarried {
+                    line,
+                    col,
+                    text: text.to_string(),
+                    why,
+                }),
             }
         }
         after_separator = cur.peek() == Some(';');
@@ -429,35 +461,31 @@ fn parse_declarations(
             break;
         }
     }
-    check_declaration_order(file, &parsed, diags);
-    parsed.into_iter().map(|(_, _, d)| d).collect()
+    parsed
 }
 
-fn check_declaration_order(
-    file: &str,
-    parsed: &[(u32, u32, Declaration)],
-    diags: &mut Vec<Diagnostic>,
-) {
-    for window in parsed.windows(2) {
-        let ((_, _, before), (line, col, after)) = (&window[0], &window[1]);
-        let (a, b) = (before.property(), after.property());
-        match adjacent(a, b) {
-            Adjacent::Duplicate => diags.push(located(
-                file,
-                *line,
-                *col,
-                Code::PresentationSyntax,
-                format!("`{b}` is declared twice in one rule; give it one declaration"),
-            )),
-            Adjacent::OutOfOrder => diags.push(located(
-                file,
-                *line,
-                *col,
-                Code::NonCanonicalPresentation,
-                format!("declarations are alphabetical: write `{b}` before `{a}`"),
-            )),
-            Adjacent::Ascending => {}
-        }
+/// One declaration the typed model cannot read, and where it was written: it leaves the [`Rule`],
+/// the page still paints the author's own bytes (PRES2), and [`Uncarried::finding`] is what names it
+/// to the one carrier that cannot take it.
+struct Uncarried {
+    line: u32,
+    col: u32,
+    text: String,
+    why: String,
+}
+
+impl Uncarried {
+    /// The declaration named to the carrier that cannot take it. The reason is `why` ALONE — the
+    /// carrier itself is [`Code::XlsxNotCarried`]'s, stated once in the registry and printed beside
+    /// every one of these.
+    fn finding(self, file: &str) -> Diagnostic {
+        located(
+            file,
+            self.line,
+            self.col,
+            Code::XlsxNotCarried,
+            format!("{}: {}", self.text, self.why),
+        )
     }
 }
 
@@ -855,6 +883,28 @@ mod tests {
             .remove(0)
     }
 
+    /// The declarations a case's rules leave uncarried, over a sidecar that LOADS: the assertion a
+    /// value the model cannot read earns instead of a refusal.
+    fn uncarried(content: &str) -> Vec<Diagnostic> {
+        parse_rules_located(&sidecar(REGION), root_of(REGION), &body(content))
+            .unwrap_or_else(|d| panic!("{content:?} should load: {:?}", d[0]))
+            .uncarried
+    }
+
+    /// The one uncarried declaration a case states, as its message.
+    fn one_uncarried(content: &str) -> String {
+        let mut found = uncarried(content);
+        assert_eq!(found.len(), 1, "{content:?} -> {found:?}");
+        let d = found.remove(0);
+        assert_eq!(d.code, Code::XlsxNotCarried, "{content:?}");
+        assert!(
+            matches!(d.loc, Loc::Body { .. }),
+            "{content:?}: {:?}",
+            d.loc
+        );
+        d.message
+    }
+
     fn one_rule(selector: &str) -> Target {
         rules(&format!("@scope {{\n  {selector} {{ color: #3f0421 }}\n}}"))[0].target
     }
@@ -1057,17 +1107,16 @@ mod tests {
                 },
             );
         }
-        assert_eq!(
-            refusal("@scope {\n  fsa1-cell { border-top: 2px dotted #3f0421 }\n}").code,
-            Code::PresentationValue,
+        assert!(
+            one_uncarried("@scope {\n  fsa1-cell { border-top: 2px dotted #3f0421 }\n}")
+                .contains("no border edge is `2px dotted`"),
         );
     }
 
     #[test]
-    fn a_width_only_border_is_refused_because_it_renders_nothing() {
-        let d = refusal("@scope {\n  fsa1-cell { border-bottom: thin }\n}");
-        assert_eq!(d.code, Code::PresentationValue);
-        assert!(d.message.contains("all three"), "{}", d.message);
+    fn a_width_only_border_is_uncarried_because_it_renders_nothing() {
+        let message = one_uncarried("@scope {\n  fsa1-cell { border-bottom: thin }\n}");
+        assert!(message.contains("all three"), "{message}");
     }
 
     #[test]
@@ -1088,46 +1137,6 @@ mod tests {
             (
                 "@scope {\n  @layer base { fsa1-cell { color: #3f0421 } }\n}",
                 Code::PresentationSyntax,
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: calc(11pt + 1pt) }\n}",
-                Code::PresentationValue,
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: 11px }\n}",
-                Code::PresentationValue,
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: 1em }\n}",
-                Code::PresentationValue,
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: 1rem }\n}",
-                Code::PresentationValue,
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: 120% }\n}",
-                Code::PresentationValue,
-            ),
-            (
-                "@scope {\n  fsa1-cell { color: currentcolor }\n}",
-                Code::PresentationValue,
-            ),
-            (
-                "@scope {\n  fsa1-cell { background-color: linear-gradient(red, blue) }\n}",
-                Code::PresentationValue,
-            ),
-            (
-                "@scope {\n  fsa1-cell { box-shadow: 0 0 2px #3f0421 }\n}",
-                Code::PresentationProperty,
-            ),
-            (
-                "@scope {\n  fsa1-cell { text-shadow: 0 0 2px #3f0421 }\n}",
-                Code::PresentationProperty,
-            ),
-            (
-                "@scope {\n  fsa1-cell { transition: color 1s }\n}",
-                Code::PresentationProperty,
             ),
             (
                 "@scope {\n  fsa1-cell::before { color: #3f0421 }\n}",
@@ -1165,6 +1174,46 @@ mod tests {
                 "{block:?} must be located: {:?}",
                 d.loc
             );
+        }
+    }
+
+    /// The other half of the table above: a VALUE the typed model cannot read, and a PROPERTY it
+    /// holds no slot for, are not the sidecar's faults at all. Each loads, each keeps its bytes on
+    /// the page, and each is named once — to `pack`, the one carrier that cannot take it.
+    #[test]
+    fn every_declaration_the_model_cannot_read_is_uncarried_rather_than_refused() {
+        for (block, want) in [
+            (
+                "@scope {\n  fsa1-cell { font-size: calc(11pt + 1pt) }\n}",
+                "never computed",
+            ),
+            ("@scope {\n  fsa1-cell { font-size: 11px }\n}", "font size"),
+            ("@scope {\n  fsa1-cell { font-size: 1em }\n}", "font size"),
+            ("@scope {\n  fsa1-cell { font-size: 1rem }\n}", "font size"),
+            ("@scope {\n  fsa1-cell { font-size: 120% }\n}", "font size"),
+            (
+                "@scope {\n  fsa1-cell { color: currentcolor }\n}",
+                "is not a colour",
+            ),
+            (
+                "@scope {\n  fsa1-cell { background-color: linear-gradient(red, blue) }\n}",
+                "is not a colour",
+            ),
+            (
+                "@scope {\n  fsa1-cell { box-shadow: 0 0 2px #3f0421 }\n}",
+                "not a supported presentation property",
+            ),
+            (
+                "@scope {\n  fsa1-cell { text-shadow: 0 0 2px #3f0421 }\n}",
+                "not a supported presentation property",
+            ),
+            (
+                "@scope {\n  fsa1-cell { transition: color 1s }\n}",
+                "not a supported presentation property",
+            ),
+        ] {
+            let message = one_uncarried(block);
+            assert!(message.contains(want), "{block:?} -> {message}");
         }
     }
 
@@ -1208,7 +1257,7 @@ mod tests {
     }
 
     #[test]
-    fn an_axis_size_takes_its_own_unit_and_excels_own_range() {
+    fn an_axis_size_outside_its_own_unit_and_excels_own_range_is_uncarried() {
         for value in [
             "width: 10px",
             "width: 10pt",
@@ -1219,17 +1268,10 @@ mod tests {
             "height: -1pt",
         ] {
             let block = format!("@scope {{\n  fsa1-cell {{ {value} }}\n}}");
-            let d = refusal(&block);
-            assert_eq!(
-                d.code,
-                Code::PresentationValue,
-                "{value:?} -> {}",
-                d.message
-            );
+            let message = one_uncarried(&block);
             assert!(
-                d.message.len() < 100,
-                "{value:?} must earn an actionable message: {}",
-                d.message
+                message.len() < 100,
+                "{value:?} must earn an actionable message: {message}",
             );
         }
         assert_eq!(
@@ -1286,112 +1328,6 @@ mod tests {
                 "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  fsa1-cell { color: #3F0421 }\n}",
-                "#3f0421",
-                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { color: #fff }\n}",
-                "#ffffff",
-                "@scope {\n  fsa1-cell { color: #ffffff }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-weight: 700 }\n}",
-                "bold",
-                "@scope {\n  fsa1-cell { font-weight: bold }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-weight: 400 }\n}",
-                "normal",
-                "@scope {\n  fsa1-cell { font-weight: normal }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { color : #3f0421 }\n}",
-                "write `color: #3f0421`",
-                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { color:#3f0421 }\n}",
-                "write `color: #3f0421`",
-                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { color:\t#3f0421 }\n}",
-                "write `color: #3f0421`",
-                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { color:   #3f0421 }\n}",
-                "write `color: #3f0421`",
-                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { border-top: 1px   solid   #3f0421 }\n}",
-                "write `1px solid #3f0421`",
-                "@scope {\n  fsa1-cell { border-top: 1px solid #3f0421 }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { border-top: 1px\tsolid\t#3f0421 }\n}",
-                "write `1px solid #3f0421`",
-                "@scope {\n  fsa1-cell { border-top: 1px solid #3f0421 }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: 11.0pt }\n}",
-                "write `11pt`",
-                "@scope {\n  fsa1-cell { font-size: 11pt }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: +11pt }\n}",
-                "write `11pt`",
-                "@scope {\n  fsa1-cell { font-size: 11pt }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: 011pt }\n}",
-                "write `11pt`",
-                "@scope {\n  fsa1-cell { font-size: 11pt }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: 1.1e1pt }\n}",
-                "write `11pt`",
-                "@scope {\n  fsa1-cell { font-size: 11pt }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-size: 11.50pt }\n}",
-                "write `11.5pt`",
-                "@scope {\n  fsa1-cell { font-size: 11.5pt }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { width: 14.50ch }\n}",
-                "write `14.5ch`",
-                "@scope {\n  fsa1-cell { width: 14.5ch }\n}",
-            ),
-            // An axis may measure zero, so `-0ch` is in range and spells back to itself; left canonical it would be a second spelling of the one size zero.
-            (
-                "@scope {\n  fsa1-cell { width: -0ch }\n}",
-                "write `0ch`",
-                "@scope {\n  fsa1-cell { width: 0ch }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { height: -0pt }\n}",
-                "write `0pt`",
-                "@scope {\n  fsa1-cell { height: 0pt }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { height: 022.5pt }\n}",
-                "write `22.5pt`",
-                "@scope {\n  fsa1-cell { height: 22.5pt }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { background: #ffffff }\n}",
-                "background-color",
-                "@scope {\n  fsa1-cell { background-color: #ffffff }\n}",
-            ),
-            (
-                "@scope {\n  fsa1-cell { font-weight: bold; color: #3f0421 }\n}",
-                "write `color` before `font-weight`",
-                "@scope {\n  fsa1-cell { color: #3f0421; font-weight: bold }\n}",
-            ),
-            (
                 "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n  fsa1-cell { color: #3f0421 }\n}",
                 "write `fsa1-cell` before `fsa1-cell:first-child`",
                 "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell:first-child { color: #3f0421 }\n}",
@@ -1410,6 +1346,35 @@ mod tests {
                 "{block:?}: applying the rewrite returns the same refusal {refused:?}",
             );
         }
+    }
+
+    /// A rule's SELECTOR and its place among the others are the frame, and the frame does not care
+    /// what the typed model can read: the same two sidecars, differing only in whether the second
+    /// rule's declaration is carried, earn the same structural refusal. The rule emptied by typing
+    /// still leaves the MODEL, which has nothing to resolve from it.
+    #[test]
+    fn a_rule_the_model_carries_nothing_from_still_answers_for_its_place() {
+        for (carried, uncarried, code) in [
+            (
+                "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n  fsa1-cell { color: #ffffff }\n}",
+                "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n  fsa1-cell { box-shadow: none }\n}",
+                Code::NonCanonicalPresentation,
+            ),
+            (
+                "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell { color: #ffffff }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell { box-shadow: none }\n}",
+                Code::PresentationSyntax,
+            ),
+        ] {
+            assert_eq!(refusal(carried).code, code, "{carried:?}");
+            let d = refusal(uncarried);
+            assert_eq!(d.code, code, "{uncarried:?} -> {}", d.message);
+        }
+        let loaded = rules(
+            "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell:first-child { box-shadow: none }\n}",
+        );
+        assert_eq!(loaded.len(), 1, "{loaded:?}");
+        assert_eq!(loaded[0].target, Target::All);
     }
 
     /// The two directions over one text: what [`spell_rules`] writes is what [`parse_rules`] reads,
@@ -1585,14 +1550,14 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_half_never_masks_the_property_refusal_behind_it() {
+    fn an_empty_half_is_a_frame_refusal_even_where_the_property_is_uncarried() {
         assert_eq!(
             refusal("@scope {\n  fsa1-cell { box-shadow: }\n}").code,
             Code::PresentationSyntax,
         );
-        assert_eq!(
-            refusal("@scope {\n  fsa1-cell { box-shadow: none }\n}").code,
-            Code::PresentationProperty,
+        assert!(
+            one_uncarried("@scope {\n  fsa1-cell { box-shadow: none }\n}")
+                .contains("not a supported presentation property"),
         );
     }
 
@@ -1639,13 +1604,9 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_selector_or_property_is_refused() {
+    fn a_repeated_selector_is_refused() {
         let d =
             refusal("@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell { font-size: 11pt }\n}");
-        assert_eq!(d.code, Code::PresentationSyntax);
-        assert!(d.message.contains("twice"), "{}", d.message);
-
-        let d = refusal("@scope {\n  fsa1-cell { color: #3f0421; color: #ffffff }\n}");
         assert_eq!(d.code, Code::PresentationSyntax);
         assert!(d.message.contains("twice"), "{}", d.message);
     }
@@ -1681,27 +1642,22 @@ mod tests {
 
     #[test]
     fn every_fault_in_a_rule_is_reported_at_once() {
-        let d = parse(
-            "@scope {\n  fsa1-cell { color: red; font-size: 9px; box-shadow: none }\n}",
-            REGION,
-        )
-        .unwrap_err();
+        let d =
+            uncarried("@scope {\n  fsa1-cell { color: red; font-size: 9px; box-shadow: none }\n}");
         assert_eq!(d.len(), 3, "{d:?}");
     }
 
     #[test]
-    fn a_font_size_outside_excels_range_is_refused_as_out_of_range() {
+    fn a_font_size_outside_excels_range_is_uncarried_as_out_of_range() {
         for value in [
             "0pt", "-1pt", "0.5pt", "5e-324pt", "410pt", "1e300pt", "inf",
         ] {
             let block = format!("@scope {{\n  fsa1-cell {{ font-size: {value} }}\n}}");
-            let d = refusal(&block);
-            assert_eq!(d.code, Code::PresentationValue, "{value:?}");
+            let message = one_uncarried(&block);
             assert!(
-                d.message.len() < 100,
-                "{value:?} must earn an actionable message, got {}: {}",
-                d.message.len(),
-                d.message
+                message.len() < 100,
+                "{value:?} must earn an actionable message, got {}: {message}",
+                message.len(),
             );
         }
         assert_eq!(
@@ -1745,21 +1701,26 @@ mod tests {
         );
         for value in ["\"Times New Roman\"", "Calibri, sans-serif", "Times  New"] {
             let block = format!("@scope {{\n  fsa1-cell {{ font-family: {value} }}\n}}");
-            assert_eq!(refusal(&block).code, Code::PresentationValue, "{value:?}");
+            assert!(
+                one_uncarried(&block).contains("a font family is one unquoted name"),
+                "{value:?}",
+            );
         }
     }
 
-    /// The two legs of ONE rule, swept rather than sampled. [`Declaration::font_family`] is what a
-    /// WRITER asks before emitting a face; [`parse_declaration`] is what `check` then asks of the text
-    /// it wrote. Both read the same list of what a value may hold, so they must answer identically for
-    /// every character — the assertion that fails the moment either leg grows a list of its own.
+    /// The WRITE leg swept rather than sampled. [`Declaration::font_family`] is what an encoder asks
+    /// before emitting a face, and the read leg no longer shares its list — so what it must still
+    /// promise is that every name it admits parses back to the very declaration it spelled.
     #[test]
-    fn the_write_leg_admits_exactly_the_family_names_the_read_leg_accepts() {
+    fn the_write_leg_admits_only_the_family_names_it_can_spell_back() {
         for c in (b' '..=b'~').map(char::from).chain(['\t', '\n', 'é', '中']) {
             for name in [format!("My{c}Font"), format!("{c}Font"), format!("Font{c}")] {
+                let Some(written) = Declaration::font_family(&name) else {
+                    continue;
+                };
                 assert_eq!(
-                    Declaration::font_family(&name),
-                    parse_declaration(&format!("font-family: {name}")).ok(),
+                    parse_declaration(&written.spell()).ok(),
+                    Some(written.clone()),
                     "{name:?}",
                 );
             }
