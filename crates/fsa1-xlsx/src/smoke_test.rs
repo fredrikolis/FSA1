@@ -126,7 +126,7 @@ fn a_styled_workbook_reopens_with_its_values_intact() {
             ("A1:A2", "Item\n42"),
             (
                 "A1:A2.css",
-                "  td { background-color: #ffe0b2; border-top: 1px solid #3f0421; \
+                "  fsa1-cell { background-color: #ffe0b2; border-top: 1px solid #3f0421; \
                  color: #3f0421; font-weight: bold; height: 22.5pt; text-align: center; width: 14.5ch }\n",
             ),
         ],

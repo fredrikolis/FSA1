@@ -21,6 +21,7 @@ pub mod presentation;
 pub mod render;
 pub mod sample;
 pub mod scope;
+pub mod sidecar_scope;
 pub mod style;
 pub mod view;
 pub mod workbook;
@@ -51,13 +52,16 @@ pub use number_literal::{display_number_literal, effective_literal_format, is_di
 pub use overlap::{Rect, detect_overlaps};
 pub use overlay::Overlay;
 pub use placement::{Axis, DEFAULT_H_EMU, DEFAULT_W_EMU, Placement};
-pub use presentation::{Presentation, Rule, Target, parse_rules, spell_rules, spell_sidecar};
+pub use presentation::{
+    LocatedRule, Presentation, Rule, Target, parse_rules, spell_rules, spell_sidecar,
+};
 pub use render::{
     MAX_VIEWPORT_CELLS, RenderGrid, RenderMode, RenderRow, combined_cell, display_value,
     parse_viewport, render, viewport_cell_count,
 };
 pub use sample::sample_workbook;
 pub use scope::Scope;
+pub use sidecar_scope::SidecarScope;
 pub use style::{BlankPaint, CellStyle, DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE, default_style};
 pub use view::{FigureView, NameView, SheetView, View, ViewScope, view};
 pub use workbook::{
@@ -347,7 +351,7 @@ mod tests {
     #[test]
     fn a_range_file_ending_in_a_block_is_one_refusal_naming_the_sidecar() {
         for content in [
-            "1\t2\t3\n@scope {\n  td { text-align: right }\n}",
+            "1\t2\t3\n@scope {\n  fsa1-cell { text-align: right }\n}",
             "1\t2\t3\n@scope {\n}",
             "1\t2\t3\n@scope {\n  th { color: red }\n}",
         ] {
@@ -404,8 +408,8 @@ mod tests {
             "{\n}",
             "a\n}\n}",
             // An unbalanced tail matches nothing, so the file is judged as the grid it is.
-            "@scope {\n  td color: #3f0421 }\n}",
-            "@scope {\n  td { color: #3f0421\n}",
+            "@scope {\n  fsa1-cell color: #3f0421 }\n}",
+            "@scope {\n  fsa1-cell { color: #3f0421\n}",
         ] {
             assert_eq!(trailing_block_line(content), None, "{content:?}");
         }
@@ -413,17 +417,17 @@ mod tests {
     #[test]
     fn a_retired_in_grid_block_is_found_at_the_line_it_opens_on() {
         assert_eq!(
-            trailing_block_line("1\t2\n3\t4\n@scope {\n  td { color: #3f0421 }\n}"),
+            trailing_block_line("1\t2\n3\t4\n@scope {\n  fsa1-cell { color: #3f0421 }\n}"),
             Some(3),
         );
         // Blank lines after the close do not hide it.
         assert_eq!(
-            trailing_block_line("1\n@scope {\n  td { color: #3f0421 }\n}\n\n"),
+            trailing_block_line("1\n@scope {\n  fsa1-cell { color: #3f0421 }\n}\n\n"),
             Some(2),
         );
         // A multi-line rule body is still brace-matched back to the open.
         assert_eq!(
-            trailing_block_line("1\n@scope {\n  td {\n    color: #3f0421\n  }\n}"),
+            trailing_block_line("1\n@scope {\n  fsa1-cell {\n    color: #3f0421\n  }\n}"),
             Some(2),
         );
     }

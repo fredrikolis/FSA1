@@ -910,10 +910,10 @@ mod tests {
                 ("A1:C3".to_string(), "0\t1\t2\n3\t4\t5\n6\t7\t8".to_string()),
                 (
                     "A1:C3.css".to_string(),
-                    "  td { font-family: Times New Roman; font-size: 14pt }\n".to_string()
+                    "  fsa1-cell { font-family: Times New Roman; font-size: 14pt }\n".to_string()
                 ),
             ],
-            "one td rule, one declaration per property"
+            "one fsa1-cell rule, one declaration per property"
         );
         accepted(&written);
     }
@@ -943,7 +943,7 @@ mod tests {
             written[1],
             (
                 ".css".to_string(),
-                "  td:first-child { width: 14.5ch }\n".to_string()
+                "  fsa1-cell:first-child { width: 14.5ch }\n".to_string()
             ),
             "the column's width is the SHEET's, so the tab layer carries it",
         );
@@ -965,7 +965,7 @@ mod tests {
                 ("A1:B3".to_string(), "\t\n\t\n\t".to_string()),
                 (
                     ".css".to_string(),
-                    "  tr:last-child td { height: 30pt }\n  td:last-child { width: 20ch }\n"
+                    "  fsa1-row:last-child fsa1-cell { height: 30pt }\n  fsa1-cell:last-child { width: 20ch }\n"
                         .to_string()
                 ),
             ],

@@ -6,5 +6,5 @@ file: Report/A1:C3
 |North	12	3400
 |South	9	2750
 file: Report/A1:C3.css
-|  tr:first-child td { background-color: #d9e1f2; font-weight: bold; text-align: center }
+|  fsa1-row:first-child fsa1-cell { background-color: #d9e1f2; font-weight: bold; text-align: center }
 |

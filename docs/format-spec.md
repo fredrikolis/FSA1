@@ -88,11 +88,16 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
   tab's content does — or a stem-less `.css` naming no root: the tab's own
   layer, rooted at everything its range files reach, beneath every rooted sidecar and in no
   contention with one, from which both a selector index's region-relative basis and
-  the extent of a bare `td` follow; the file holds rules directly and no prelude, and needs no range
-  file beside it. Those selectors, the properties, their one canonical spelling, and the contention
-  between sidecars — where two roots reach one coordinate the smaller area wins, property by
-  property, ties settled by canonical filename order. A FIGURE's sidecar is outside that cascade
-  entirely: it names no root, reaches no coordinate, and contends with nothing.
+  the extent of a bare `fsa1-cell` follow — and, because those indices count in the tab's content
+  and so reach into every block, where the tab holds ANY rooted sidecar each of the layer's rules
+  selects the whole region or declares only an axis size; the file holds rules directly and no
+  prelude, and needs no range file beside it.
+  Those selectors, the properties, their one canonical spelling, and the
+  contention between sidecars — the roots of one tab are DISJOINT, or nest with the inner root a
+  SINGLE cell, and that inner cell layers last and wins property by property; a scope is applied
+  over one subtree, so crossing roots and a multi-cell root inside another are refused. A FIGURE's
+  sidecar is outside that cascade entirely: it names no root, reaches no coordinate, and contends
+  with nothing.
 - **Figures** — a `.json` entry of a tab with a non-empty stem — ANY of them, the extension being
   spent on figures alone — holding a Vega-Lite spec whose every `data.name`
   is an A1 reference into the workbook: an optional `<tab>!` prefix, then one corner or two joined by

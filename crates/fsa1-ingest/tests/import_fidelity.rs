@@ -600,7 +600,7 @@ fn a_column_and_a_row_default_style_reach_the_cells_that_state_none() {
     let report = import_file(&column, &dest, false).expect("the unpack completes");
     assert_eq!(
         stylesheet(&dest, "Sheet1").as_deref(),
-        Some("A1:B3\n  td:last-child { font-weight: bold }\n"),
+        Some("A1:B3\n  fsa1-cell:last-child { font-weight: bold }\n"),
         "no `<c>` of column B states a style, and the whole column is bold anyway",
     );
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
@@ -614,7 +614,7 @@ fn a_column_and_a_row_default_style_reach_the_cells_that_state_none() {
     let row_report = import_file(&row, &row_dest, false).expect("the unpack completes");
     assert_eq!(
         stylesheet(&row_dest, "Sheet1").as_deref(),
-        Some("A1:B3\n  tr:nth-child(2) td { font-weight: bold }\n"),
+        Some("A1:B3\n  fsa1-row:nth-child(2) fsa1-cell { font-weight: bold }\n"),
         "and neither does any `<c>` of row 2",
     );
     assert!(row_report.warnings.is_empty(), "{:?}", row_report.warnings);
@@ -804,7 +804,7 @@ fn a_width_on_a_column_no_block_covers_is_carried_by_the_sheets_root() {
         "the width is the SHEET's, so no cut can change what states it",
     );
     assert_eq!(
-        carried[0].1, "  td:nth-child(3) { width: 14.5ch }\n",
+        carried[0].1, "  fsa1-cell:nth-child(3) { width: 14.5ch }\n",
         "the tab layer anchors at A1, so column C is index 3 whatever the blocks are",
     );
 }

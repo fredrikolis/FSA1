@@ -16,8 +16,8 @@
 #    it cannot occupy a coordinate the export would then come back without. Occupancy is therefore the
 #    two coordinates A1 and B1: a bounding box of 2 cells with nothing wasted, so ONE block A1:B1.
 #
-# 3. One row is the whole block, so the fill is a COLUMN rule; column 2 of 2 is `td:last-child`.
-#    `A1` states no fill, so no bare `td` may claim one.
+# 3. One row is the whole block, so the fill is a COLUMN rule; column 2 of 2 is `fsa1-cell:last-child`.
+#    `A1` states no fill, so no bare `fsa1-cell` may claim one.
 #
 # The two losses are named in the sheet's own reading order, D4 before E5. They are named at all
 # because the sheet still HOLDS those coordinates: a look the source draws over an empty cell keeps
@@ -28,5 +28,5 @@ warning: diagonal border at Blanks!E5 dropped
 file: Blanks/A1:B1
 |kept	
 file: Blanks/A1:B1.css
-|  td:last-child { background-color: #00b0f0 }
+|  fsa1-cell:last-child { background-color: #00b0f0 }
 |

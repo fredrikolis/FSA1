@@ -218,7 +218,10 @@ mod tests {
     fn a_sized_axis_reaches_its_col_and_its_row_verbatim() {
         let xml = sheet_xml(&[
             ("B2:C3", "1\t2\n3\t4"),
-            ("B2:C3.css", "  td { height: 22.5pt; width: 14.5ch }\n"),
+            (
+                "B2:C3.css",
+                "  fsa1-cell { height: 22.5pt; width: 14.5ch }\n",
+            ),
         ]);
         assert!(
             xml.contains(
@@ -251,10 +254,10 @@ mod tests {
         let xml = sheet_xml(&[
             ("A1:B1", "1\t2"),
             ("C1:E1", "3\t4\t5"),
-            ("A1:B1.css", "  td { width: 10ch }\n"),
+            ("A1:B1.css", "  fsa1-cell { width: 10ch }\n"),
             (
                 "C1:E1.css",
-                "  td { width: 10ch }\n  td:nth-child(2) { width: 4ch }\n",
+                "  fsa1-cell { width: 10ch }\n  fsa1-cell:nth-child(2) { width: 4ch }\n",
             ),
         ]);
         assert!(
@@ -274,7 +277,7 @@ mod tests {
         let files: &[(&str, &str)] = &[
             ("A1:A2", "1\n2"),
             ("C1:C2", "3\n4"),
-            ("C1:C2.css", "  td { font-weight: bold }\n"),
+            ("C1:C2.css", "  fsa1-cell { font-weight: bold }\n"),
         ];
         let (wb, overlay) = loaded(files);
         let region = wb.content_region(0).expect("two files span a region");
@@ -300,7 +303,7 @@ mod tests {
     fn a_blank_wearing_a_look_is_written_as_a_c_carrying_only_its_style() {
         let xml = sheet_xml(&[
             ("A1:B2", "1\t\n\t2"),
-            ("A1:B2.css", "  td { background-color: #00ff00 }\n"),
+            ("A1:B2.css", "  fsa1-cell { background-color: #00ff00 }\n"),
         ]);
         assert!(xml.contains(r#"<c r="B1" s="1"/>"#), "{xml}");
         assert!(xml.contains(r#"<c r="A2" s="1"/>"#), "{xml}");
@@ -315,7 +318,10 @@ mod tests {
     /// A height belongs to the ROW, not to the cells on it, so an all-blank row keeps it.
     #[test]
     fn a_sized_row_holding_no_cell_survives_as_an_empty_row() {
-        let xml = sheet_xml(&[("A1:A2", "1\n\n"), ("A1:A2.css", "  td { height: 20pt }\n")]);
+        let xml = sheet_xml(&[
+            ("A1:A2", "1\n\n"),
+            ("A1:A2.css", "  fsa1-cell { height: 20pt }\n"),
+        ]);
         assert!(
             xml.contains(r#"<row r="2" ht="20" customHeight="1"/>"#),
             "{xml}"

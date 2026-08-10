@@ -52,14 +52,18 @@ FUNCTIONS — the dynamic-array family, whose ARGUMENTS are the part you cannot 
 PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   The FILENAME is the scoping root — A1:C9.css, a bare A1.css, or an OPEN range A:A.css /
   1:1.css whose open axis reaches as far as the tab's own content. The file holds rules and
-  nothing else. The root is what the selectors count in: td · tr:first-child td ·
-  td:nth-child(k) · tr:nth-child(k) td and the periodic An+B forms, all 1-based and relative
-  to the root. NO selector names one cell — give that cell its own root, F9.css.
-  A stem-less .css is the tab's own default layer, beneath every rooted sidecar.
+  nothing else. The root is what the selectors count in: fsa1-cell ·
+  fsa1-row:first-child fsa1-cell · fsa1-cell:nth-child(k) · fsa1-row:nth-child(k) fsa1-cell
+  and the periodic An+B forms, all 1-based and relative to the root.
+  NO selector names one cell — give that cell its own root, F9.css.
+  A stem-less .css is the tab's own default layer, beneath every rooted sidecar. Its indices
+  count in the TAB's content, so once the tab holds one rooted sidecar every rule there is a
+  bare fsa1-cell or declares nothing but width/height.
   A sidecar needs no range file beside it: a .css over a rectangle nothing fills is a
   style-only region, which renders and packs.
-  Sidecars may overlap; where two roots reach one coordinate the SMALLER area wins, property
-  by property, ties settled by filename. check parses and validates the sheet and reports its
+  Roots of one tab are DISJOINT, or nest with the inner root a SINGLE cell, which layers last
+  and wins property by property. Crossing roots, and a multi-cell root inside another, are
+  refused. check parses and validates the sheet and reports its
   faults; render --format html carries it into the document's CSS, and pack carries it into
   the .xlsx as fonts, fills, borders, alignment, column widths and row heights.
 

@@ -11,17 +11,17 @@
 # sheet2 states <row r="2" customFormat="1" s="2"/> and no cell `s=`; cellXfs 2 is fontId 2,
 # Calibri 11 ITALIC. The same tie makes upright the modal, so row 2 earns the rule.
 file: Column/.css
-|  td:last-child { width: 13ch }
+|  fsa1-cell:last-child { width: 13ch }
 |
 file: Column/A1:B2
 |A1	B1
 |A2	B2
 file: Column/A1:B2.css
-|  td:last-child { font-weight: bold }
+|  fsa1-cell:last-child { font-weight: bold }
 |
 file: Row/A1:B2
 |A1	B1
 |A2	B2
 file: Row/A1:B2.css
-|  tr:last-child td { font-style: italic }
+|  fsa1-row:last-child fsa1-cell { font-style: italic }
 |

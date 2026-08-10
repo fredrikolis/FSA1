@@ -62,7 +62,7 @@ pub fn geometry(sheet: &SheetSource, warnings: &mut Vec<UnpackWarning>) -> Block
 }
 
 /// The tab's own layer: its axis geometry, each axis named inside the tab's content root. Never a
-/// bare `td { width }` — a modal size would fabricate one for every column of the root, including
+/// bare `fsa1-cell { width }` — a modal size would fabricate one for every column of the root, including
 /// the ones carrying no authored size, and no finer rule can take that back.
 pub fn tab_layer(
     root: fsa1_model::Rect,
@@ -171,8 +171,8 @@ fn spell(rules: BTreeMap<Target, Vec<Declaration>>) -> Option<Presentation> {
     })
 }
 
-/// The one size a bare `td` may state for the whole block: EVERY axis of it sized, and all sizes
-/// agreeing. A `td` over a block holding one unsized axis would fabricate a size for that axis, which
+/// The one size a bare `fsa1-cell` may state for the whole block: EVERY axis of it sized, and all sizes
+/// agreeing. A `fsa1-cell` over a block holding one unsized axis would fabricate a size for that axis, which
 /// no finer rule can take back — the same hazard that keeps the modal rule off an unspellable default.
 /// It also subsumes the extent-1 case, where the block's one axis carries no selector of its own.
 fn modal_size<T: Copy + PartialEq>(extent: u32, sizes: &[(u32, T)]) -> Option<T> {
@@ -911,7 +911,7 @@ mod tests {
                 3,
                 &[14.0, 11.0, 11.0, 14.0, 11.0, 11.0, 14.0, 11.0, 11.0]
             ),
-            "  td:first-child { font-size: 14pt }\n",
+            "  fsa1-cell:first-child { font-size: 14pt }\n",
             "a uniform column against a modal that is the default costs ONE rule",
         );
         assert_eq!(
@@ -920,8 +920,8 @@ mod tests {
                 3,
                 &[14.0, 14.0, 14.0, 11.0, 11.0, 11.0, 12.0, 12.0, 12.0]
             ),
-            "  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n  \
-             tr:last-child td { font-size: 12pt }\n",
+            "  fsa1-cell { font-size: 14pt }\n  fsa1-row:nth-child(2) fsa1-cell { font-size: 11pt }\n  \
+             fsa1-row:last-child fsa1-cell { font-size: 12pt }\n",
             "the modal takes the tie by first appearance, and row 1 is already correct",
         );
         let (sheet, block) = sizes(
@@ -932,7 +932,7 @@ mod tests {
         let (rules, alone) = encode(&sheet, block);
         assert_eq!(
             spell(block, &rules.expect("the uniform row earns a rule")),
-            "  tr:first-child td { font-size: 14pt }\n",
+            "  fsa1-row:first-child fsa1-cell { font-size: 14pt }\n",
             "the block states only what a SHAPE reaches",
         );
         let cut: Vec<String> = alone
@@ -942,8 +942,8 @@ mod tests {
         assert_eq!(
             cut,
             vec![
-                "C2 td { font-size: 20pt }".to_string(),
-                "C3 td { font-size: 20pt }".to_string(),
+                "C2 fsa1-cell { font-size: 20pt }".to_string(),
+                "C3 fsa1-cell { font-size: 20pt }".to_string(),
             ],
             "and each coordinate the cascade still leaves wrong becomes its own root",
         );
@@ -969,7 +969,7 @@ mod tests {
             .expect("a Normal font unlike the format's default earns a rule");
         assert_eq!(
             spell(CELL, &presentation),
-            "  td { font-family: Arial; font-size: 9pt }\n",
+            "  fsa1-cell { font-family: Arial; font-size: 9pt }\n",
             "the cell states no style of its own, so the Normal font is all it can be wearing",
         );
 
@@ -1106,7 +1106,7 @@ mod tests {
     fn a_banded_column_run_collapses_to_one_periodic_rule() {
         assert_eq!(
             block_of(1, 6, &[14.0, 11.0, 14.0, 11.0, 14.0, 11.0]),
-            "  td { font-size: 14pt }\n  td:nth-child(2n) { font-size: 11pt }\n",
+            "  fsa1-cell { font-size: 14pt }\n  fsa1-cell:nth-child(2n) { font-size: 11pt }\n",
         );
     }
 
@@ -1116,8 +1116,8 @@ mod tests {
     fn two_alike_lines_stay_literal() {
         assert_eq!(
             block_of(1, 4, &[14.0, 11.0, 14.0, 11.0]),
-            "  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n  \
-             td:last-child { font-size: 11pt }\n",
+            "  fsa1-cell { font-size: 14pt }\n  fsa1-cell:nth-child(2) { font-size: 11pt }\n  \
+             fsa1-cell:last-child { font-size: 11pt }\n",
         );
     }
 
@@ -1146,31 +1146,31 @@ mod tests {
             "a height never rides a periodic selector: {spelled}",
         );
         assert!(
-            spelled.contains("tr:nth-child(2) td { height: 20pt }"),
+            spelled.contains("fsa1-row:nth-child(2) fsa1-cell { height: 20pt }"),
             "{spelled}"
         );
     }
 
     /// An axis of extent 1 carries no selector of its own, so a stray cell's own file — the shape
-    /// every partition reaches in the limit — can only ever spell `td`.
+    /// every partition reaches in the limit — can only ever spell `fsa1-cell`.
     #[test]
     fn a_block_of_extent_one_spells_only_a_bare_td() {
-        assert_eq!(block_of(1, 1, &[14.0]), "  td { font-size: 14pt }\n",);
+        assert_eq!(block_of(1, 1, &[14.0]), "  fsa1-cell { font-size: 14pt }\n",);
         assert_eq!(
             block_of(1, 3, &[14.0, 11.0, 14.0]),
-            "  td { font-size: 14pt }\n  td:nth-child(2) { font-size: 11pt }\n",
+            "  fsa1-cell { font-size: 14pt }\n  fsa1-cell:nth-child(2) { font-size: 11pt }\n",
             "one row spells columns, never cells",
         );
         assert_eq!(
             block_of(3, 1, &[14.0, 11.0, 14.0]),
-            "  td { font-size: 14pt }\n  tr:nth-child(2) td { font-size: 11pt }\n",
+            "  fsa1-cell { font-size: 14pt }\n  fsa1-row:nth-child(2) fsa1-cell { font-size: 11pt }\n",
             "one column spells rows, never cells",
         );
     }
 
-    /// A geometry rule collapses like every other property: one `td` where the whole ROOT agrees.
+    /// A geometry rule collapses like every other property: one `fsa1-cell` where the whole ROOT agrees.
     /// The guard is what keeps it honest — a root holding ONE unsized axis has no modal size, because
-    /// a bare `td { width }` would size that axis too and no finer rule could take it back.
+    /// a bare `fsa1-cell { width }` would size that axis too and no finer rule could take it back.
     #[test]
     fn a_root_sized_alike_on_every_axis_collapses_to_one_td_rule() {
         let root = fsa1_model::Rect {
@@ -1191,23 +1191,23 @@ mod tests {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5)), (3, Chars(12.5))],
                 heights: vec![(1, Points(20.0)), (2, Points(20.0))],
             }),
-            "  td { height: 20pt; width: 12.5ch }\n",
+            "  fsa1-cell { height: 20pt; width: 12.5ch }\n",
         );
         assert_eq!(
             spelled(&BlockGeometry {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5))],
                 heights: Vec::new(),
             }),
-            "  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n",
-            "column 3 is unsized, so no td may claim a width",
+            "  fsa1-cell:first-child { width: 12.5ch }\n  fsa1-cell:nth-child(2) { width: 12.5ch }\n",
+            "column 3 is unsized, so no fsa1-cell may claim a width",
         );
         assert_eq!(
             spelled(&BlockGeometry {
                 widths: vec![(1, Chars(12.5)), (2, Chars(12.5)), (3, Chars(9.0))],
                 heights: Vec::new(),
             }),
-            "  td:first-child { width: 12.5ch }\n  td:nth-child(2) { width: 12.5ch }\n  \
-             td:last-child { width: 9ch }\n",
+            "  fsa1-cell:first-child { width: 12.5ch }\n  fsa1-cell:nth-child(2) { width: 12.5ch }\n  \
+             fsa1-cell:last-child { width: 9ch }\n",
             "the three do not agree, so none of them is modal",
         );
     }

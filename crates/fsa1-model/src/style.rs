@@ -170,8 +170,8 @@ pub fn default_style() -> CellStyle {
     }
 }
 
-/// CSS specificity, which is NOT [`Target`]'s `Ord`: `tr:nth-child(r) td` is two compound selectors
-/// (0,1,2) where `td:nth-child(c)` is one (0,1,1), so a row rule outranks a column rule. A periodic
+/// CSS specificity, which is NOT [`Target`]'s `Ord`: `fsa1-row:nth-child(r) fsa1-cell` is two compound selectors
+/// (0,1,2) where `fsa1-cell:nth-child(c)` is one (0,1,1), so a row rule outranks a column rule. A periodic
 /// form TIES with its axis's literal, both being one pseudo-class, so CSS breaks that on source
 /// order — and the writing order puts the periodic first, which giving it the lower slot IS.
 fn specificity(target: Target) -> u8 {
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn a_row_rule_still_outranks_a_column_rule() {
         let p = presentation_of(
-            "  tr:nth-child(2) td { color: #ff0000 }\n  td:last-child { color: #0000ff }",
+            "  fsa1-row:nth-child(2) fsa1-cell { color: #ff0000 }\n  fsa1-cell:last-child { color: #0000ff }",
         );
         assert_eq!(resolve(&p, 2, 3).color, Some(Rgb { r: 255, g: 0, b: 0 }));
     }
@@ -272,8 +272,8 @@ mod tests {
     #[test]
     fn a_literal_index_wins_its_tie_with_the_periodic_it_overlaps() {
         let p = tall_presentation_of(
-            "  td { color: #000000 }\n  tr:nth-child(2n) td { color: #00ff00 }\n  \
-             tr:nth-child(2) td { color: #ff0000 }",
+            "  fsa1-cell { color: #000000 }\n  fsa1-row:nth-child(2n) fsa1-cell { color: #00ff00 }\n  \
+             fsa1-row:nth-child(2) fsa1-cell { color: #ff0000 }",
         );
         assert_eq!(resolve(&p, 2, 1).color, Some(Rgb { r: 255, g: 0, b: 0 }));
         assert_eq!(resolve(&p, 3, 1).color, Some(Rgb { r: 0, g: 0, b: 0 }));
@@ -282,18 +282,18 @@ mod tests {
     /// The whole point of the form: one rule reaching every line it names, at any distance from it.
     #[test]
     fn a_periodic_rule_reaches_every_line_it_names() {
-        let p = tall_presentation_of("  tr:nth-child(2n) td { font-weight: bold }");
+        let p = tall_presentation_of("  fsa1-row:nth-child(2n) fsa1-cell { font-weight: bold }");
         assert_eq!(resolve(&p, 2, 1).font_weight, Some(FontWeight::Bold));
         assert_eq!(resolve(&p, 4, 1).font_weight, Some(FontWeight::Bold));
         assert_eq!(resolve(&p, 1, 1).font_weight, None);
         assert_eq!(resolve(&p, 3, 1).font_weight, None);
     }
 
-    /// A bare `td` is the whole scoping root, never its perimeter: what an author writing one rule for
+    /// A bare `fsa1-cell` is the whole scoping root, never its perimeter: what an author writing one rule for
     /// a region is promised.
     #[test]
     fn a_bare_td_styles_every_cell_of_the_range() {
-        let p = presentation_of("  td { font-weight: bold }");
+        let p = presentation_of("  fsa1-cell { font-weight: bold }");
         for row in 1..=3 {
             for col in 1..=3 {
                 assert_eq!(
@@ -316,7 +316,7 @@ mod tests {
              font-size: 11pt; font-style: italic; font-weight: bold; height: 22.5pt; \
              text-align: right; text-decoration: line-through; vertical-align: middle; \
              white-space: nowrap; width: 14.5ch";
-        let p = presentation_of(&format!("  td {{ {DECLARATIONS} }}"));
+        let p = presentation_of(&format!("  fsa1-cell {{ {DECLARATIONS} }}"));
         let spelled: Vec<String> = resolve(&p, 1, 1)
             .declarations()
             .iter()
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn a_row_rule_outranks_a_column_rule_where_both_match() {
         let p = presentation_of(
-            "  tr:nth-child(2) td { color: #3f0421 }\n  td:nth-child(2) { color: #ffffff }",
+            "  fsa1-row:nth-child(2) fsa1-cell { color: #3f0421 }\n  fsa1-cell:nth-child(2) { color: #ffffff }",
         );
         let plum = Rgb {
             r: 0x3f,

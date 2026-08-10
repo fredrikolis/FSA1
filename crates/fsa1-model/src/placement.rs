@@ -579,12 +579,12 @@ mod tests {
             ),
             // A sidecar whose selector is wrong is refused for the SELECTOR, though `color` would earn a refusal of its own under `figure`.
             (
-                "  td { color: #ff0000 }\n",
-                format!("{SHAPE} \"  td {{ color: #ff0000 }}\""),
+                "  fsa1-cell { color: #ff0000 }\n",
+                format!("{SHAPE} \"  fsa1-cell {{ color: #ff0000 }}\""),
             ),
             (
-                "  td { anchor: D2 }\n",
-                format!("{SHAPE} \"  td {{ anchor: D2 }}\""),
+                "  fsa1-cell { anchor: D2 }\n",
+                format!("{SHAPE} \"  fsa1-cell {{ anchor: D2 }}\""),
             ),
             ("  anchor: D2\n", format!("{SHAPE} \"  anchor: D2\"")),
             (

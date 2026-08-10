@@ -953,7 +953,7 @@ fn a_styled_tab_loads_and_its_sidecar_contributes_no_cell() {
         &[
             ("A1:A2", "3\n4"),
             ("C1", "=SUM(A1:A2)"),
-            ("E1:G5.css", "  td { text-align: right }\n"),
+            ("E1:G5.css", "  fsa1-cell { text-align: right }\n"),
         ],
     );
     assert_eq!(wb.value_at(0, 2, 0), Value::Number(7.0));
@@ -978,7 +978,7 @@ fn a_styled_tab_loads_and_its_sidecar_contributes_no_cell() {
 /// earned, on the overlay, which `check` loads and folds in; `eval` answers over the same tree.
 #[test]
 fn a_sidecar_that_will_not_parse_refuses_no_verb_reading_values() {
-    for sidecar in ["  th { color: red }\n", "  td { color: #\n"] {
+    for sidecar in ["  th { color: red }\n", "  fsa1-cell { color: #\n"] {
         let wb = load_one_tab(
             "Sheet1",
             &[
@@ -1002,7 +1002,7 @@ fn a_sidecar_on_disk_is_classified_before_the_cell_and_name_arms() {
     std::fs::write(dir.join("Sheet1").join("A1"), "1").expect("a cell");
     std::fs::write(
         dir.join("Sheet1").join("A1.css"),
-        "  td { font-weight: bold }\n",
+        "  fsa1-cell { font-weight: bold }\n",
     )
     .expect("a sidecar");
     let wb = Workbook::load_dir(&dir)

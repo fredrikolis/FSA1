@@ -4,9 +4,9 @@
 #
 # B1 states a solid FF00B0F0 fill and no value. A visually non-null style IS occupancy, so the
 # block spans A1:B1 and the grid line carries two fields, the second empty. One row is the whole
-# block, so the fill is a COLUMN rule; column 2 of 2 is `td:last-child`.
+# block, so the fill is a COLUMN rule; column 2 of 2 is `fsa1-cell:last-child`.
 file: Blank/A1:B1
 |kept	
 file: Blank/A1:B1.css
-|  td:last-child { background-color: #00b0f0 }
+|  fsa1-cell:last-child { background-color: #00b0f0 }
 |

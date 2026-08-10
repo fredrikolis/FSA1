@@ -6,11 +6,11 @@
 # `<font><name val="Arial"/><sz val="9"/></font>`, so the workbook's Normal font is Arial 9. Every
 # `<c>` carries `s="1"` -> cellXfs[1] -> that same fontId 1, and states nothing else at all.
 # Arial 9 is not the format's own default (Calibri 11), which is what a writer restores for an
-# undeclared cell, so both halves must be DECLARED -- one `td` rule, the whole block wearing them.
+# undeclared cell, so both halves must be DECLARED -- one `fsa1-cell` rule, the whole block wearing them.
 # dk1 is `windowText`/000000, so the text colour IS the default and earns no declaration.
 file: Arial/A1:B2
 |A1	B1
 |A2	B2
 file: Arial/A1:B2.css
-|  td { font-family: Arial; font-size: 9pt }
+|  fsa1-cell { font-family: Arial; font-size: 9pt }
 |

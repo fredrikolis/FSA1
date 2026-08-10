@@ -13,7 +13,10 @@ use crate::filename::{parse_filename, parse_root};
 use crate::geometry::{AxisRun, declared_heights, declared_widths};
 use crate::names::{CssEntry, css_entry, figure_stems, is_tab_layer, presentation_stem};
 use crate::overlap::Rect;
-use crate::presentation::{Presentation, parse_rules};
+use crate::presentation::{Presentation, parse_rules, parse_rules_located, rules_of};
+use crate::sidecar_scope::{
+    Sidecar, SidecarScope, area, check_scope_nesting, check_tab_layer, scopes,
+};
 use crate::style::{CellStyle, resolve};
 use crate::workbook::Workbook;
 
@@ -24,15 +27,12 @@ pub struct Overlay {
     tabs: BTreeMap<String, TabOverlay>,
 }
 
-/// `default` is the tab's own `.css` — no stem, so no region, anchored at A1 and unbounded. It is
-/// beneath every block and in no area comparison with one.
+/// `default` is the tab's own `.css` — no stem, so its root is the tab's CONTENT rect, unioned from
+/// the range filenames. It is beneath every block and in no area comparison with one.
 #[derive(Clone, Debug, Default)]
 struct TabOverlay {
-    default: Option<Presentation>,
-    /// The tab's CONTENT rect, unioned from its range filenames — the root the default layer's
-    /// indices count in, so every selector resolves against what the tab actually reaches.
-    root: Option<Rect>,
-    blocks: Vec<(Rect, Presentation)>,
+    default: Option<Sidecar>,
+    blocks: Vec<Sidecar>,
 }
 
 impl Overlay {
@@ -81,8 +81,14 @@ impl Overlay {
     }
 
     /// Empty for a tab with no sidecar and for a sheet index the workbook does not name.
-    fn blocks(&self, wb: &Workbook, sheet: u32) -> &[(Rect, Presentation)] {
+    fn blocks(&self, wb: &Workbook, sheet: u32) -> &[Sidecar] {
         self.tab(wb, sheet).map_or(&[], |t| t.blocks.as_slice())
+    }
+
+    /// The tab's sidecars as [`SidecarScope`]s; empty for a tab holding none.
+    pub fn scopes(&self, wb: &Workbook, sheet: u32) -> Vec<SidecarScope<'_>> {
+        self.tab(wb, sheet)
+            .map_or_else(Vec::new, |tab| scopes(tab.default.as_ref(), &tab.blocks))
     }
 
     fn tab(&self, wb: &Workbook, sheet: u32) -> Option<&TabOverlay> {
@@ -95,8 +101,8 @@ impl Overlay {
     pub fn stated_region(&self, wb: &Workbook, sheet: u32) -> Option<Rect> {
         self.blocks(wb, sheet)
             .iter()
-            .fold(wb.content_region(sheet), |acc, (root, _)| {
-                Rect::union(acc, Some(*root))
+            .fold(wb.content_region(sheet), |acc, block| {
+                Rect::union(acc, Some(block.root))
             })
     }
 
@@ -106,9 +112,14 @@ impl Overlay {
     /// fact from a gap. Blocks layer in cascade order, so the narrowest root stands.
     pub fn cell_style(&self, wb: &Workbook, sheet: u32, col: u32, row: u32) -> Option<CellStyle> {
         let mut style: Option<CellStyle> = None;
-        for (root, presentation) in self.blocks(wb, sheet) {
+        for block in self.blocks(wb, sheet) {
+            let root = block.root;
             if root.contains(col, row) {
-                let matched = resolve(presentation, row - root.min_row + 1, col - root.min_col + 1);
+                let matched = resolve(
+                    &block.presentation,
+                    row - root.min_row + 1,
+                    col - root.min_col + 1,
+                );
                 style.get_or_insert_default().layer(&matched);
             }
         }
@@ -117,12 +128,17 @@ impl Overlay {
             Some(style) => style,
             None => wb.covers(sheet, col, row).then(CellStyle::default)?,
         };
-        if let Some((default, root)) = self
+        if let Some(layer) = self
             .tab(wb, sheet)
-            .and_then(|t| Some((t.default.as_ref()?, t.root?)))
-            .filter(|(_, root)| root.contains(col, row))
+            .and_then(|t| t.default.as_ref())
+            .filter(|layer| layer.root.contains(col, row))
         {
-            let mut under = resolve(default, row - root.min_row + 1, col - root.min_col + 1);
+            let root = layer.root;
+            let mut under = resolve(
+                &layer.presentation,
+                row - root.min_row + 1,
+                col - root.min_col + 1,
+            );
             under.layer(&style);
             style = under;
         }
@@ -157,15 +173,15 @@ impl Overlay {
         let mut sized: BTreeMap<u32, T> = BTreeMap::new();
         // The tab layer first, so any block sizing the same axis is layered over it.
         let tab = self.tab(wb, sheet);
-        if let Some((presentation, root)) = tab.and_then(|t| Some((t.default.as_ref()?, t.root?))) {
-            for run in declared(root, presentation) {
+        if let Some(layer) = tab.and_then(|t| t.default.as_ref()) {
+            for run in declared(layer.root, &layer.presentation) {
                 for axis in run.start..=run.end {
                     sized.insert(axis, run.size);
                 }
             }
         }
-        for (root, presentation) in self.blocks(wb, sheet) {
-            for run in declared(*root, presentation) {
+        for block in self.blocks(wb, sheet) {
+            for run in declared(block.root, &block.presentation) {
                 for axis in run.start..=run.end {
                     sized.insert(axis, run.size);
                 }
@@ -206,19 +222,19 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
             .into_iter()
             // The layer is the SUFFIX alone, so it needs no tab: only the two callers above, which have already dropped every `Unrooted`, separate a root from a placement.
             .partition(|(name, _)| is_tab_layer(name));
-        let default = layer.into_iter().next().and_then(|(name, text)| {
-            let located = format!("{tab}/{name}");
+        let read = layer.into_iter().next().and_then(|(name, text)| {
+            let file = format!("{tab}/{name}");
             let Some(root) = content else {
                 diags.push(Diagnostic::new(
                     Code::PresentationSelector,
-                    Loc::file(&located),
+                    Loc::file(&file),
                     "a tab's own stylesheet counts its indices in the tab's content, and this tab                      states none; name the region on the file instead: <range>.css"
                         .to_string(),
                 ));
                 return None;
             };
-            match parse_rules(&located, root, &text) {
-                Ok(presentation) => Some(presentation),
+            match parse_rules_located(&file, root, &text) {
+                Ok(rules) => Some((root, file, text, rules)),
                 Err(d) => {
                     diags.extend(d);
                     None
@@ -226,14 +242,20 @@ fn build(tabs: Vec<TabInput>) -> Result<Overlay, Vec<Diagnostic>> {
             }
         });
         let blocks = read_sidecars(&tab, sidecars, content, &mut diags);
-        out.insert(
-            tab,
-            TabOverlay {
-                default,
-                root: content,
-                blocks,
-            },
-        );
+        check_scope_nesting(&blocks, &mut diags);
+        // The layer's rules are judged BEFORE they are stripped of their positions, so a refusal on one lands on the line the author wrote it.
+        let default = read.map(|(root, file, text, rules)| {
+            if !blocks.is_empty() {
+                check_tab_layer(&file, &rules, &mut diags);
+            }
+            Sidecar {
+                root,
+                file,
+                text,
+                presentation: rules_of(rules),
+            }
+        });
+        out.insert(tab, TabOverlay { default, blocks });
     }
     if diags.is_empty() {
         Ok(Overlay { tabs: out })
@@ -285,8 +307,8 @@ fn read_sidecars(
     sidecars: Vec<(String, String)>,
     content: Option<Rect>,
     diags: &mut Vec<Diagnostic>,
-) -> Vec<(Rect, Presentation)> {
-    let mut read: Vec<(Rect, String, Presentation)> = Vec::new();
+) -> Vec<Sidecar> {
+    let mut read: Vec<(String, Sidecar)> = Vec::new();
     for (name, text) in sidecars {
         let stem = presentation_stem(&name).expect("the classifier admitted only sidecars");
         let located = format!("{tab}/{name}");
@@ -296,7 +318,15 @@ fn read_sidecars(
                 None => continue,
                 Some(region) => match parse_rules(&located, region, &text) {
                     // Keyed by the RESOLVED region: contention is settled there, so two names reaching one region are what cannot be ordered.
-                    Ok(presentation) => read.push((region, region.label(), presentation)),
+                    Ok(presentation) => read.push((
+                        region.label(),
+                        Sidecar {
+                            root: region,
+                            file: located,
+                            text,
+                            presentation,
+                        },
+                    )),
                     Err(d) => diags.extend(d),
                 },
             },
@@ -305,7 +335,7 @@ fn read_sidecars(
     }
     // Two spellings of one root canonicalize alike, so no order separates them. Refused, not ordered.
     let mut seen: Vec<&String> = Vec::new();
-    for (_, key, _) in &read {
+    for (key, _) in &read {
         if seen.contains(&key) {
             diags.push(Diagnostic::new(
                 Code::DuplicateSidecarRoot,
@@ -318,12 +348,12 @@ fn read_sidecars(
         }
         seen.push(key);
     }
-    read.sort_by(|a, b| area(b.0).cmp(&area(a.0)).then_with(|| a.1.cmp(&b.1)));
-    read.into_iter().map(|(root, _, p)| (root, p)).collect()
-}
-
-fn area(root: Rect) -> u64 {
-    u64::from(root.max_col - root.min_col + 1) * u64::from(root.max_row - root.min_row + 1)
+    read.sort_by(|(a_key, a), (b_key, b)| {
+        area(b.root)
+            .cmp(&area(a.root))
+            .then_with(|| a_key.cmp(b_key))
+    });
+    read.into_iter().map(|(_, sidecar)| sidecar).collect()
 }
 
 #[cfg(test)]
@@ -360,7 +390,7 @@ mod tests {
     fn a_covered_coordinate_wears_the_style_its_sidecar_resolves_to() {
         let (wb, overlay) = over(&[
             ("A1:A2", "3\n4"),
-            ("A1:A2.css", "  td { text-align: right }\n"),
+            ("A1:A2.css", "  fsa1-cell { text-align: right }\n"),
         ]);
         assert_eq!(
             overlay
@@ -398,7 +428,7 @@ mod tests {
         ] {
             let diags = refusals(&[
                 ("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9"),
-                (name, "  td { color: #3f0421 }\n"),
+                (name, "  fsa1-cell { color: #3f0421 }\n"),
             ]);
             assert!(
                 diags.iter().any(|d| d.code == want),
@@ -418,7 +448,7 @@ mod tests {
     fn an_open_root_is_one_root_however_it_is_spelled() {
         let (wb, overlay) = over(&[
             ("A1:B2", "1\t2\n3\t4"),
-            ("A-A.css", "  td { color: #3f0421 }\n"),
+            ("A-A.css", "  fsa1-cell { color: #3f0421 }\n"),
         ]);
         assert!(
             overlay
@@ -431,7 +461,10 @@ mod tests {
             ("a:a.css", Code::LowercaseColumn),
             ("01:01.css", Code::LeadingZeroRow),
         ] {
-            let diags = refusals(&[("A1:B2", "1\t2\n3\t4"), (name, "  td { color: #3f0421 }\n")]);
+            let diags = refusals(&[
+                ("A1:B2", "1\t2\n3\t4"),
+                (name, "  fsa1-cell { color: #3f0421 }\n"),
+            ]);
             assert!(
                 diags.iter().any(|d| d.code == want),
                 "{name} should earn {want:?}: {diags:?}",
@@ -439,8 +472,8 @@ mod tests {
         }
         let diags = refusals(&[
             ("A1:B2", "1\t2\n3\t4"),
-            ("A:A.css", "  td { color: #3f0421 }\n"),
-            ("A1:A2.css", "  td { font-weight: bold }\n"),
+            ("A:A.css", "  fsa1-cell { color: #3f0421 }\n"),
+            ("A1:A2.css", "  fsa1-cell { font-weight: bold }\n"),
         ]);
         assert!(
             diags.iter().any(|d| d.code == Code::DuplicateSidecarRoot),
@@ -452,17 +485,15 @@ mod tests {
     /// sidecar's exactly here, and nowhere else.
     #[test]
     fn an_open_root_loads_on_a_sidecar_and_is_still_refused_on_a_range_file() {
-        // `over` panics on a refusal, so loading at all is the assertion.
-        let (wb, overlay) = over(&[
-            ("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9"),
-            ("A:A.css", "  td { width: 30ch }\n"),
-            ("2:2.css", "  td { height: 20pt }\n"),
-        ]);
+        // A column root and a row root CROSS, so each is loaded over its own tree; `over` panics on a refusal, and loading at all is the assertion.
+        let grid = ("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9");
+        let (wb, overlay) = over(&[grid, ("A:A.css", "  fsa1-cell { width: 30ch }\n")]);
         assert_eq!(
             overlay.cell_style(&wb, 0, 0, 0).and_then(|s| s.width),
             Some(Chars(30.0)),
             "`A:A` clamps to the tab's content and sizes column A",
         );
+        let (wb, overlay) = over(&[grid, ("2:2.css", "  fsa1-cell { height: 20pt }\n")]);
         assert_eq!(
             overlay.cell_style(&wb, 0, 2, 1).and_then(|s| s.height),
             Some(Points(20.0)),
@@ -486,8 +517,8 @@ mod tests {
     fn two_spellings_of_one_root_are_refused_rather_than_ordered() {
         let diags = refusals(&[
             ("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9"),
-            ("A1:C3.css", "  td { color: #3f0421 }\n"),
-            ("A1-C3.css", "  td { color: #ffffff }\n"),
+            ("A1:C3.css", "  fsa1-cell { color: #3f0421 }\n"),
+            ("A1-C3.css", "  fsa1-cell { color: #ffffff }\n"),
         ]);
         assert!(
             diags.iter().any(|d| d.code == Code::DuplicateSidecarRoot),
@@ -495,44 +526,30 @@ mod tests {
         );
     }
 
-    /// Equal areas cannot be separated by size, so the LATER filename wins — CSS's own rule that a
-    /// later sheet overrides an earlier one. Arbitrary, but total and deterministic, which is the
-    /// whole promise.
+    /// Decision 3 and decision 4 read against the encoder: every tree `unpack` writes must still
+    /// load, its tab layer sizing an axis and its blocks a disjoint covering partition whose only
+    /// nesting is the single cell a finer rule cannot reach.
     #[test]
-    fn two_overlapping_roots_of_equal_area_are_settled_by_the_later_filename() {
-        let red = Rgb {
-            r: 0xff,
-            g: 0x00,
-            b: 0x00,
-        };
-        let blue = Rgb {
-            r: 0x00,
-            g: 0x00,
-            b: 0xff,
-        };
-        // Both roots are two cells wide and both cover B1, so only the name can separate them.
-        let first = ("A1:B1.css", "  td { color: #ff0000 }\n");
-        let last = ("B1:C1.css", "  td { color: #0000ff }\n");
-        for entries in [[first, last], [last, first]] {
-            let mut files = vec![("A1:C1", "1\t2\t3")];
-            files.extend(entries);
-            let (wb, overlay) = over(&files);
-            assert_eq!(
-                overlay.cell_style(&wb, 0, 0, 0).unwrap().color,
-                Some(red),
-                "A1 is only in the first"
-            );
-            assert_eq!(
-                overlay.cell_style(&wb, 0, 2, 0).unwrap().color,
-                Some(blue),
-                "C1 is only in the last"
-            );
-            assert_eq!(
-                overlay.cell_style(&wb, 0, 1, 0).unwrap().color,
-                Some(blue),
-                "B1 is in both at equal area, so the later name wins, whatever order the tree lists them"
-            );
-        }
+    fn the_trees_the_encoder_writes_still_load() {
+        let arial = "  fsa1-cell { font-family: Arial }\n";
+        let block = "1\t2\t3\t4\t5\n".repeat(5);
+        let block = block.trim_end_matches('\n');
+        over(&[
+            ("A1:E5", block),
+            ("A56:E60", block),
+            (".css", "  fsa1-cell:nth-child(2) { width: 13ch }\n"),
+            ("A1:E5.css", arial),
+            ("A56:E60.css", arial),
+        ]);
+        over(&[
+            ("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9"),
+            (
+                "A1:C3.css",
+                "  fsa1-row:first-child fsa1-cell { font-size: 14pt }\n",
+            ),
+            ("C2.css", "  fsa1-cell { font-size: 20pt }\n"),
+            ("C3.css", "  fsa1-cell { font-size: 20pt }\n"),
+        ]);
     }
 
     /// The contention the filesystem no longer arbitrates: two roots over one coordinate LAYER
@@ -540,8 +557,11 @@ mod tests {
     /// disagreement is a fault. The tree order is reversed here because the cascade is the areas'.
     #[test]
     fn overlapping_sidecars_layer_the_smaller_root_last() {
-        let table = ("A1:C3.css", "  td { color: #3f0421; font-weight: bold }\n");
-        let inner = ("B2.css", "  td { color: #ffffff }\n");
+        let table = (
+            "A1:C3.css",
+            "  fsa1-cell { color: #3f0421; font-weight: bold }\n",
+        );
+        let inner = ("B2.css", "  fsa1-cell { color: #ffffff }\n");
         for entries in [[table, inner], [inner, table]] {
             let mut files = vec![("A1:C3", "1\t2\t3\n4\t5\t6\n7\t8\t9")];
             files.extend(entries);
@@ -566,8 +586,8 @@ mod tests {
     fn two_sidecars_sizing_one_column_differently_are_no_fault_at_all() {
         let (wb, overlay) = over(&[
             ("A1:A4", "1\n2\n3\n4"),
-            ("A1:A2.css", "  td { width: 10ch }\n"),
-            ("A3:A4.css", "  td { width: 12ch }\n"),
+            ("A1:A2.css", "  fsa1-cell { width: 10ch }\n"),
+            ("A3:A4.css", "  fsa1-cell { width: 12ch }\n"),
         ]);
         assert_eq!(
             overlay.column_widths(&wb, 0),
@@ -599,7 +619,7 @@ mod tests {
     fn a_style_only_region_is_styled_without_any_file() {
         let (wb, overlay) = over(&[
             ("A1", "1"),
-            ("E1:G5.css", "  td { background-color: #00ffff }\n"),
+            ("E1:G5.css", "  fsa1-cell { background-color: #00ffff }\n"),
         ]);
         assert_eq!(
             overlay.stated_region(&wb, 0),

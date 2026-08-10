@@ -5,5 +5,5 @@ file: Theme/A1:B2
 |A1	B1
 |A2	B2
 file: Theme/A1:B2.css
-|  td { font-weight: bold }
+|  fsa1-cell { font-weight: bold }
 |

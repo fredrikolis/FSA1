@@ -63,7 +63,7 @@ def _wb(title):
 
 def make_styled_header_row():
     """A header row over a body: bold, filled and centred, uniform across row 1, so the encoder must
-    reach for ONE `tr:first-child td` rule rather than three per-cell ones."""
+    reach for ONE `fsa1-row:first-child fsa1-cell` rule rather than three per-cell ones."""
     wb, s = _wb("Report")
     for col, text in zip("ABC", ("Region", "Units", "Revenue")):
         cell = s[f"{col}1"]
@@ -122,7 +122,7 @@ def make_total_row_top_border():
 
 
 def make_body_8pt_vs_normal_11pt():
-    """Every cell at 8pt against the workbook's 11pt Normal: the size must cross as ONE `td` rule, and
+    """Every cell at 8pt against the workbook's 11pt Normal: the size must cross as ONE `fsa1-cell` rule, and
     the Normal-equal family (Calibri) must NOT be emitted beside it."""
     wb, s = _wb("Body")
     for row in (1, 2, 3):

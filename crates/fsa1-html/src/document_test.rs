@@ -61,8 +61,11 @@ fn no_font_family_byte_can_swallow_a_later_cells_rule() {
         let html = doc(&[
             ("A1", "x"),
             ("A2", "y"),
-            ("A1.css", &format!("  td {{ font-family: {hostile} }}\n")),
-            ("A2.css", "  td { background-color: #ff0000 }\n"),
+            (
+                "A1.css",
+                &format!("  fsa1-cell {{ font-family: {hostile} }}\n"),
+            ),
+            ("A2.css", "  fsa1-cell { background-color: #ff0000 }\n"),
         ]);
         assert_eq!(
             html.matches("</style>").count(),
@@ -102,7 +105,10 @@ fn an_embedded_newline_and_padding_survive_the_html_carrier() {
 fn an_axis_size_reaches_the_document_where_the_browser_honours_it() {
     let html = doc(&[
         ("A1:B2", "1\t2\n3\t4"),
-        ("A1:B2.css", "  td { height: 22.5pt; width: 14.5ch }\n"),
+        (
+            "A1:B2.css",
+            "  fsa1-cell { height: 22.5pt; width: 14.5ch }\n",
+        ),
     ]);
     assert!(
         html.contains(".c0 { height: 22.5pt }"),
@@ -123,7 +129,7 @@ fn an_axis_size_reaches_the_document_where_the_browser_honours_it() {
 fn two_cells_with_the_same_declarations_share_one_class_and_one_rule() {
     let html = doc(&[
         ("A1:B1", "1\t2"),
-        ("A1:B1.css", "  td { font-weight: bold }\n"),
+        ("A1:B1.css", "  fsa1-cell { font-weight: bold }\n"),
     ]);
     assert_eq!(
         html.matches("<td class=\"c0\"").count(),
@@ -144,7 +150,7 @@ fn two_cells_with_the_same_declarations_share_one_class_and_one_rule() {
 fn a_document_stating_no_width_keeps_the_browsers_own_layout() {
     let styled = doc(&[
         ("A1:B2", "1\t2\n3\t4"),
-        ("A1:B2.css", "  td { font-weight: bold }\n"),
+        ("A1:B2.css", "  fsa1-cell { font-weight: bold }\n"),
     ]);
     assert!(
         !styled.contains("table-layout"),
@@ -152,7 +158,7 @@ fn a_document_stating_no_width_keeps_the_browsers_own_layout() {
     );
     let widened = doc(&[
         ("A1:B2", "1\t2\n3\t4"),
-        ("A:A.css", "  td { width: 30ch }\n"),
+        ("A:A.css", "  fsa1-cell { width: 30ch }\n"),
     ]);
     assert!(
         widened.contains("table-layout: fixed") && widened.contains(r#"<col style="width: 30ch">"#),

@@ -7,5 +7,5 @@ file: Totals/A1:B4
 |Water	90
 |Total	1800
 file: Totals/A1:B4.css
-|  tr:last-child td { border-top: 1px solid #000000; font-weight: bold }
+|  fsa1-row:last-child fsa1-cell { border-top: 1px solid #000000; font-weight: bold }
 |

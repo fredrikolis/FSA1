@@ -495,7 +495,7 @@ mod tests {
         };
         let (_, xml) = table(&[
             (CellStyle::default(), Some(currency)),
-            (styled("td { font-weight: bold }"), Some(currency)),
+            (styled("fsa1-cell { font-weight: bold }"), Some(currency)),
         ]);
         assert_eq!(xml.matches(r#"formatCode="$#,##0.00""#).count(), 1, "{xml}");
         assert_eq!(xml.matches(r#"<xf numFmtId="164""#).count(), 2, "{xml}");
@@ -508,12 +508,12 @@ mod tests {
         let narrow = CellStyle {
             width: Some(Chars(4.0)),
             height: Some(Points(15.0)),
-            ..styled("td { font-weight: bold }")
+            ..styled("fsa1-cell { font-weight: bold }")
         };
         let wide = CellStyle {
             width: Some(Chars(40.0)),
             height: Some(Points(30.0)),
-            ..styled("td { font-weight: bold }")
+            ..styled("fsa1-cell { font-weight: bold }")
         };
         assert_ne!(narrow, wide, "the two styles really do differ");
         let (table, xml) = table(&[(narrow.clone(), None), (wide.clone(), None)]);
@@ -531,7 +531,7 @@ mod tests {
     fn each_declared_property_reaches_its_own_element() {
         let (_, xml) = table(&[(
             styled(
-                "td { background-color: #ffffff; border-bottom: 1px solid #3f0421; color: #3f0421; \
+                "fsa1-cell { background-color: #ffffff; border-bottom: 1px solid #3f0421; color: #3f0421; \
                  font-family: Times New Roman; font-size: 14pt; font-style: italic; \
                  font-weight: bold; text-align: center; text-decoration: underline; \
                  vertical-align: middle; white-space: normal }",
@@ -568,7 +568,7 @@ mod tests {
     /// colour from re-emitting a font per cell.
     #[test]
     fn a_shared_font_is_interned_once_across_the_looks_that_carry_it() {
-        let bold = styled("td { font-weight: bold }");
+        let bold = styled("fsa1-cell { font-weight: bold }");
         let (_, xml) = table(&[
             (bold.clone(), None),
             (bold, Some(Format::Percent { decimals: 2 })),
@@ -598,7 +598,7 @@ mod tests {
             ("1px dotted", "dotted"),
             ("3px double", "double"),
         ] {
-            let style = styled(&format!("td {{ border-top: {css} #3f0421 }}"));
+            let style = styled(&format!("fsa1-cell {{ border-top: {css} #3f0421 }}"));
             let (_, xml) = table(&[(style, None)]);
             assert!(
                 xml.contains(&format!(r#"<top style="{want}">"#)),
@@ -613,7 +613,10 @@ mod tests {
     fn a_loaded_workbook_interns_the_look_each_cell_reads_back() {
         let files: &[(&str, &str)] = &[
             ("A1:A2", "Total\n12.50%"),
-            ("A1:A2.css", "  tr:first-child td { font-weight: bold }\n"),
+            (
+                "A1:A2.css",
+                "  fsa1-row:first-child fsa1-cell { font-weight: bold }\n",
+            ),
         ];
         let wb = Workbook::from_tabs(&[("Sheet1", files)])
             .unwrap_or_else(|d| panic!("the workbook loads: {:?}", d[0]));

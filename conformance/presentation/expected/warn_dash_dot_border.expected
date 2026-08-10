@@ -5,5 +5,5 @@ warning: border style dashDot at Sheet1!A1 approximated as dashed
 file: Sheet1/A1
 |Edge
 file: Sheet1/A1.css
-|  td { border-bottom: 1px dashed #000000 }
+|  fsa1-cell { border-bottom: 1px dashed #000000 }
 |

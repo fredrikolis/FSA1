@@ -15,7 +15,7 @@ pub struct AxisRun<T> {
 
 /// The sheet columns the block sizes, ascending and disjoint: a block's column `k` is sheet column
 /// `root.min_col + k - 1`, sized by the All -> Col half of the cascade [`crate::style::resolve`]
-/// runs per cell — a `td` width sizes every column the root spans, a `td:nth-child(k)` one of
+/// runs per cell — a `fsa1-cell` width sizes every column the root spans, a `fsa1-cell:nth-child(k)` one of
 /// them. The row and cell halves carry no width, the parser refusing one there.
 pub fn declared_widths(root: Rect, presentation: &Presentation) -> Vec<AxisRun<Chars>> {
     let mut base = None;
@@ -99,14 +99,14 @@ mod tests {
         declared_widths(region, &presentation)
     }
 
-    /// A bare `td` sizes every column the root spans, and a column selector overrides that one; the
+    /// A bare `fsa1-cell` sizes every column the root spans, and a column selector overrides that one; the
     /// offset is the root's, so a block anchored at B sizes sheet columns B onward.
     #[test]
     fn a_bare_td_covers_the_root_and_a_column_rule_carves_it() {
         assert_eq!(
             widths(
                 "B2:D4",
-                "  td { width: 10ch }\n  td:nth-child(2) { width: 4ch }",
+                "  fsa1-cell { width: 10ch }\n  fsa1-cell:nth-child(2) { width: 4ch }",
             ),
             vec![
                 AxisRun {
@@ -127,13 +127,13 @@ mod tests {
             ],
         );
         assert_eq!(
-            widths("B2:D4", "  td:first-child { width: 4ch }"),
+            widths("B2:D4", "  fsa1-cell:first-child { width: 4ch }"),
             vec![AxisRun {
                 start: 1,
                 end: 1,
                 size: Chars(4.0)
             }],
         );
-        assert!(widths("B2:D4", "  td { color: #3f0421 }").is_empty());
+        assert!(widths("B2:D4", "  fsa1-cell { color: #3f0421 }").is_empty());
     }
 }

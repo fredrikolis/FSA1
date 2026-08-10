@@ -34,6 +34,36 @@ pub struct Presentation {
 /// `Shape` the selectors are region-relative to, so which index is `:last-child` — and whether an
 /// axis carries a selector of its own at all — follows from the name.
 pub fn parse_rules(file: &str, root: Rect, content: &str) -> Result<Presentation, Vec<Diagnostic>> {
+    parse_rules_located(file, root, content).map(rules_of)
+}
+
+/// One rule and where in the sidecar it was written, in ONE value: a caller cannot pair a rule with
+/// another rule's position, and a filtered sequence stays located rather than silently sliding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocatedRule {
+    pub rule: Rule,
+    pub line: u32,
+    pub col: u32,
+}
+
+/// A sidecar's rules in written order, each carrying its own line and column.
+pub type LocatedRules = Vec<LocatedRule>;
+
+/// The rules alone, in written order.
+pub fn rules_of(located: LocatedRules) -> Presentation {
+    Presentation {
+        rules: located.into_iter().map(|l| l.rule).collect(),
+    }
+}
+
+/// [`parse_rules`] keeping each rule's position. A caller refusing a rule for something outside the
+/// sidecar — what its ROOT is, or what the tab around it holds — locates that refusal from here
+/// rather than reading the text again.
+pub fn parse_rules_located(
+    file: &str,
+    root: Rect,
+    content: &str,
+) -> Result<LocatedRules, Vec<Diagnostic>> {
     let shape = shape_of(root);
     let mut cur = Cursor::new(content, 1);
     let mut diags: Vec<Diagnostic> = Vec::new();
@@ -49,9 +79,10 @@ pub fn parse_rules(file: &str, root: Rect, content: &str) -> Result<Presentation
         ));
     }
     if diags.is_empty() {
-        Ok(Presentation {
-            rules: placed.into_iter().map(|(_, _, r)| r).collect(),
-        })
+        Ok(placed
+            .into_iter()
+            .map(|(line, col, rule)| LocatedRule { rule, line, col })
+            .collect())
     } else {
         Err(diags)
     }
@@ -501,13 +532,13 @@ fn lone(a: u32, b: u32, extent: u32) -> Option<u32> {
 
 fn spell(target: Target, shape: Shape) -> String {
     match target {
-        Target::All => "td".to_string(),
-        Target::RowEvery { a, b } => format!("tr{} td", periodic(a, b)),
-        Target::ColEvery { a, b } => format!("td{}", periodic(a, b)),
-        Target::Row(r) => format!("tr{} td", pseudo(r, shape.rows)),
-        Target::Col(c) => format!("td{}", pseudo(c, shape.cols)),
+        Target::All => "fsa1-cell".to_string(),
+        Target::RowEvery { a, b } => format!("fsa1-row{} fsa1-cell", periodic(a, b)),
+        Target::ColEvery { a, b } => format!("fsa1-cell{}", periodic(a, b)),
+        Target::Row(r) => format!("fsa1-row{} fsa1-cell", pseudo(r, shape.rows)),
+        Target::Col(c) => format!("fsa1-cell{}", pseudo(c, shape.cols)),
         Target::Cell { row, col } => format!(
-            "tr{} td{}",
+            "fsa1-row{} fsa1-cell{}",
             pseudo(row, shape.rows),
             pseudo(col, shape.cols)
         ),
@@ -570,9 +601,9 @@ enum Idx {
     Every { a: u32, b: u32 },
 }
 
-/// `Ok(None)` is the bare `td`, which selects whatever its row part already narrowed to.
+/// `Ok(None)` is the bare `fsa1-cell`, which selects whatever its row part already narrowed to.
 fn column_of(part: &str, whole: &str, cols: u32) -> Result<Option<Idx>, (Code, String)> {
-    let Some(rest) = part.strip_prefix("td") else {
+    let Some(rest) = part.strip_prefix("fsa1-cell") else {
         return Err(unknown_selector(whole));
     };
     if rest.is_empty() {
@@ -582,7 +613,7 @@ fn column_of(part: &str, whole: &str, cols: u32) -> Result<Option<Idx>, (Code, S
 }
 
 fn row_of(part: &str, whole: &str, rows: u32) -> Result<Idx, (Code, String)> {
-    let Some(rest) = part.strip_prefix("tr") else {
+    let Some(rest) = part.strip_prefix("fsa1-row") else {
         return Err(unknown_selector(whole));
     };
     index_of(rest, whole, rows, "row")
@@ -626,7 +657,7 @@ fn split_periodic(k: &str) -> Option<(&str, &str)> {
     }
 }
 
-/// `A` of 1 selects every line, which is `td`, and `A` of 0 selects one, which is a literal index —
+/// `A` of 1 selects every line, which is `fsa1-cell`, and `A` of 0 selects one, which is a literal index —
 /// each already has a spelling, so admitting a second here would give one appearance two.
 fn periodic_of(
     a: &str,
@@ -674,7 +705,7 @@ fn unknown_selector(text: &str) -> (Code, String) {
 
 /// A size belongs to an AXIS, and only a selector naming one may carry it: a cell selector names two
 /// and so is neither, and the cross axis — a row for a width, a column for a height — is not the one
-/// being sized. `td` names the whole region and stays legal for both, which is what leaves a file one
+/// being sized. `fsa1-cell` names the whole region and stays legal for both, which is what leaves a file one
 /// column wide, where no column selector can be spelled, a way to size its column.
 fn axis_fault(
     declaration: &Declaration,
@@ -686,12 +717,12 @@ fn axis_fault(
         Declaration::Width(_) => (
             matches!(target, Target::All | Target::Col(_)),
             "column",
-            "`td` or `td:nth-child(k)`",
+            "`fsa1-cell` or `fsa1-cell:nth-child(k)`",
         ),
         Declaration::Height(_) => (
             matches!(target, Target::All | Target::Row(_)),
             "row",
-            "`td` or `tr:nth-child(k) td`",
+            "`fsa1-cell` or `fsa1-row:nth-child(k) fsa1-cell`",
         ),
         _ => return None,
     };
@@ -837,31 +868,31 @@ mod tests {
     #[test]
     fn a_multi_line_rule_body_reads_as_one_rule() {
         assert_eq!(
-            rules("@scope {\n  td {\n    color: #3f0421\n  }\n}")[0].target,
+            rules("@scope {\n  fsa1-cell {\n    color: #3f0421\n  }\n}")[0].target,
             Target::All,
         );
     }
 
     #[test]
     fn every_selector_form_reads_to_its_region_relative_target() {
-        assert_eq!(one_rule("td"), Target::All);
-        assert_eq!(one_rule("tr:first-child td"), Target::Row(1));
-        assert_eq!(one_rule("tr:last-child td"), Target::Row(4));
-        assert_eq!(one_rule("tr:nth-child(2) td"), Target::Row(2));
-        assert_eq!(one_rule("td:first-child"), Target::Col(1));
-        assert_eq!(one_rule("td:last-child"), Target::Col(3));
-        assert_eq!(one_rule("td:nth-child(2)"), Target::Col(2));
+        assert_eq!(one_rule("fsa1-cell"), Target::All);
+        assert_eq!(one_rule("fsa1-row:first-child fsa1-cell"), Target::Row(1));
+        assert_eq!(one_rule("fsa1-row:last-child fsa1-cell"), Target::Row(4));
+        assert_eq!(one_rule("fsa1-row:nth-child(2) fsa1-cell"), Target::Row(2));
+        assert_eq!(one_rule("fsa1-cell:first-child"), Target::Col(1));
+        assert_eq!(one_rule("fsa1-cell:last-child"), Target::Col(3));
+        assert_eq!(one_rule("fsa1-cell:nth-child(2)"), Target::Col(2));
         // A cell selector reads to a coordinate and PRES1 refuses one; here only the shapes are read.
         assert_eq!(
-            one_rule("tr:nth-child(2n) td"),
+            one_rule("fsa1-row:nth-child(2n) fsa1-cell"),
             Target::RowEvery { a: 2, b: 0 }
         );
         assert_eq!(
-            one_rule("tr:nth-child(2n+1) td"),
+            one_rule("fsa1-row:nth-child(2n+1) fsa1-cell"),
             Target::RowEvery { a: 2, b: 1 }
         );
         assert_eq!(
-            one_rule("td:nth-child(2n+1)"),
+            one_rule("fsa1-cell:nth-child(2n+1)"),
             Target::ColEvery { a: 2, b: 1 }
         );
     }
@@ -871,20 +902,21 @@ mod tests {
     #[test]
     fn a_periodic_index_is_bounded_by_its_first_line_not_its_period() {
         assert_eq!(
-            one_rule("tr:nth-child(3n+1) td"),
+            one_rule("fsa1-row:nth-child(3n+1) fsa1-cell"),
             Target::RowEvery { a: 3, b: 1 }
         );
-        assert!(selector_refusal("tr:nth-child(7n) td").contains("first selects 7"));
+        assert!(selector_refusal("fsa1-row:nth-child(7n) fsa1-cell").contains("first selects 7"));
     }
 
     /// A period reaching ONE line of the region picks out exactly what a literal index does, so the
     /// author is sent to the spelling that set already has rather than being given a second.
     #[test]
     fn a_periodic_index_reaching_one_line_is_that_literal_index() {
-        let diag = refusal("@scope {\n  tr:nth-child(7n+3) td { color: #3f0421 }\n}");
+        let diag = refusal("@scope {\n  fsa1-row:nth-child(7n+3) fsa1-cell { color: #3f0421 }\n}");
         assert_eq!(diag.code, Code::NonCanonicalPresentation);
         assert!(
-            diag.message.contains("write `tr:nth-child(3) td`"),
+            diag.message
+                .contains("write `fsa1-row:nth-child(3) fsa1-cell`"),
             "{}",
             diag.message
         );
@@ -894,12 +926,18 @@ mod tests {
     /// spells, so admitting it would give that set a second way to be written.
     #[test]
     fn a_periodic_index_admits_no_synonym_of_a_form_that_exists() {
-        assert!(selector_refusal("tr:nth-child(1n) td").contains("every 2 or more"));
-        assert!(selector_refusal("tr:nth-child(0n+2) td").contains("every 2 or more"));
-        assert!(selector_refusal("tr:nth-child(2n+2) td").contains("offset runs 0 to 1"));
-        assert!(selector_refusal("tr:nth-child(odd) td").contains("ten region-relative selectors"));
+        assert!(selector_refusal("fsa1-row:nth-child(1n) fsa1-cell").contains("every 2 or more"));
+        assert!(selector_refusal("fsa1-row:nth-child(0n+2) fsa1-cell").contains("every 2 or more"));
         assert!(
-            selector_refusal("tr:nth-child(even) td").contains("ten region-relative selectors")
+            selector_refusal("fsa1-row:nth-child(2n+2) fsa1-cell").contains("offset runs 0 to 1")
+        );
+        assert!(
+            selector_refusal("fsa1-row:nth-child(odd) fsa1-cell")
+                .contains("ten region-relative selectors")
+        );
+        assert!(
+            selector_refusal("fsa1-row:nth-child(even) fsa1-cell")
+                .contains("ten region-relative selectors")
         );
     }
 
@@ -907,42 +945,46 @@ mod tests {
     /// one — so a periodic form is refused by construction, not by a branch anyone must remember.
     #[test]
     fn a_periodic_selector_carries_no_size() {
-        let height = "@scope {\n  tr:nth-child(2n) td { height: 22.5pt }\n}";
+        let height = "@scope {\n  fsa1-row:nth-child(2n) fsa1-cell { height: 22.5pt }\n}";
         assert_eq!(refusal(height).code, Code::PresentationProperty);
-        let width = "@scope {\n  td:nth-child(2n+1) { width: 14.5ch }\n}";
+        let width = "@scope {\n  fsa1-cell:nth-child(2n+1) { width: 14.5ch }\n}";
         assert_eq!(refusal(width).code, Code::PresentationProperty);
-        rules("@scope {\n  tr:nth-child(2) td { height: 22.5pt }\n}");
+        rules("@scope {\n  fsa1-row:nth-child(2) fsa1-cell { height: 22.5pt }\n}");
     }
 
     /// There is no periodic CELL target, so the two halves cannot both narrow.
     #[test]
     fn a_periodic_part_composes_with_nothing() {
         assert!(
-            selector_refusal("tr:nth-child(2n) td:nth-child(3)")
+            selector_refusal("fsa1-row:nth-child(2n) fsa1-cell:nth-child(3)")
                 .contains("ten region-relative selectors")
         );
         assert!(
-            selector_refusal("tr:nth-child(3) td:nth-child(2n)")
+            selector_refusal("fsa1-row:nth-child(3) fsa1-cell:nth-child(2n)")
                 .contains("ten region-relative selectors")
         );
     }
 
     /// An axis of extent 1 has nothing to alternate over, so a periodic index there selects exactly
-    /// what `td` does — and the author is told which spelling that set already has.
+    /// what `fsa1-cell` does — and the author is told which spelling that set already has.
     #[test]
     fn a_periodic_index_on_a_single_line_axis_is_refused_for_the_form_that_says_it() {
         let one_row = Shape { rows: 1, cols: 3 };
-        let content = "@scope {\n  tr:nth-child(2n+1) td { color: #3f0421 }\n}";
+        let content = "@scope {\n  fsa1-row:nth-child(2n+1) fsa1-cell { color: #3f0421 }\n}";
         let diag = parse(content, one_row)
-            .expect_err("a single-row region spells this `td`")
+            .expect_err("a single-row region spells this `fsa1-cell`")
             .remove(0);
         assert_eq!(diag.code, Code::NonCanonicalPresentation);
-        assert!(diag.message.contains("write `td`"), "{}", diag.message);
+        assert!(
+            diag.message.contains("write `fsa1-cell`"),
+            "{}",
+            diag.message
+        );
     }
 
     #[test]
     fn every_property_reads_to_its_typed_declaration() {
-        let block = "@scope {\n  td { background-color: #ffffff; border-bottom: 1px solid #3f0421; \
+        let block = "@scope {\n  fsa1-cell { background-color: #ffffff; border-bottom: 1px solid #3f0421; \
                      color: #3f0421; font-family: Times New Roman; font-size: 11pt; \
                      font-style: italic; font-weight: bold; height: 22.5pt; text-align: right; \
                      text-decoration: line-through; vertical-align: middle; white-space: nowrap; \
@@ -987,7 +1029,7 @@ mod tests {
 
     #[test]
     fn a_real_region_block_parses_as_written() {
-        let content = "=Total!I3\t=Total!J3\t=Total!K3\n@scope {\n  td { border-bottom: 1px solid \
+        let content = "=Total!I3\t=Total!J3\t=Total!K3\n@scope {\n  fsa1-cell { border-bottom: 1px solid \
                        #3f0421; color: #3f0421; font-weight: bold; text-align: center }\n}";
         let parsed = parse(content, Shape { rows: 1, cols: 3 }).expect("parses");
         assert_eq!(parsed.rules.len(), 1);
@@ -998,7 +1040,8 @@ mod tests {
     #[test]
     fn the_seven_border_lines_are_the_whole_set() {
         for (line, width, style) in BORDER_LINES {
-            let block = format!("@scope {{\n  td {{ border-top: {width} {style} #3f0421 }}\n}}");
+            let block =
+                format!("@scope {{\n  fsa1-cell {{ border-top: {width} {style} #3f0421 }}\n}}");
             assert_eq!(
                 rules(&block)[0].declarations[0],
                 Declaration::Border {
@@ -1015,14 +1058,14 @@ mod tests {
             );
         }
         assert_eq!(
-            refusal("@scope {\n  td { border-top: 2px dotted #3f0421 }\n}").code,
+            refusal("@scope {\n  fsa1-cell { border-top: 2px dotted #3f0421 }\n}").code,
             Code::PresentationValue,
         );
     }
 
     #[test]
     fn a_width_only_border_is_refused_because_it_renders_nothing() {
-        let d = refusal("@scope {\n  td { border-bottom: thin }\n}");
+        let d = refusal("@scope {\n  fsa1-cell { border-bottom: thin }\n}");
         assert_eq!(d.code, Code::PresentationValue);
         assert!(d.message.contains("all three"), "{}", d.message);
     }
@@ -1031,11 +1074,11 @@ mod tests {
     fn every_refused_construct_is_a_located_refusal() {
         for (block, code) in [
             (
-                "@scope {\n  td { color: #3f0421 !important }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421 !important }\n}",
                 Code::PresentationSyntax,
             ),
             (
-                "@scope {\n  @media print { td { color: #3f0421 } }\n}",
+                "@scope {\n  @media print { fsa1-cell { color: #3f0421 } }\n}",
                 Code::PresentationSyntax,
             ),
             (
@@ -1043,59 +1086,59 @@ mod tests {
                 Code::PresentationSyntax,
             ),
             (
-                "@scope {\n  @layer base { td { color: #3f0421 } }\n}",
+                "@scope {\n  @layer base { fsa1-cell { color: #3f0421 } }\n}",
                 Code::PresentationSyntax,
             ),
             (
-                "@scope {\n  td { font-size: calc(11pt + 1pt) }\n}",
+                "@scope {\n  fsa1-cell { font-size: calc(11pt + 1pt) }\n}",
                 Code::PresentationValue,
             ),
             (
-                "@scope {\n  td { font-size: 11px }\n}",
+                "@scope {\n  fsa1-cell { font-size: 11px }\n}",
                 Code::PresentationValue,
             ),
             (
-                "@scope {\n  td { font-size: 1em }\n}",
+                "@scope {\n  fsa1-cell { font-size: 1em }\n}",
                 Code::PresentationValue,
             ),
             (
-                "@scope {\n  td { font-size: 1rem }\n}",
+                "@scope {\n  fsa1-cell { font-size: 1rem }\n}",
                 Code::PresentationValue,
             ),
             (
-                "@scope {\n  td { font-size: 120% }\n}",
+                "@scope {\n  fsa1-cell { font-size: 120% }\n}",
                 Code::PresentationValue,
             ),
             (
-                "@scope {\n  td { color: currentcolor }\n}",
+                "@scope {\n  fsa1-cell { color: currentcolor }\n}",
                 Code::PresentationValue,
             ),
             (
-                "@scope {\n  td { background-color: linear-gradient(red, blue) }\n}",
+                "@scope {\n  fsa1-cell { background-color: linear-gradient(red, blue) }\n}",
                 Code::PresentationValue,
             ),
             (
-                "@scope {\n  td { box-shadow: 0 0 2px #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { box-shadow: 0 0 2px #3f0421 }\n}",
                 Code::PresentationProperty,
             ),
             (
-                "@scope {\n  td { text-shadow: 0 0 2px #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { text-shadow: 0 0 2px #3f0421 }\n}",
                 Code::PresentationProperty,
             ),
             (
-                "@scope {\n  td { transition: color 1s }\n}",
+                "@scope {\n  fsa1-cell { transition: color 1s }\n}",
                 Code::PresentationProperty,
             ),
             (
-                "@scope {\n  td::before { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell::before { color: #3f0421 }\n}",
                 Code::PresentationSelector,
             ),
             (
-                "@scope {\n  td::after { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell::after { color: #3f0421 }\n}",
                 Code::PresentationSelector,
             ),
             (
-                "@scope {\n  td:nth-col(2) { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell:nth-col(2) { color: #3f0421 }\n}",
                 Code::PresentationSelector,
             ),
             (
@@ -1107,11 +1150,11 @@ mod tests {
                 Code::PresentationSelector,
             ),
             (
-                "@scope {\n  td:nth-child(9) { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell:nth-child(9) { color: #3f0421 }\n}",
                 Code::PresentationSelector,
             ),
             (
-                "@scope {\n  td { color: #3f0421 font-weight: bold }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421 font-weight: bold }\n}",
                 Code::PresentationSyntax,
             ),
         ] {
@@ -1126,25 +1169,25 @@ mod tests {
     }
 
     /// A width is a column's and a height a row's, so the selector must name the axis being sized.
-    /// `td` names the whole region and stays legal for both — the only way a one-column file, which
+    /// `fsa1-cell` names the whole region and stays legal for both — the only way a one-column file, which
     /// can spell no column selector at all, sizes its column.
     #[test]
     fn a_size_is_refused_on_a_selector_that_names_no_such_axis() {
         for (block, want) in [
             (
-                "@scope {\n  td:nth-child(2) { height: 22.5pt }\n}",
+                "@scope {\n  fsa1-cell:nth-child(2) { height: 22.5pt }\n}",
                 "no row",
             ),
             (
-                "@scope {\n  tr:nth-child(2) td { width: 14.5ch }\n}",
+                "@scope {\n  fsa1-row:nth-child(2) fsa1-cell { width: 14.5ch }\n}",
                 "no column",
             ),
             (
-                "@scope {\n  tr:nth-child(2) td { width: 14.5ch }\n}",
+                "@scope {\n  fsa1-row:nth-child(2) fsa1-cell { width: 14.5ch }\n}",
                 "no column",
             ),
             (
-                "@scope {\n  td:nth-child(2) { height: 22.5pt }\n}",
+                "@scope {\n  fsa1-cell:nth-child(2) { height: 22.5pt }\n}",
                 "no row",
             ),
         ] {
@@ -1154,14 +1197,14 @@ mod tests {
             assert!(d.message.contains(want), "{block:?} -> {}", d.message);
         }
         for block in [
-            "@scope {\n  td { height: 22.5pt; width: 14.5ch }\n}",
-            "@scope {\n  tr:nth-child(2) td { height: 22.5pt }\n}",
-            "@scope {\n  td:nth-child(2) { width: 14.5ch }\n}",
+            "@scope {\n  fsa1-cell { height: 22.5pt; width: 14.5ch }\n}",
+            "@scope {\n  fsa1-row:nth-child(2) fsa1-cell { height: 22.5pt }\n}",
+            "@scope {\n  fsa1-cell:nth-child(2) { width: 14.5ch }\n}",
         ] {
             assert!(parse(block, REGION).is_ok(), "{block:?}");
         }
         let one_col = Shape { rows: 4, cols: 1 };
-        assert!(parse("@scope {\n  td { width: 14.5ch }\n}", one_col).is_ok());
+        assert!(parse("@scope {\n  fsa1-cell { width: 14.5ch }\n}", one_col).is_ok());
     }
 
     #[test]
@@ -1175,7 +1218,7 @@ mod tests {
             "height: 410pt",
             "height: -1pt",
         ] {
-            let block = format!("@scope {{\n  td {{ {value} }}\n}}");
+            let block = format!("@scope {{\n  fsa1-cell {{ {value} }}\n}}");
             let d = refusal(&block);
             assert_eq!(
                 d.code,
@@ -1190,14 +1233,14 @@ mod tests {
             );
         }
         assert_eq!(
-            rules("@scope {\n  td { width: 0ch }\n}")[0].declarations[0],
+            rules("@scope {\n  fsa1-cell { width: 0ch }\n}")[0].declarations[0],
             Declaration::Width(Chars(0.0)),
         );
     }
 
     #[test]
     fn a_missing_separator_names_the_separator_rather_than_the_value() {
-        let d = refusal("@scope {\n  td { color: #3f0421 font-weight: bold }\n}");
+        let d = refusal("@scope {\n  fsa1-cell { color: #3f0421 font-weight: bold }\n}");
         assert!(d.message.contains("separated by `;`"), "{}", d.message);
     }
 
@@ -1208,150 +1251,150 @@ mod tests {
     fn every_non_canonical_spelling_carries_a_rewrite_that_retires_it() {
         for (block, want, rewritten) in [
             (
-                "@scope {\n  td:nth-child(1) { color: #3f0421 }\n}",
-                "td:first-child",
-                "@scope {\n  td:first-child { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell:nth-child(1) { color: #3f0421 }\n}",
+                "fsa1-cell:first-child",
+                "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td:nth-child(3) { color: #3f0421 }\n}",
-                "td:last-child",
-                "@scope {\n  td:last-child { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell:nth-child(3) { color: #3f0421 }\n}",
+                "fsa1-cell:last-child",
+                "@scope {\n  fsa1-cell:last-child { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  tr:nth-child(1) td { color: #3f0421 }\n}",
-                "tr:first-child td",
-                "@scope {\n  tr:first-child td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-row:nth-child(1) fsa1-cell { color: #3f0421 }\n}",
+                "fsa1-row:first-child fsa1-cell",
+                "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  tr:nth-child(4) td { color: #3f0421 }\n}",
-                "tr:last-child td",
-                "@scope {\n  tr:last-child td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-row:nth-child(4) fsa1-cell { color: #3f0421 }\n}",
+                "fsa1-row:last-child fsa1-cell",
+                "@scope {\n  fsa1-row:last-child fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  tr:first-child\ttd { color: #3f0421 }\n}",
-                "tr:first-child td",
-                "@scope {\n  tr:first-child td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-row:first-child\tfsa1-cell { color: #3f0421 }\n}",
+                "fsa1-row:first-child fsa1-cell",
+                "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  tr:first-child  td { color: #3f0421 }\n}",
-                "tr:first-child td",
-                "@scope {\n  tr:first-child td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-row:first-child  fsa1-cell { color: #3f0421 }\n}",
+                "fsa1-row:first-child fsa1-cell",
+                "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  tr:first-child\n  td { color: #3f0421 }\n}",
-                "tr:first-child td",
-                "@scope {\n  tr:first-child td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-row:first-child\n  fsa1-cell { color: #3f0421 }\n}",
+                "fsa1-row:first-child fsa1-cell",
+                "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td { color: #3F0421 }\n}",
+                "@scope {\n  fsa1-cell { color: #3F0421 }\n}",
                 "#3f0421",
-                "@scope {\n  td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td { color: #fff }\n}",
+                "@scope {\n  fsa1-cell { color: #fff }\n}",
                 "#ffffff",
-                "@scope {\n  td { color: #ffffff }\n}",
+                "@scope {\n  fsa1-cell { color: #ffffff }\n}",
             ),
             (
-                "@scope {\n  td { font-weight: 700 }\n}",
+                "@scope {\n  fsa1-cell { font-weight: 700 }\n}",
                 "bold",
-                "@scope {\n  td { font-weight: bold }\n}",
+                "@scope {\n  fsa1-cell { font-weight: bold }\n}",
             ),
             (
-                "@scope {\n  td { font-weight: 400 }\n}",
+                "@scope {\n  fsa1-cell { font-weight: 400 }\n}",
                 "normal",
-                "@scope {\n  td { font-weight: normal }\n}",
+                "@scope {\n  fsa1-cell { font-weight: normal }\n}",
             ),
             (
-                "@scope {\n  td { color : #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color : #3f0421 }\n}",
                 "write `color: #3f0421`",
-                "@scope {\n  td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td { color:#3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color:#3f0421 }\n}",
                 "write `color: #3f0421`",
-                "@scope {\n  td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td { color:\t#3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color:\t#3f0421 }\n}",
                 "write `color: #3f0421`",
-                "@scope {\n  td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td { color:   #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color:   #3f0421 }\n}",
                 "write `color: #3f0421`",
-                "@scope {\n  td { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td { border-top: 1px   solid   #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { border-top: 1px   solid   #3f0421 }\n}",
                 "write `1px solid #3f0421`",
-                "@scope {\n  td { border-top: 1px solid #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { border-top: 1px solid #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td { border-top: 1px\tsolid\t#3f0421 }\n}",
+                "@scope {\n  fsa1-cell { border-top: 1px\tsolid\t#3f0421 }\n}",
                 "write `1px solid #3f0421`",
-                "@scope {\n  td { border-top: 1px solid #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { border-top: 1px solid #3f0421 }\n}",
             ),
             (
-                "@scope {\n  td { font-size: 11.0pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 11.0pt }\n}",
                 "write `11pt`",
-                "@scope {\n  td { font-size: 11pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 11pt }\n}",
             ),
             (
-                "@scope {\n  td { font-size: +11pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: +11pt }\n}",
                 "write `11pt`",
-                "@scope {\n  td { font-size: 11pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 11pt }\n}",
             ),
             (
-                "@scope {\n  td { font-size: 011pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 011pt }\n}",
                 "write `11pt`",
-                "@scope {\n  td { font-size: 11pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 11pt }\n}",
             ),
             (
-                "@scope {\n  td { font-size: 1.1e1pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 1.1e1pt }\n}",
                 "write `11pt`",
-                "@scope {\n  td { font-size: 11pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 11pt }\n}",
             ),
             (
-                "@scope {\n  td { font-size: 11.50pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 11.50pt }\n}",
                 "write `11.5pt`",
-                "@scope {\n  td { font-size: 11.5pt }\n}",
+                "@scope {\n  fsa1-cell { font-size: 11.5pt }\n}",
             ),
             (
-                "@scope {\n  td { width: 14.50ch }\n}",
+                "@scope {\n  fsa1-cell { width: 14.50ch }\n}",
                 "write `14.5ch`",
-                "@scope {\n  td { width: 14.5ch }\n}",
+                "@scope {\n  fsa1-cell { width: 14.5ch }\n}",
             ),
             // An axis may measure zero, so `-0ch` is in range and spells back to itself; left canonical it would be a second spelling of the one size zero.
             (
-                "@scope {\n  td { width: -0ch }\n}",
+                "@scope {\n  fsa1-cell { width: -0ch }\n}",
                 "write `0ch`",
-                "@scope {\n  td { width: 0ch }\n}",
+                "@scope {\n  fsa1-cell { width: 0ch }\n}",
             ),
             (
-                "@scope {\n  td { height: -0pt }\n}",
+                "@scope {\n  fsa1-cell { height: -0pt }\n}",
                 "write `0pt`",
-                "@scope {\n  td { height: 0pt }\n}",
+                "@scope {\n  fsa1-cell { height: 0pt }\n}",
             ),
             (
-                "@scope {\n  td { height: 022.5pt }\n}",
+                "@scope {\n  fsa1-cell { height: 022.5pt }\n}",
                 "write `22.5pt`",
-                "@scope {\n  td { height: 22.5pt }\n}",
+                "@scope {\n  fsa1-cell { height: 22.5pt }\n}",
             ),
             (
-                "@scope {\n  td { background: #ffffff }\n}",
+                "@scope {\n  fsa1-cell { background: #ffffff }\n}",
                 "background-color",
-                "@scope {\n  td { background-color: #ffffff }\n}",
+                "@scope {\n  fsa1-cell { background-color: #ffffff }\n}",
             ),
             (
-                "@scope {\n  td { font-weight: bold; color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell { font-weight: bold; color: #3f0421 }\n}",
                 "write `color` before `font-weight`",
-                "@scope {\n  td { color: #3f0421; font-weight: bold }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421; font-weight: bold }\n}",
             ),
             (
-                "@scope {\n  td:first-child { color: #3f0421 }\n  td { color: #3f0421 }\n}",
-                "write `td` before `td:first-child`",
-                "@scope {\n  td { color: #3f0421 }\n  td:first-child { color: #3f0421 }\n}",
+                "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n  fsa1-cell { color: #3f0421 }\n}",
+                "write `fsa1-cell` before `fsa1-cell:first-child`",
+                "@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell:first-child { color: #3f0421 }\n}",
             ),
         ] {
             let d = refusal(block);
@@ -1374,24 +1417,24 @@ mod tests {
     #[test]
     fn every_canonical_sidecar_spells_back_to_the_text_it_was_read_from() {
         for (shape, content) in [
-            (REGION, "@scope {\n  td { font-size: 11pt }\n}"),
+            (REGION, "@scope {\n  fsa1-cell { font-size: 11pt }\n}"),
             (
                 REGION,
-                "@scope {\n  td { color: #3f0421; font-weight: bold }\n  \
-                 tr:nth-child(2n) td { background-color: #ffe0b2 }\n  \
-                 tr:first-child td { font-size: 14pt }\n  \
-                 tr:nth-child(2) td { height: 22.5pt }\n  \
-                 tr:last-child td { font-style: italic }\n  \
-                 td:first-child { width: 14.5ch }\n  \
-                 td:last-child { text-align: right }\n}",
+                "@scope {\n  fsa1-cell { color: #3f0421; font-weight: bold }\n  \
+                 fsa1-row:nth-child(2n) fsa1-cell { background-color: #ffe0b2 }\n  \
+                 fsa1-row:first-child fsa1-cell { font-size: 14pt }\n  \
+                 fsa1-row:nth-child(2) fsa1-cell { height: 22.5pt }\n  \
+                 fsa1-row:last-child fsa1-cell { font-style: italic }\n  \
+                 fsa1-cell:first-child { width: 14.5ch }\n  \
+                 fsa1-cell:last-child { text-align: right }\n}",
             ),
             (
                 Shape { rows: 1, cols: 3 },
-                "@scope {\n  td { white-space: nowrap }\n  td:nth-child(2) { width: 4ch }\n}",
+                "@scope {\n  fsa1-cell { white-space: nowrap }\n  fsa1-cell:nth-child(2) { width: 4ch }\n}",
             ),
             (
                 Shape { rows: 1, cols: 1 },
-                "@scope {\n  td { border-bottom: 1px solid #3f0421; height: 15pt; width: 9ch }\n}",
+                "@scope {\n  fsa1-cell { border-bottom: 1px solid #3f0421; height: 15pt; width: 9ch }\n}",
             ),
         ] {
             let text = body(content);
@@ -1415,12 +1458,12 @@ mod tests {
             max_col: 3,
             max_row: 8,
         };
-        let ok = "  tr:last-child td { height: 20pt }\n  td:last-child { width: 9ch }\n";
+        let ok = "  fsa1-row:last-child fsa1-cell { height: 20pt }\n  fsa1-cell:last-child { width: 9ch }\n";
         assert!(parse_rules("Sheet1/C5:D9.css", root, ok).is_ok());
         let d = parse_rules(
             "Sheet1/C5:D9.css",
             root,
-            "  td:nth-child(3) { width: 9ch }\n",
+            "  fsa1-cell:nth-child(3) { width: 9ch }\n",
         )
         .expect_err("column 3 is outside a two-column root")
         .remove(0);
@@ -1435,7 +1478,7 @@ mod tests {
         let d = parse_rules(
             &sidecar(REGION),
             root_of(REGION),
-            "@scope (A1:C3) {\n  td { color: #3f0421 }\n}\n",
+            "@scope (A1:C3) {\n  fsa1-cell { color: #3f0421 }\n}\n",
         )
         .expect_err("a prelude has no place in a sidecar")
         .remove(0);
@@ -1446,9 +1489,9 @@ mod tests {
     #[test]
     fn a_rewrite_chain_terminates() {
         let chain = [
-            "@scope {\n  td { background: #fff }\n}",
-            "@scope {\n  td { background: #ffffff }\n}",
-            "@scope {\n  td { background-color: #ffffff }\n}",
+            "@scope {\n  fsa1-cell { background: #fff }\n}",
+            "@scope {\n  fsa1-cell { background: #ffffff }\n}",
+            "@scope {\n  fsa1-cell { background-color: #ffffff }\n}",
         ];
         let mut seen: Vec<(Code, String)> = Vec::new();
         let mut accepted = false;
@@ -1516,19 +1559,19 @@ mod tests {
     #[test]
     fn a_declaration_missing_either_half_is_a_syntax_refusal_naming_the_half_it_has() {
         for property in every_supported_property() {
-            let block = format!("@scope {{\n  td {{ {property}: }}\n}}");
+            let block = format!("@scope {{\n  fsa1-cell {{ {property}: }}\n}}");
             let d = refusal(&block);
             assert_eq!(d.code, Code::PresentationSyntax, "{block:?}");
             assert!(matches!(d.loc, Loc::Body { .. }), "{:?}", d.loc);
             assert!(d.message.contains(property), "{block:?} -> {}", d.message);
         }
         for block in [
-            "@scope {\n  td { color:   }\n}",
-            "@scope {\n  td { color:\t}\n}",
-            "@scope {\n  td { color: ; }\n}",
-            "@scope {\n  td { : }\n}",
-            "@scope {\n  td { : #fff }\n}",
-            "@scope {\n  td { :#fff }\n}",
+            "@scope {\n  fsa1-cell { color:   }\n}",
+            "@scope {\n  fsa1-cell { color:\t}\n}",
+            "@scope {\n  fsa1-cell { color: ; }\n}",
+            "@scope {\n  fsa1-cell { : }\n}",
+            "@scope {\n  fsa1-cell { : #fff }\n}",
+            "@scope {\n  fsa1-cell { :#fff }\n}",
         ] {
             let d = refusal(block);
             assert_eq!(
@@ -1544,11 +1587,11 @@ mod tests {
     #[test]
     fn an_empty_half_never_masks_the_property_refusal_behind_it() {
         assert_eq!(
-            refusal("@scope {\n  td { box-shadow: }\n}").code,
+            refusal("@scope {\n  fsa1-cell { box-shadow: }\n}").code,
             Code::PresentationSyntax,
         );
         assert_eq!(
-            refusal("@scope {\n  td { box-shadow: none }\n}").code,
+            refusal("@scope {\n  fsa1-cell { box-shadow: none }\n}").code,
             Code::PresentationProperty,
         );
     }
@@ -1565,40 +1608,44 @@ mod tests {
     fn an_axis_of_extent_one_carries_no_selector_of_its_own() {
         let one_row = Shape { rows: 1, cols: 3 };
         let d = parse(
-            "@scope {\n  tr:first-child td { color: #3f0421 }\n}",
+            "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
             one_row,
         )
         .unwrap_err()
         .remove(0);
         assert_eq!(d.code, Code::NonCanonicalPresentation);
-        assert!(d.message.contains("write `td`"), "{}", d.message);
+        assert!(d.message.contains("write `fsa1-cell`"), "{}", d.message);
 
         let d = parse(
-            "@scope {\n  tr:first-child td:nth-child(2) { color: #3f0421 }\n}",
+            "@scope {\n  fsa1-row:first-child fsa1-cell:nth-child(2) { color: #3f0421 }\n}",
             one_row,
         )
         .unwrap_err()
         .remove(0);
         assert!(
-            d.message.contains("write `td:nth-child(2)`"),
+            d.message.contains("write `fsa1-cell:nth-child(2)`"),
             "{}",
             d.message
         );
 
         let one_col = Shape { rows: 4, cols: 1 };
-        let d = parse("@scope {\n  td:first-child { color: #3f0421 }\n}", one_col)
-            .unwrap_err()
-            .remove(0);
-        assert!(d.message.contains("write `td`"), "{}", d.message);
+        let d = parse(
+            "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n}",
+            one_col,
+        )
+        .unwrap_err()
+        .remove(0);
+        assert!(d.message.contains("write `fsa1-cell`"), "{}", d.message);
     }
 
     #[test]
     fn a_repeated_selector_or_property_is_refused() {
-        let d = refusal("@scope {\n  td { color: #3f0421 }\n  td { font-size: 11pt }\n}");
+        let d =
+            refusal("@scope {\n  fsa1-cell { color: #3f0421 }\n  fsa1-cell { font-size: 11pt }\n}");
         assert_eq!(d.code, Code::PresentationSyntax);
         assert!(d.message.contains("twice"), "{}", d.message);
 
-        let d = refusal("@scope {\n  td { color: #3f0421; color: #ffffff }\n}");
+        let d = refusal("@scope {\n  fsa1-cell { color: #3f0421; color: #ffffff }\n}");
         assert_eq!(d.code, Code::PresentationSyntax);
         assert!(d.message.contains("twice"), "{}", d.message);
     }
@@ -1607,9 +1654,9 @@ mod tests {
     fn an_empty_rule_or_sidecar_is_refused() {
         for block in [
             "@scope {\n}",
-            "@scope {\n  td { }\n}",
-            "@scope {\n  td { ; color: #3f0421 }\n}",
-            "@scope {\n  td { color: #3f0421; }\n}",
+            "@scope {\n  fsa1-cell { }\n}",
+            "@scope {\n  fsa1-cell { ; color: #3f0421 }\n}",
+            "@scope {\n  fsa1-cell { color: #3f0421; }\n}",
         ] {
             assert_eq!(refusal(block).code, Code::PresentationSyntax, "{block:?}");
         }
@@ -1618,9 +1665,9 @@ mod tests {
     #[test]
     fn a_malformed_rule_is_refused_rather_than_partly_accepted() {
         for block in [
-            "@scope {\n  td { color #3f0421 }\n}",
+            "@scope {\n  fsa1-cell { color #3f0421 }\n}",
             "@scope {\n  color: #3f0421;\n}",
-            "@scope {\n  td { color: #3f0421 } td\n}",
+            "@scope {\n  fsa1-cell { color: #3f0421 } fsa1-cell\n}",
         ] {
             let d = refusal(block);
             assert_eq!(
@@ -1635,7 +1682,7 @@ mod tests {
     #[test]
     fn every_fault_in_a_rule_is_reported_at_once() {
         let d = parse(
-            "@scope {\n  td { color: red; font-size: 9px; box-shadow: none }\n}",
+            "@scope {\n  fsa1-cell { color: red; font-size: 9px; box-shadow: none }\n}",
             REGION,
         )
         .unwrap_err();
@@ -1647,7 +1694,7 @@ mod tests {
         for value in [
             "0pt", "-1pt", "0.5pt", "5e-324pt", "410pt", "1e300pt", "inf",
         ] {
-            let block = format!("@scope {{\n  td {{ font-size: {value} }}\n}}");
+            let block = format!("@scope {{\n  fsa1-cell {{ font-size: {value} }}\n}}");
             let d = refusal(&block);
             assert_eq!(d.code, Code::PresentationValue, "{value:?}");
             assert!(
@@ -1658,7 +1705,7 @@ mod tests {
             );
         }
         assert_eq!(
-            rules("@scope {\n  td { font-size: 409pt }\n}")[0].declarations[0],
+            rules("@scope {\n  fsa1-cell { font-size: 409pt }\n}")[0].declarations[0],
             Declaration::FontSize(Points(409.0))
         );
     }
@@ -1667,11 +1714,11 @@ mod tests {
     fn the_frame_around_a_declaration_is_not_the_declaration() {
         // The format's own canonical example column-aligns its selectors, so padding around `{`, `}` and `;` is frame rather than spelling; what is INSIDE a declaration is spelling.
         for block in [
-            "@scope {\n  td{ color: #3f0421 }\n}",
-            "@scope {\n  td   { color: #3f0421 }\n}",
-            "@scope {\n  td {color: #3f0421}\n}",
-            "@scope {\n  td { color: #3f0421;font-weight: bold }\n}",
-            "@scope {\n  td {\n    color: #3f0421;\n    font-weight: bold\n  }\n}",
+            "@scope {\n  fsa1-cell{ color: #3f0421 }\n}",
+            "@scope {\n  fsa1-cell   { color: #3f0421 }\n}",
+            "@scope {\n  fsa1-cell {color: #3f0421}\n}",
+            "@scope {\n  fsa1-cell { color: #3f0421;font-weight: bold }\n}",
+            "@scope {\n  fsa1-cell {\n    color: #3f0421;\n    font-weight: bold\n  }\n}",
         ] {
             assert!(parse(block, REGION).is_ok(), "{block:?}");
         }
@@ -1680,7 +1727,7 @@ mod tests {
     #[test]
     fn a_canonical_spelling_survives_its_own_round_trip() {
         for (value, want) in [("11pt", 11.0), ("11.5pt", 11.5), ("8pt", 8.0)] {
-            let block = format!("@scope {{\n  td {{ font-size: {value} }}\n}}");
+            let block = format!("@scope {{\n  fsa1-cell {{ font-size: {value} }}\n}}");
             let points = match &rules(&block)[0].declarations[0] {
                 Declaration::FontSize(p) => *p,
                 other => panic!("expected a font size, got {other:?}"),
@@ -1693,11 +1740,11 @@ mod tests {
     #[test]
     fn a_font_family_is_one_unquoted_name() {
         assert_eq!(
-            rules("@scope {\n  td { font-family: Calibri }\n}")[0].declarations[0],
+            rules("@scope {\n  fsa1-cell { font-family: Calibri }\n}")[0].declarations[0],
             Declaration::FontFamily("Calibri".to_string())
         );
         for value in ["\"Times New Roman\"", "Calibri, sans-serif", "Times  New"] {
-            let block = format!("@scope {{\n  td {{ font-family: {value} }}\n}}");
+            let block = format!("@scope {{\n  fsa1-cell {{ font-family: {value} }}\n}}");
             assert_eq!(refusal(&block).code, Code::PresentationValue, "{value:?}");
         }
     }
@@ -1721,7 +1768,7 @@ mod tests {
 
     #[test]
     fn a_refusal_points_at_the_line_the_fault_is_on() {
-        let d = refusal("@scope {\n  td { color: #3f0421 }\n  th { color: #3f0421 }\n}");
+        let d = refusal("@scope {\n  fsa1-cell { color: #3f0421 }\n  th { color: #3f0421 }\n}");
         assert!(
             matches!(
                 d.loc,
@@ -1744,13 +1791,13 @@ mod tests {
             "}}}}\n",
             "@scope\n",
             "@scope (\n",
-            "  td { color: #\n",
+            "  fsa1-cell { color: #\n",
             "  \u{1F600} { color: #3f0421 }\n",
-            "  td:nth-child(99999999999) { color: #3f0421 }\n",
-            "  td:nth-child(-1) { color: #3f0421 }\n",
-            "  td { font-family: \u{4e2d}\u{6587} }\n",
-            &format!("  td {{ font-family: {} }}\n", "x".repeat(500)),
-            &"  td { color: #3f0421 }\n".repeat(200),
+            "  fsa1-cell:nth-child(99999999999) { color: #3f0421 }\n",
+            "  fsa1-cell:nth-child(-1) { color: #3f0421 }\n",
+            "  fsa1-cell { font-family: \u{4e2d}\u{6587} }\n",
+            &format!("  fsa1-cell {{ font-family: {} }}\n", "x".repeat(500)),
+            &"  fsa1-cell { color: #3f0421 }\n".repeat(200),
         ] {
             let _ = parse_rules(&sidecar(REGION), root_of(REGION), text);
         }

@@ -1463,7 +1463,7 @@ fn a_malformed_sidecar_reaches_only_the_verbs_that_read_presentation() {
     let fx = Fixture::new("sidecar-routing");
     fx.file("Sheet1", "A1", "20000")
         .file("Sheet1", "B1", "=A1*2")
-        .file("Sheet1", "A1:B1.css", "  td { color: crimson }\n");
+        .file("Sheet1", "A1:B1.css", "  fsa1-cell { color: crimson }\n");
     let root = fx.path().to_str().unwrap();
 
     let (code, out) = run(&["check", root]);
@@ -1734,7 +1734,7 @@ fn a_cover_over_the_render_bound_does_not_take_the_grid_with_it() {
 fn the_used_region_a_note_names_is_the_one_the_grid_spans() {
     let fx = Fixture::new("used-region-carriers");
     fx.file("Sheet1", "A1", "1")
-        .file("Sheet1", "Z1:Z5.css", "  td { color: #3f0421 }\n");
+        .file("Sheet1", "Z1:Z5.css", "  fsa1-cell { color: #3f0421 }\n");
     let root = fx.path().to_str().unwrap();
 
     let (code, out, err) = run_err(&["render", root]);

@@ -5,5 +5,5 @@ warning: underline style double at Sheet1!A1 narrowed to underline
 file: Sheet1/A1
 |Under
 file: Sheet1/A1.css
-|  td { text-decoration: underline }
+|  fsa1-cell { text-decoration: underline }
 |

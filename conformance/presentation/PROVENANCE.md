@@ -144,7 +144,7 @@ than mechanism:
 | `formatted_column` | a column uniform in italic + right alignment crosses as ONE column rule |
 | `total_row_top_border` | a total row's `border-top` crosses |
 | `banded_body` | a zebra body whose shaded lines are EXACTLY the even ones crosses as ONE periodic rule, not three row rules |
-| `body_8pt_vs_normal_11pt` | an 8pt body against the 11pt Normal font crosses as ONE `td` rule |
+| `body_8pt_vs_normal_11pt` | an 8pt body against the 11pt Normal font crosses as ONE `fsa1-cell` rule |
 | `normal_font_arial_9` | a workbook whose `Normal` style is Arial 9 declares it, rather than treating its own Normal as the baseline |
 | `sparse_blocks_normal_font_arial_9` | the same non-default Normal over SPARSE occupancy: the blanks inside each block are not content, so the two blocks survive a re-pack |
 | `column_and_row_default_style` | a whole-column and a whole-row format, stated on the AXIS and on no cell, cross as a column rule and a row rule |
@@ -179,6 +179,14 @@ had nothing on the way out to survive as, and false from the moment one did.
 Every entry records a fixture ADDED, an expectation CORRECTED, or the whole corpus RE-DERIVED under a
 changed encoding, and why. No expectation here has been corrected: the corrections column stays empty
 until a reading is shown to have been wrong.
+
+- **Every selector re-spelled under a changed vocabulary** — the element token moved off HTML's own:
+  `td` became `fsa1-cell` and `tr` became `fsa1-row`, so a sidecar's selectors name custom elements
+  no `<table>` is needed to hold (plan 39). This is not a correction and no fixture was regenerated:
+  every reading is the identity but for that one token, and the 24 selector lines in 16 of the 26
+  `.expected` files were re-spelled in place, along with the six derivation notes naming the old
+  token. No `file:` line, no ordering, and no declaration
+  changed — what a rule SELECTS and what it SAYS are both untouched.
 
 - **The two chart readings re-derived a second time** — a figure now carries the POSITION its source
   chart stated, as a `.css` beside its `.json`, where `unpack` previously kept the spec and dropped
@@ -215,9 +223,9 @@ until a reading is shown to have been wrong.
   range file and the sheet's used region is exactly that file's range, so the rules over the new root
   are the rules over the old one, relocated. The fifteenth, `sparse_blocks_normal_font_arial_9`, is
   the one tab holding TWO blocks: its root is now the used region A1:E60 rather than A1:E5 and
-  A56:E60 separately, so its two identical `td` rules re-derive to ONE over the whole rectangle. That
-  fixture is therefore also the only one whose reading could have gone wrong here, and it is derived
-  in full at the head of its own file.
+  A56:E60 separately, so its two identical `fsa1-cell` rules re-derive to ONE over the whole
+  rectangle. That fixture is therefore also the only one whose reading could have gone wrong here,
+  and it is derived in full at the head of its own file.
 
 - **`column_and_row_default_style` added** — the read leg took a cell's style off `<c s=>` and nowhere
   else, so the two other places .xlsx states one — `<col style=>` and `<row s= customFormat=>`, which

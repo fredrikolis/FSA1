@@ -32,6 +32,8 @@ pub enum Code {
     ForgeRefusal,
     PresentationInGrid,
     DuplicateSidecarRoot,
+    SidecarScopeCrossing,
+    TabLayerIndex,
     PresentationSyntax,
     PresentationSelector,
     PresentationProperty,
@@ -66,6 +68,8 @@ impl Code {
         Code::ForgeRefusal,
         Code::PresentationInGrid,
         Code::DuplicateSidecarRoot,
+        Code::SidecarScopeCrossing,
+        Code::TabLayerIndex,
         Code::PresentationSyntax,
         Code::PresentationSelector,
         Code::PresentationProperty,
@@ -100,6 +104,8 @@ impl Code {
             Code::ForgeRefusal => "forge-refusal",
             Code::PresentationInGrid => "presentation-in-grid",
             Code::DuplicateSidecarRoot => "duplicate-sidecar-root",
+            Code::SidecarScopeCrossing => "sidecar-scope-crossing",
+            Code::TabLayerIndex => "tab-layer-index",
             Code::PresentationSyntax => "presentation-syntax",
             Code::PresentationSelector => "presentation-selector",
             Code::PresentationProperty => "presentation-property",
@@ -118,6 +124,12 @@ impl Code {
     pub fn summary(self) -> &'static str {
         match self {
             Code::DuplicateSidecarRoot => "one root's presentation is stated by one sidecar",
+            Code::SidecarScopeCrossing => {
+                "a tab's sidecar roots are disjoint, or nest with the inner root a single cell"
+            }
+            Code::TabLayerIndex => {
+                "a tab layer's rules reach every block, so over one they select the whole region or declare only a size"
+            }
             Code::MalformedFilename => "filename is not a well-formed A1 closed range",
             Code::LowercaseColumn => "column letters must be uppercase",
             Code::LeadingZeroRow => "row numbers must not have a leading zero",
@@ -183,6 +195,14 @@ impl Code {
             Code::DuplicateSidecarRoot => {
                 "two sidecars name one root, so neither can be said to come later -- delete one, or merge its rules into the other"
             }
+            Code::SidecarScopeCrossing => {
+                "a scope is applied over ONE subtree, so give the inner root a single cell, shrink it to fall wholly outside the outer one, or state both regions in the one sidecar that covers them"
+            }
+            Code::TabLayerIndex => {
+                "the layer's indices count in the TAB's content, which no block need cover: move the rule into a rooted \
+                 `<range>.css` over the cells it means -- writing that sidecar if none covers them -- or drop the index \
+                 so the rule is a bare `fsa1-cell` over the whole tab; a rule declaring only `width`/`height` may keep its index"
+            }
             Code::MalformedFilename => {
                 "rename the file to a well-formed A1 closed range: a single cell `A1`, or a rectangle written top-left:bottom-right like `B2:D9`"
             }
@@ -241,10 +261,14 @@ impl Code {
                 "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, give each selector one rule and each property one declaration, and drop `!important` and any at-rule"
             }
             Code::PresentationSelector => {
-                "use one of `td`, `tr:first-child td`, `tr:last-child td`, `tr:nth-child(k) td`, `td:first-child`, `td:last-child`, `td:nth-child(k)`; indices are 1-based and region-relative, and no selector names ONE cell -- give that cell its own <cell>.css"
+                "use one of `fsa1-cell`, `fsa1-row:first-child fsa1-cell`, `fsa1-row:last-child fsa1-cell`, \
+                 `fsa1-row:nth-child(k) fsa1-cell`, `fsa1-cell:first-child`, `fsa1-cell:last-child`, `fsa1-cell:nth-child(k)`; \
+                 indices are 1-based and region-relative, and no selector names ONE cell -- give that cell its own <cell>.css"
             }
             Code::PresentationProperty => {
-                "use only color, background-color, font-weight, font-style, text-decoration, font-size, font-family, text-align, vertical-align, white-space, border-top/-bottom/-left/-right, and the two axis sizes: `width` on `td` or `td:nth-child(k)`, `height` on `td` or `tr:nth-child(k) td`"
+                "use only color, background-color, font-weight, font-style, text-decoration, font-size, font-family, text-align, \
+                 vertical-align, white-space, border-top/-bottom/-left/-right, and the two axis sizes: `width` on `fsa1-cell` \
+                 or `fsa1-cell:nth-child(k)`, `height` on `fsa1-cell` or `fsa1-row:nth-child(k) fsa1-cell`"
             }
             Code::PresentationValue => {
                 "colours are lowercase `#rrggbb`, font sizes and row heights are `<n>pt`, a column width is `<n>ch`, a border takes all three of `<width> <style> <colour>` (e.g. `1px solid #3f0421`), and a keyword comes from its property's closed set"
@@ -447,7 +471,7 @@ mod tests {
     fn registry_is_self_consistent() {
         assert_eq!(
             Code::ALL.len(),
-            30,
+            32,
             "every Code variant must be listed in ALL"
         );
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();

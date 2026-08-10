@@ -21,7 +21,7 @@
 #    300 coordinates of the root wear Arial 9: the four that state `s="1"` by stating it, and the 296
 #    that state nothing by inheriting it. Arial 9 is not the format's own default (Calibri 11), which
 #    is what a writer restores for an undeclared cell, so both halves are DECLARED, uniform over the
-#    whole root, as ONE `td` rule. dk1 is `windowText`/000000, so the text colour IS the default and
+#    whole root, as ONE `fsa1-cell` rule. dk1 is `windowText`/000000, so the text colour IS the default and
 #    earns no declaration. The 50 empty rows the cut opened are inside the root and wear the same one
 #    rule, which is why relocating presentation costs this fixture a rule rather than duplicating one.
 file: Gaps/A1:E5
@@ -31,7 +31,7 @@ file: Gaps/A1:E5
 |				
 |				2
 file: Gaps/A1:E5.css
-|  td { font-family: Arial; font-size: 9pt }
+|  fsa1-cell { font-family: Arial; font-size: 9pt }
 |
 file: Gaps/A56:E60
 |3				
@@ -40,5 +40,5 @@ file: Gaps/A56:E60
 |				
 |				4
 file: Gaps/A56:E60.css
-|  td { font-family: Arial; font-size: 9pt }
+|  fsa1-cell { font-family: Arial; font-size: 9pt }
 |
