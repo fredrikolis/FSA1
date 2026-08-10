@@ -66,10 +66,10 @@ it was.
 The sidecar's **content** — which rules, which selectors, which declarations, which values — is
 derived from the fixture's own bytes against plan 01 §D2/§D3/§D4 read over that root, and
 `fsa1-model`'s parser is what makes the selector spelling and the rule order canonical rather than a
-matter of taste (it refuses every other spelling as `non-canonical-presentation`). The DECLARATION
-order is no longer among them: the parser reads a rule's declarations in any order, so the
-alphabetical order every expectation shows is the ENCODER's own spelling, which the parser accepts
-rather than demands.
+matter of taste. The selector SPELLING is no longer among them, nor is the DECLARATION order: the
+parser reads any spelling of the target a selector names, and a rule's declarations in any order, so
+the canonical selector and the alphabetical order every expectation shows are the ENCODER's own,
+which the parser accepts rather than demands.
 
 The sidecar's **whitespace** is fixed by no contract — the parser accepts a rule on one line or five.
 The corpus freezes the form the repo's own hand-written examples already use, so the expectation is

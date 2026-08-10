@@ -55,6 +55,8 @@ PRESENTATION — <tab>/<range>.css, one sidecar per styled region
   nothing else. The root is what the selectors count in: fsa1-cell ·
   fsa1-row:first-child fsa1-cell · fsa1-cell:nth-child(k) · fsa1-row:nth-child(k) fsa1-cell
   and the periodic An+B forms, all 1-based and relative to the root.
+  An index is spelled any way CSS spells it — :nth-child(1) and :first-child are one selector —
+  and ANY whitespace joins the row and the cell compound.
   Rules are written in ANY order and cascade as the browser does — specificity, then source
   order — so a row rule beats a column rule wherever both match, a selector written twice
   layers rather than being refused, and of two rules that tie the LAST one written wins.

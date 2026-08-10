@@ -132,7 +132,7 @@ Per fixture, except where a property says otherwise:
    the run actually wrote.
 2. **The tree the default policy writes is exactly the frozen `block:` set**, and the policy the
    source resolves to is the frozen `policy:`. The tree is then handed to `check`: `Workbook::load_dir`
-   must accept it and `.lint()` must be empty, which is where `non-canonical-presentation` and
+   must accept it and `.lint()` must be empty, which is where `presentation-selector` and
    `degenerate-range` would surface. Both are named in the failure message.
 3. **`--decompose occupancy` misses exactly `misses:` of the labelled starts.** No bar is held over a
    single fixture's `misses:`. What is held instead is the corpus's **composition**, checked once over

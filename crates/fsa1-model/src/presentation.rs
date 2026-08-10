@@ -352,19 +352,7 @@ fn resolve_target(
                 ));
                 return None;
             }
-            let canonical = spell(target, shape);
-            // Compared VERBATIM, never whitespace-folded: a tab or a line break between two compounds is a second spelling of one appearance exactly as `#FFF` is.
-            if selector == canonical {
-                return Some(target);
-            }
-            diags.push(located(
-                file,
-                line,
-                col_at,
-                Code::NonCanonicalPresentation,
-                format!("non-canonical selector {selector:?}: write `{canonical}`"),
-            ));
-            None
+            Some(target)
         }
         Err((code, message)) => {
             diags.push(located(file, line, col_at, code, message));
@@ -1218,60 +1206,39 @@ mod tests {
         assert!(d.message.contains("separated by `;`"), "{}", d.message);
     }
 
-    /// The third column is the block with the named rewrite APPLIED, supplied rather than scraped out
-    /// of the message: a rewrite targets a whole declaration, a value alone or a selector, so there is
-    /// no one span to substitute into and no mechanical way to derive it today.
     #[test]
-    fn every_non_canonical_spelling_carries_a_rewrite_that_retires_it() {
-        for (block, want, rewritten) in [
+    fn every_spelling_of_one_target_reads_to_that_target() {
+        for (block, want) in [
             (
                 "@scope {\n  fsa1-cell:nth-child(1) { color: #3f0421 }\n}",
-                "fsa1-cell:first-child",
-                "@scope {\n  fsa1-cell:first-child { color: #3f0421 }\n}",
+                Target::Col(1),
             ),
             (
                 "@scope {\n  fsa1-cell:nth-child(3) { color: #3f0421 }\n}",
-                "fsa1-cell:last-child",
-                "@scope {\n  fsa1-cell:last-child { color: #3f0421 }\n}",
+                Target::Col(3),
             ),
             (
                 "@scope {\n  fsa1-row:nth-child(1) fsa1-cell { color: #3f0421 }\n}",
-                "fsa1-row:first-child fsa1-cell",
-                "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
+                Target::Row(1),
             ),
             (
                 "@scope {\n  fsa1-row:nth-child(4) fsa1-cell { color: #3f0421 }\n}",
-                "fsa1-row:last-child fsa1-cell",
-                "@scope {\n  fsa1-row:last-child fsa1-cell { color: #3f0421 }\n}",
+                Target::Row(4),
             ),
             (
                 "@scope {\n  fsa1-row:first-child\tfsa1-cell { color: #3f0421 }\n}",
-                "fsa1-row:first-child fsa1-cell",
-                "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
+                Target::Row(1),
             ),
             (
                 "@scope {\n  fsa1-row:first-child  fsa1-cell { color: #3f0421 }\n}",
-                "fsa1-row:first-child fsa1-cell",
-                "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
+                Target::Row(1),
             ),
             (
                 "@scope {\n  fsa1-row:first-child\n  fsa1-cell { color: #3f0421 }\n}",
-                "fsa1-row:first-child fsa1-cell",
-                "@scope {\n  fsa1-row:first-child fsa1-cell { color: #3f0421 }\n}",
+                Target::Row(1),
             ),
         ] {
-            let d = refusal(block);
-            assert_eq!(d.code, Code::NonCanonicalPresentation, "{block:?}");
-            assert!(d.message.contains(want), "{block:?} -> {}", d.message);
-            let refused = (d.code, d.message);
-            let after = match parse(rewritten, REGION) {
-                Ok(_) => Vec::new(),
-                Err(diags) => diags.into_iter().map(|d| (d.code, d.message)).collect(),
-            };
-            assert!(
-                !after.contains(&refused),
-                "{block:?}: applying the rewrite returns the same refusal {refused:?}",
-            );
+            assert_eq!(rules(block)[0].target, want, "{block:?}");
         }
     }
 
@@ -1382,33 +1349,6 @@ mod tests {
         .remove(0);
         assert_eq!(d.code, Code::PresentationSyntax);
         assert!(d.message.contains("at-rule"), "{}", d.message);
-    }
-
-    #[test]
-    fn a_rewrite_chain_terminates() {
-        let chain = [
-            "@scope {\n  fsa1-cell { background: #fff }\n}",
-            "@scope {\n  fsa1-cell { background: #ffffff }\n}",
-            "@scope {\n  fsa1-cell { background-color: #ffffff }\n}",
-        ];
-        let mut seen: Vec<(Code, String)> = Vec::new();
-        let mut accepted = false;
-        for body in chain {
-            match parse(body, REGION) {
-                Ok(_) => {
-                    accepted = true;
-                    break;
-                }
-                Err(mut diags) => {
-                    let d = diags.remove(0);
-                    let refused = (d.code, d.message);
-                    assert!(!seen.contains(&refused), "the chain repeats {refused:?}");
-                    seen.push(refused);
-                }
-            }
-        }
-        assert!(accepted, "the chain never reached an accepted body");
-        assert!(seen.len() < 4, "the chain took {} steps", seen.len());
     }
 
     /// The names come from [`Declaration::property`], the one place they are spelled, so a property

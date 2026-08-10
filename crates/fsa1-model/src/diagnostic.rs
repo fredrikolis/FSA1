@@ -37,7 +37,6 @@ pub enum Code {
     PresentationSyntax,
     PresentationSelector,
     PresentationProperty,
-    NonCanonicalPresentation,
     XlsxNotCarried,
     FigureInRoot,
     FigureSyntax,
@@ -73,7 +72,6 @@ impl Code {
         Code::PresentationSyntax,
         Code::PresentationSelector,
         Code::PresentationProperty,
-        Code::NonCanonicalPresentation,
         Code::XlsxNotCarried,
         Code::FigureInRoot,
         Code::FigureSyntax,
@@ -109,7 +107,6 @@ impl Code {
             Code::PresentationSyntax => "presentation-syntax",
             Code::PresentationSelector => "presentation-selector",
             Code::PresentationProperty => "presentation-property",
-            Code::NonCanonicalPresentation => "non-canonical-presentation",
             Code::XlsxNotCarried => "xlsx-not-carried",
             Code::FigureInRoot => "figure-in-root",
             Code::FigureSyntax => "figure-syntax",
@@ -164,9 +161,6 @@ impl Code {
             }
             Code::PresentationProperty => {
                 "an axis size is declared only on a selector that names the axis being sized"
-            }
-            Code::NonCanonicalPresentation => {
-                "a selector has one canonical spelling, and a sidecar writes only that one"
             }
             Code::XlsxNotCarried => {
                 "an .xlsx carries only what Excel models, so a declaration outside its properties, or a figure outside its charts, cannot be packed"
@@ -258,7 +252,7 @@ impl Code {
                 "move the trailing `@scope { ... }` block's rules into a sidecar beside the range file, named `<range>.css` for the absolute A1 range they styled, and drop the `@scope { ... }` frame"
             }
             Code::PresentationSyntax => {
-                "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, give each selector one rule, and drop `!important` and any at-rule"
+                "write each rule as `<selector> { <property>: <value>; <property>: <value> }`, separate declarations with `;` and never end on one, and drop `!important` and any at-rule"
             }
             Code::PresentationSelector => {
                 "use one of `fsa1-cell`, `fsa1-row:first-child fsa1-cell`, `fsa1-row:last-child fsa1-cell`, \
@@ -269,11 +263,6 @@ impl Code {
                 "move the size onto a selector that names its own axis: `width` onto `fsa1-cell` or `fsa1-cell:nth-child(k)`, \
                  `height` onto `fsa1-cell` or `fsa1-row:nth-child(k) fsa1-cell` -- a periodic selector names no one axis and carries no size. \
                  Every other property is declared on any selector"
-            }
-            Code::NonCanonicalPresentation => {
-                "write the selector the message names -- only its SPELLING is at fault: index 1 is `:first-child`, \
-                 the region's last index `:last-child` (on an axis of extent 1 that one line is `:first-child`), \
-                 a periodic step drops a zero offset (`2n`, never `2n+0`), and ONE space joins the row and cell parts"
             }
             Code::XlsxNotCarried => {
                 "restate the loss in what the .xlsx carries, else delete it: a declaration as `#rrggbb`, `<n>pt`, `<n>ch`, \
@@ -475,7 +464,7 @@ mod tests {
     fn registry_is_self_consistent() {
         assert_eq!(
             Code::ALL.len(),
-            32,
+            31,
             "every Code variant must be listed in ALL"
         );
         let mut codes: Vec<&str> = Code::ALL.iter().map(|c| c.code_str()).collect();
