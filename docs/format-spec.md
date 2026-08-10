@@ -38,7 +38,7 @@ The nouns the invariants quantify over. A definition is not itself an invariant.
 
 ## FS — the workbook on disk
 
-- **FS1 · the filesystem is the workbook.** A workbook's content is exactly what its file tree holds — a tab per folder, per file the A1 range it fills, the name it declares, the presentation it states over that range or, naming no range, over the tab, or the figure it states over the ranges it binds and fills over the range its own name states, where it states one, and nothing besides — and enters only by an author writing that tree: fsa1-cli reads an existing workbook, derives a new file only where none exists, and never takes cell content from its own invocation.
+- **FS1 · the filesystem is the workbook.** A workbook's content is exactly what its file tree holds — a tab per folder, per file the A1 range it fills, the name it declares, the presentation it states over that range or, naming no range, over the tab, or the figure it states over the ranges it binds and fills over the range its own name states, where it states one, and nothing besides — and enters only by an author writing that tree: fsa1-cli reads an existing workbook and never takes cell content from its own invocation.
 - **FS3 · tooling coexists with content.** A workbook reserves a named set of tree entries for tooling, and no cell's value derives from any of them.
 - **FS5 · every value exists at a coordinate some file declares.** (would violate FS1)
 - **FS6 · every coordinate takes its content from at most one file.** (would violate FS1)
@@ -160,6 +160,7 @@ old filename `SPEC.md`, which this document and `docs/cli-spec.md` replaced.
 | ENG5 (engine independent of storage/presentation) | **the crate firewall** | `docs/repo-standards.md`; code structure, not product behaviour |
 | ENG7 (persistent result cache) | **VAL1** | retired: the cross-run cache was built, measured net-negative, and removed |
 | VAL2 (no value from thin air) | **VAL1** | folded into "and from nothing else" |
+| FS1's "derives a new file only where none exists" | **nothing** | withdrawn 2026-08-10: writing a destination the caller named is valid, so `pack --force` overwrites one and the bare refusal is a courtesy in the tool, not an invariant |
 
 **Deliberately not carried forward.** ENG2's demand-reachability and compute-once clauses describe
 today's evaluation strategy, not a product need; an eager engine would still be correct. ENG2's

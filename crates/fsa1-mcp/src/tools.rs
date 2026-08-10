@@ -35,6 +35,7 @@ pub fn list() -> Vec<Value> {
                 "source": { "type": "string", "description": "the workbook directory to pack" },
                 "dest": { "type": "string", "description": "output .xlsx path; derived from the directory name when omitted" },
                 "strict": { "type": "boolean", "description": "refuse rather than write an .xlsx that leaves anything out -- a presentation declaration it cannot carry, or a figure that reaches no Excel chart; without it the file is written and each loss is named" },
+                "force": { "type": "boolean", "description": "overwrite a file already at the destination, given or derived; without it an occupied destination is refused. Either way the destination is written whole or left as it was" },
                 // Listed from the vocabulary, never by hand: a client should not need a refused call to learn the set.
                 "format": { "type": "string", "enum": fsa1_verbs::PackFormat::choices(), "description": "the format written; xlsx when omitted, and the extension a derived dest takes" }
             }), &["source"])
@@ -230,6 +231,7 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
             let source = str_arg(args, "source")?;
             let dest = args.get("dest").and_then(Value::as_str).map(Path::new);
             let strict = args.get("strict").and_then(Value::as_bool).unwrap_or(false);
+            let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
             let format = match args.get("format").and_then(Value::as_str) {
                 // The enum's own FromStr is each format's one spelling, so the surfaces cannot drift.
                 Some(v) => v.parse::<fsa1_verbs::PackFormat>().map_err(|()| {
@@ -245,6 +247,7 @@ fn run(name: &str, args: &Value) -> Result<String, Refusal> {
                 dest,
                 format,
                 strict,
+                force,
             })?;
             let text = format!(
                 "packed {source} -> {} ({} sheet(s), {} chart(s) written)",

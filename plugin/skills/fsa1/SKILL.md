@@ -76,7 +76,7 @@ One table, both paths. Optional arguments are in brackets.
 | `eval` | `target`, `formula` | `fsa1-cli eval <path> --formula '=<formula>'` |
 | `trace` | `target` (one cell), `direction` (`upstream\|downstream`), `depth` | `fsa1-cli trace <path> [--dependents] [--depth <N>]` |
 | `unpack` | `source`, `dest`, `decomposition`, `strict` | `fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]` |
-| `pack` | `source`, `dest`, `strict`, `format` (`xlsx`) | `fsa1-cli pack [--strict] [--target xlsx] <workbook-dir> [<dst>]` |
+| `pack` | `source`, `dest`, `strict`, `force`, `format` (`xlsx`) | `fsa1-cli pack [--strict] [--force] [--target xlsx] <workbook-dir> [<dst>]` |
 
 - `render` draws the scope. Bare `<wb>` draws every tab; `<wb>/<Tab>` one tab; `<wb>/<Tab>/A1:D9` a
   region. Default `combined` shows `value ← =formula`. `ascii` cannot draw a FIGURE, so it shows it
@@ -103,7 +103,11 @@ One table, both paths. Optional arguments are in brackets.
   the destination derives to `./<source-stem>/`. Refuses a non-empty destination. `strict` (the CLI's
   `--strict`) refuses a source the tree cannot carry back identically instead of unpacking it lossily;
   it defaults to off on both surfaces.
-- `pack` turns an FSA1 tree back into a fresh `.xlsx` (never clobbers; leaves the source untouched).
+- `pack` turns an FSA1 tree back into an `.xlsx`, leaving the source untouched. An occupied
+  destination is REFUSED unless `force` (the CLI's `--force`, aliases `-f` and `-y`) is given, which is
+  the only way `pack` overwrites anything and speaks about whichever destination is in effect, given or
+  derived; a DIRECTORY there is refused either way. Forced or not, the file is written whole or not at
+  all — an interrupted `pack` leaves what was there untouched rather than a truncated `.xlsx`.
   The MCP `dest` is the CLI's optional positional `<dst>` — **not a flag** — and on both surfaces it
   is used VERBATIM, so its parent directory must already exist (`pack` creates none). Omitted, the
   output name is DERIVED as `./<workbook-basename>.xlsx` in the current directory. MCP `format` is the
@@ -124,7 +128,8 @@ Change a value: edit the cell's file with your file-editing tool. The filename I
 `./budget/Sheet1/H3` holds cell H3; writing `=SUM(A1:A2)` into it makes H3 a formula. Then `check`
 that path to validate just that cell.
 
-Hand it back: `pack` the directory to get a fresh `.xlsx`.
+Hand it back: `pack` the directory to get an `.xlsx` again — add `--force` to replace one already
+sitting at the destination.
 
 ## Notes & gotchas
 
@@ -142,5 +147,6 @@ Hand it back: `pack` the directory to get a fresh `.xlsx`.
   (an A1 reference, optionally `<tab>!`-prefixed, naming a rectangle the tab fills whose first row is
   the field names); the stem is a NAME, never a range, so it collides with no cell.
 - `unpack` prints a **fidelity report** of anything the conversion changed; it is not an error, but
-  read it. `pack` and the never-clobber commands refuse to overwrite existing files.
+  read it. The never-clobber commands refuse to overwrite existing files, and so does `pack` unless
+  you pass `--force` (MCP `force`).
 - Every tool answers with one block of text: the grid, the table, the value or the trace.

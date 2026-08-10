@@ -415,16 +415,19 @@ pub struct PackArgs<'a> {
     pub dest: Option<&'a Path>,
     pub format: PackFormat,
     pub strict: bool,
+    pub force: bool,
 }
 
 /// `strict` refuses rather than writing a workbook that does not wholly cross, which is the same bar
 /// `unpack --strict` sets on the way in. Without it the file is written and the losses are NAMED.
+/// `force` overwrites an occupied destination, derived or given; without it one is refused.
 pub fn pack(args: PackArgs<'_>) -> Result<Packed, Refusal> {
     let PackArgs {
         folder,
         dest,
         format,
         strict,
+        force,
     } = args;
     let dest = match dest {
         Some(d) => d.to_path_buf(),
@@ -449,7 +452,7 @@ pub fn pack(args: PackArgs<'_>) -> Result<Packed, Refusal> {
             diagnostics: losses,
         });
     }
-    fsa1_xlsx::write_xlsx(&wb, &overlay, &charts, &dest)
+    fsa1_xlsx::write_xlsx(&wb, &overlay, &charts, &dest, force)
         .map(|()| Packed {
             dest,
             sheets: wb.sheet_names().len(),
@@ -512,7 +515,9 @@ fn unpack_kind(kind: fsa1_ingest::ErrorKind) -> Kind {
 
 fn pack_kind(e: &fsa1_xlsx::ExportError) -> Kind {
     match e {
-        fsa1_xlsx::ExportError::DestExists(_) => Kind::Conflict,
+        fsa1_xlsx::ExportError::DestExists(_) | fsa1_xlsx::ExportError::DestIsDir(_) => {
+            Kind::Conflict
+        }
         fsa1_xlsx::ExportError::Io(_) => Kind::Io,
     }
 }

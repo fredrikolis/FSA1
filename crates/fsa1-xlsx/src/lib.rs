@@ -39,16 +39,18 @@ pub use xlsx_style::{
 use fsa1_model::{Overlay, Workbook};
 use std::path::Path;
 
-/// Serialize `workbook`, presented as `overlay` states and drawing `charts`, into a fresh `.xlsx` at
-/// `dest`, refusing an already-occupied `dest`. Which figures became charts is the caller's decision:
-/// it is settled by reading each chart back, which this crate cannot do.
+/// Serialize `workbook`, presented as `overlay` states and drawing `charts`, into an `.xlsx` at
+/// `dest`, refusing an already-occupied `dest` unless `force`, which overwrites it. `dest` is written
+/// whole or not at all, whichever it was. Which figures became charts is the caller's decision: it is
+/// settled by reading each chart back, which this crate cannot do.
 pub fn write_xlsx(
     workbook: &Workbook,
     overlay: &Overlay,
     charts: &[Chart],
     dest: &Path,
+    force: bool,
 ) -> Result<(), ExportError> {
-    export::run(workbook, overlay, charts, dest)
+    export::run(workbook, overlay, charts, dest, force)
 }
 
 #[cfg(test)]

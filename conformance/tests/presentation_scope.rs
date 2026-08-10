@@ -207,6 +207,7 @@ fn grade(fixture: &Path, work: &Path) -> Result<(), String> {
         dest: Some(&packed),
         format: fsa1_verbs::PackFormat::Xlsx,
         strict: false,
+        force: false,
     })
     .map_err(|e| format!("pack failed: {}", e.message))?;
     if !packed_report.losses.is_empty() {

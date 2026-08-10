@@ -163,9 +163,12 @@ COMMANDS  (the tab and A1 cell/range are PART OF THE PATH: <wb>[/<tab>[/<A1>]])
                                           appearance over runs of one cell appearance. Default:
                                           occupancy for every source — appearance is only ever
                                           used when named, so an unflagged unpack never moves
-  fsa1-cli pack [--strict]              serialize a workbook to a fresh .xlsx (inverse of unpack).
+  fsa1-cli pack [--strict] [--force]    serialize a workbook to a single .xlsx (inverse of unpack).
       [--target xlsx] <dir> [<dst>]       <dst> is used verbatim and its parent must already exist;
-                                          omitted, it derives to ./<basename>.xlsx. A figure becomes
+                                          omitted, it derives to ./<basename>.xlsx. An existing file
+                                          there is refused unless --force (-f, -y) is given, the one
+                                          way pack overwrites; either way the write lands whole or
+                                          not at all. A figure becomes
                                           a native Excel chart where Excel states one; one it does
                                           not is DROPPED and named, and --strict refuses instead of
                                           writing without it

@@ -1,8 +1,8 @@
-// Concern: drives the part emitters into a fresh dest, refusing an occupied one | Non-concern: any part's bytes, the CLI envelope | IO: (Workbook, Overlay, charts, dest) -> .xlsx or ExportError
+// Concern: emits the assembled parts onto a dest it reserves, replaces or refuses | Non-concern: a part's bytes, the CLI envelope | IO: (Workbook, Overlay, charts, dest, force) -> .xlsx or ExportError
 
+use std::ffi::OsString;
 use std::fmt;
-use std::fs::File;
-use std::io::ErrorKind;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
 use fsa1_model::{Overlay, Workbook};
@@ -16,6 +16,7 @@ use crate::{content_types, doc_props, rels, styles, theme, workbook, worksheet};
 #[derive(Debug)]
 pub enum ExportError {
     DestExists(PathBuf),
+    DestIsDir(PathBuf),
     Io(std::io::Error),
 }
 
@@ -25,7 +26,16 @@ impl fmt::Display for ExportError {
             ExportError::DestExists(p) => {
                 write!(
                     f,
-                    "export destination {:?} already exists (CORE3: a materialized artifact must land in a not-already-occupied location)",
+                    "export destination {:?} already exists; pass --force to overwrite it",
+                    p.display()
+                )
+            }
+            // No flag makes a rename replace a directory, so the sibling arm's remedy is not repeated.
+            ExportError::DestIsDir(p) => {
+                write!(
+                    f,
+                    "export destination {:?} is a directory; name a file to write instead \
+                     (pack replaces a file, never a directory)",
                     p.display()
                 )
             }
@@ -38,30 +48,100 @@ impl std::error::Error for ExportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ExportError::Io(e) => Some(e),
-            ExportError::DestExists(_) => None,
+            ExportError::DestExists(_) | ExportError::DestIsDir(_) => None,
         }
     }
 }
 
+/// A rename onto a directory fails on every platform this crate targets, so a directory `dest` is
+/// refused by name rather than as a raw rename fault — `force` names files. Unforced, `dest` is not
+/// tested but RESERVED, by the one syscall that refuses and claims together: nothing takes the name
+/// mid-emit, and a symlink is refused, not followed. Forced, the rename replaces what stands there.
 pub(crate) fn run(
     workbook: &Workbook,
     overlay: &Overlay,
     charts: &[Chart],
     dest: &Path,
+    force: bool,
 ) -> Result<(), ExportError> {
-    let parts = build_parts(workbook, overlay, charts);
-    let file = match File::create_new(dest) {
-        Ok(f) => f,
-        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-            return Err(ExportError::DestExists(dest.to_path_buf()));
+    if dest.is_dir() {
+        return Err(ExportError::DestIsDir(dest.to_path_buf()));
+    }
+    let temp = temp_sibling(dest)?;
+    let reserved = if force {
+        false
+    } else {
+        match File::create_new(dest) {
+            Ok(file) => {
+                // Windows refuses to rename onto a path a handle is still open on.
+                drop(file);
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(ExportError::DestExists(dest.to_path_buf()));
+            }
+            Err(e) => return Err(ExportError::Io(e)),
         }
-        Err(e) => return Err(ExportError::Io(e)),
     };
-    package::write_package(&parts, file).map_err(|e| match e {
-        zip::result::ZipError::Io(io) => ExportError::Io(io),
-        other => ExportError::Io(std::io::Error::other(other.to_string())),
-    })?;
-    Ok(())
+    let file = match File::create_new(&temp).map_err(|e| temp_error(&temp, e)) {
+        Ok(file) => file,
+        // The temp is NOT removed here — this call never created it, and it belongs to whoever did.
+        Err(e) => {
+            if reserved {
+                let _ = fs::remove_file(dest);
+            }
+            return Err(e);
+        }
+    };
+    let parts = build_parts(workbook, overlay, charts);
+    let outcome = package::write_package(&parts, file)
+        .map_err(|e| match e {
+            zip::result::ZipError::Io(io) => ExportError::Io(io),
+            other => ExportError::Io(std::io::Error::other(other.to_string())),
+        })
+        // Windows refuses to rename a file that still has an open handle, so the sink closes first.
+        .and_then(|sink| {
+            drop(sink);
+            fs::rename(&temp, dest).map_err(ExportError::Io)
+        });
+    if outcome.is_err() {
+        let _ = fs::remove_file(&temp);
+        if reserved {
+            let _ = fs::remove_file(dest);
+        }
+    }
+    outcome
+}
+
+/// `std` attaches no path to an open failure, so the one name the caller cannot deduce — a hidden
+/// sibling — is put into the message, with the remedy for the one failure that outlives a run: a
+/// pack killed mid-emit leaves the temp, and the next pack drawing that pid trips over it.
+fn temp_error(temp: &Path, e: std::io::Error) -> ExportError {
+    let remedy = if e.kind() == std::io::ErrorKind::AlreadyExists {
+        " — a leftover from an interrupted pack; delete it and pack again"
+    } else {
+        ""
+    };
+    ExportError::Io(std::io::Error::new(
+        e.kind(),
+        format!("temp file {:?}: {e}{remedy}", temp.display()),
+    ))
+}
+
+/// A sibling of `dest`, so the rename onto it stays within one filesystem and is therefore atomic.
+/// The pid separates two processes without a clock or a random source; two packs to one `dest`
+/// inside ONE process spell the same name, where the second `create_new` refuses.
+fn temp_sibling(dest: &Path) -> Result<PathBuf, ExportError> {
+    let Some(name) = dest.file_name() else {
+        return Err(ExportError::Io(std::io::Error::other(format!(
+            "export destination {:?} names no file to write",
+            dest.display()
+        ))));
+    };
+    let mut temp = OsString::from(".");
+    temp.push(name);
+    temp.push(format!(".fsa1-tmp.{}", std::process::id()));
+    Ok(dest.with_file_name(temp))
 }
 
 fn build_parts(workbook: &Workbook, overlay: &Overlay, charts: &[Chart]) -> Vec<Part> {

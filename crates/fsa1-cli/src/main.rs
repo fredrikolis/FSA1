@@ -699,11 +699,13 @@ fn cmd_pack(rest: &[String]) -> u8 {
     let mut positionals: Vec<String> = Vec::new();
     let mut target = PackFormat::Xlsx;
     let mut strict = false;
+    let mut force = false;
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
         let (flag, inline) = split_flag(arg);
         match flag {
             "--strict" => strict = true,
+            "--force" | "-f" | "-y" => force = true,
             "--target" => match take_value(inline, &mut it) {
                 Some(v) => match parse_pack_format(&v) {
                     Ok(f) => target = f,
@@ -735,6 +737,7 @@ fn cmd_pack(rest: &[String]) -> u8 {
         dest: dest.as_deref(),
         format: target,
         strict,
+        force,
     }) {
         Ok(p) => {
             let dest = p.dest.display();
@@ -861,7 +864,7 @@ USAGE:
   fsa1-cli tree   <path> [--mode <combined|values|functions>]    # <path>: <wb>[/<tab>[/<A1>]]
   fsa1-cli sample <dir>
   fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]   # <src> is .ods/.xlsx; <dst> derives to ./<src-stem>/
-  fsa1-cli pack   [--strict] [--target xlsx] <workbook-dir> [<dst>]  # <dst> derives to ./<basename>.xlsx
+  fsa1-cli pack   [--strict] [--force] [--target xlsx] <workbook-dir> [<dst>]  # <dst> derives to ./<basename>.xlsx; --force overwrites it
   fsa1-cli convert <workbook-dir> [--to posix|windows|auto]  # re-spell range file names for another OS
   fsa1-cli --version | --help | --guide
 
@@ -905,7 +908,7 @@ COMMANDS:
            used verbatim; omitted, the output name is DERIVED — ./<workbook-basename>.xlsx in the CWD.
            --target defaults to xlsx (the only format), and names the DERIVED extension only.
            The CONTENT is derived wholly from the workbook (no cell content on argv). Refuses an
-           already-occupied output (never clobbers) and leaves the source workbook byte-identical.
+           already-occupied output unless --force replaces it, and leaves the source byte-identical.
   convert  Re-spell a workbook's range file names between `A1:C1` (POSIX) and `A1-C1` (portable /
            Windows-safe, since `:` is illegal in a Windows filename) so a raw tree authored on one OS
            checks out and loads on the other. Only range file NAMES change; contents, single cells,
@@ -941,8 +944,9 @@ EXIT CODES:
   1   I/O failure (could not read, create, or write a file or directory)
   2   Invalid arguments
   3   Validation error (check found error-severity diagnostics, or a workbook would not load)
-  4   Conflict (a never-clobber refusal: sample/unpack <dir> exists and is non-empty, or pack's
-      output — the given <dst>, else the derived ./<basename>.xlsx — already exists)
+  4   Conflict (sample/unpack <dir> exists and is non-empty, or pack's output — the given <dst>,
+      else the derived ./<basename>.xlsx — already exists; pack --force clears its case for a FILE
+      already there, and a DIRECTORY at the destination is refused either way)
   24  Not found (no such workbook directory, or no such tab)
 
 SEE ALSO:
@@ -1361,7 +1365,7 @@ SEE ALSO:
 const PACK_HELP: &str = r#"fsa1-cli pack — serialize an FSA1 workbook back into a single .xlsx file
 
 USAGE:
-  fsa1-cli pack [--strict] [--target xlsx] <workbook-dir> [<dst>]
+  fsa1-cli pack [--strict] [--force] [--target xlsx] <workbook-dir> [<dst>]
 
 DESCRIPTION:
   Serialize an FSA1 workbook (the filesystem spreadsheet) back into one Excel (.xlsx) file — the
@@ -1374,8 +1378,11 @@ DESCRIPTION:
   <dst> is OPTIONAL and used VERBATIM — the path you name is the file written, whatever its suffix,
   and its parent directory must already exist (pack creates no directories). Omitted, the output name
   is DERIVED — ./<workbook-basename>.<target> in the current directory (pack path/to/acme-dcf ->
-  ./acme-dcf.xlsx, basename only). Either way it lands only at a FRESH, not-already-occupied path — an
-  existing file is refused (never clobbered). Pivots, tables and media are not modeled by the skeleton.
+  ./acme-dcf.xlsx, basename only). Either way an existing file at that path is REFUSED (exit 4) unless
+  --force is given, which is the only way pack overwrites one: unforced, pack claims the destination
+  name before it writes a byte, so nothing can appear there mid-write and be replaced. Every pack,
+  forced or not, writes a temp sibling of the destination and renames it into place, so the
+  destination is whole or untouched — never a truncated .xlsx. Pivots, tables and media are not modeled by the skeleton.
 
   A FIGURE (<tab>/<name>.json) becomes a NATIVE Excel chart wherever Excel can state one — a real
   chart that updates when a cell changes, never a picture of one. Whether it can is settled by writing
@@ -1399,6 +1406,14 @@ OPTIONS:
                     presentation declaration it cannot carry or a figure Excel draws no chart for —
                     locating each. Nothing is written on a refusal. The default writes the .xlsx and
                     REPORTS every such loss.
+  --force, -f, -y   (optional) Overwrite the destination if a file is already there, instead of
+                    refusing it. This is the ONLY way pack overwrites anything, and it speaks about
+                    whichever destination is in effect — the <dst> you gave, else the derived
+                    ./<basename>.xlsx. The write still lands whole or not at all: the destination is
+                    replaced only once the new .xlsx is complete, and it takes the permissions of the
+                    file just written rather than those of the file it replaced. It never creates
+                    directories, and a DIRECTORY at the destination is refused with or without it —
+                    that refusal names the directory and offers no flag, since none applies.
   --target <fmt>    (optional) The output format. Defaults to xlsx, the only format supported today;
                     any other value is refused, naming the accepted choices. It picks the extension a
                     DERIVED name takes and never overrides a <dst> you gave. Exists so a future
@@ -1407,7 +1422,7 @@ OPTIONS:
 EXAMPLES:
   fsa1-cli pack ./book                  # -> ./book.xlsx
   fsa1-cli pack ./book ./out/report.xlsx   # -> exactly that path (./out must already exist)
-  fsa1-cli unpack book.xlsx && fsa1-cli pack ./book   # -> ./book.xlsx
+  fsa1-cli unpack book.xlsx && fsa1-cli pack ./book --force   # -> ./book.xlsx, replacing the source
 
 OUTPUT:
   A terse confirmation on stdout naming the source, the destination, the sheet count and the number of
@@ -1424,7 +1439,8 @@ EXIT CODES:
   3   Validation error (the workbook would not load, has no tabs to pack, a sidecar would not parse,
       or --strict was given and something — a declaration or a figure — does not cross)
   4   Conflict (the output — the given <dst>, else the derived ./<basename>.xlsx — already exists,
-      refused, nothing written)
+      refused, nothing written). --force clears this for a FILE already there; a DIRECTORY at that
+      path is still exit 4, since pack replaces a file and never a tree.
   24  Not found (no such workbook directory)
 
 SEE ALSO:

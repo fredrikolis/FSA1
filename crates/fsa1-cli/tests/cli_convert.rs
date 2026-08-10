@@ -1,4 +1,4 @@
-// Concern: locks the unpack/pack argv dispatch, stdout and exit codes | Non-concern: the spreadsheet logic beneath it | IO: spawns the binary -> stdout + exit status
+// Concern: locks the unpack/pack argv dispatch, stdout and exit codes | Non-concern: the spreadsheet logic beneath it | IO: spawns the binary -> stdout + exit status + what it left on disk
 
 mod common;
 
@@ -604,6 +604,158 @@ fn pack_refuses_an_explicit_destination_whose_parent_is_absent() {
     assert!(
         !cwd.path().join("nope").exists() && !cwd.path().join("book.xlsx").exists(),
         "nothing is created on that refusal:\n{err}"
+    );
+}
+
+/// The one way `pack` overwrites. What lands is read back through calamine rather than measured by
+/// size, since a package merely appended to the seed's bytes would pass a length check. The temp
+/// sibling every pack writes through is asserted gone in the same breath: a directory holding two
+/// files where the caller asked for one is the failure this is guarding.
+#[test]
+fn pack_force_replaces_an_occupied_destination_and_leaves_no_temp_behind() {
+    use calamine::{Data, Reader, open_workbook_auto};
+
+    let cwd = Fixture::new("pack-force");
+    let book = pack_workbook(cwd.path(), "book");
+    let dest = cwd.path().join("out.xlsx");
+    std::fs::write(&dest, b"pre-existing").expect("seed the dest");
+    let packed = |flag: &str| {
+        run_err_in(
+            cwd.path(),
+            &["pack", book.to_str().unwrap(), dest.to_str().unwrap(), flag],
+        )
+    };
+
+    let (code, _, err) = run_err_in(
+        cwd.path(),
+        &["pack", book.to_str().unwrap(), dest.to_str().unwrap()],
+    );
+    assert_eq!(
+        code, 4,
+        "an occupied dest is still exit 4 by default:\n{err}"
+    );
+    assert!(
+        err.contains("--force"),
+        "the refusal names the flag that clears it:\n{err}"
+    );
+
+    for flag in ["--force", "-f", "-y"] {
+        let (code, out, err) = packed(flag);
+        assert_eq!(code, 0, "`{flag}` overwrites the occupant:\n{out}{err}");
+    }
+
+    let mut wb = open_workbook_auto(&dest).expect("calamine re-opens the replacement");
+    let range = wb
+        .worksheet_range("Sheet1")
+        .expect("calamine reads Sheet1's values");
+    assert_eq!(
+        range.get_value((0, 0)),
+        Some(&Data::Float(42.0)),
+        "the destination holds the newly packed workbook, not the seed"
+    );
+
+    let mut left: Vec<String> = std::fs::read_dir(cwd.path())
+        .expect("read the destination's directory")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(
+        left,
+        vec!["book".to_string(), "out.xlsx".to_string()],
+        "a success leaves the one output file and no .fsa1-tmp residue"
+    );
+}
+
+/// A symlink IS an occupant, whatever it points at — but a dangling one points at nothing, so a
+/// destination merely asked whether it "exists" answers no and is packed straight over, destroying a
+/// link the caller never named. Refusing it falls out of CLAIMING the name instead of testing it,
+/// which is what this pins: exit 4, and the link still there. Unix-only, for want of symlinks.
+#[cfg(unix)]
+#[test]
+fn pack_refuses_a_dangling_symlink_at_the_destination_and_leaves_it_alone() {
+    let cwd = Fixture::new("pack-dangling-link");
+    let book = pack_workbook(cwd.path(), "book");
+    let dest = cwd.path().join("report.xlsx");
+    std::os::unix::fs::symlink(cwd.path().join("nowhere.xlsx"), &dest).expect("dangle a symlink");
+
+    let (code, _, err) = run_err_in(
+        cwd.path(),
+        &["pack", book.to_str().unwrap(), dest.to_str().unwrap()],
+    );
+    assert_eq!(code, 4, "an occupied destination is refused:\n{err}");
+    assert!(
+        std::fs::symlink_metadata(&dest)
+            .expect("the symlink is still there")
+            .file_type()
+            .is_symlink(),
+        "and it is still the symlink, not a workbook written over it"
+    );
+}
+
+/// `--force` names a file to replace, and a rename onto a directory fails on every platform, so a
+/// directory destination is the named conflict rather than a raw rename fault leaking out as I/O.
+/// Its remedy must be one that EXISTS: a message advertising `--force` here would send a caller
+/// round a loop, since the flag prints the very same refusal.
+#[test]
+fn pack_refuses_a_directory_destination_with_or_without_force() {
+    let cwd = Fixture::new("pack-dest-dir");
+    let book = pack_workbook(cwd.path(), "book");
+    let adir = cwd.path().join("adir");
+    std::fs::create_dir(&adir).expect("create the directory destination");
+
+    for extra in [&[][..], &["--force"][..]] {
+        let mut args = vec!["pack", book.to_str().unwrap(), adir.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        let (code, _, err) = run_err_in(cwd.path(), &args);
+        assert_eq!(code, 4, "a directory dest is a conflict {extra:?}:\n{err}");
+        assert!(
+            err.contains("is a directory"),
+            "the refusal names what is actually wrong {extra:?}:\n{err}"
+        );
+        assert!(
+            !err.contains("--force"),
+            "and never offers the flag that cannot fix it {extra:?}:\n{err}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_dir(&adir)
+            .expect("the directory survives")
+            .count(),
+        0,
+        "nothing is written into it either"
+    );
+}
+
+/// `--strict` is judged before a byte is written, so it refuses a forced run too — and the
+/// destination `--force` would have replaced is left exactly as it was.
+#[test]
+fn a_strict_refusal_leaves_a_destination_force_would_replace_byte_identical() {
+    let cwd = Fixture::new("pack-strict-force");
+    let book = styled_workbook(cwd.path(), "book", "fsa1-cell { box-shadow: none }\n");
+    let dest = cwd.path().join("out.xlsx");
+
+    let (code, out) = run_in(
+        cwd.path(),
+        &["pack", book.to_str().unwrap(), dest.to_str().unwrap()],
+    );
+    assert_eq!(code, 0, "the lossy pack writes the destination:\n{out}");
+    let before = std::fs::read(&dest).expect("the written .xlsx");
+
+    let (code, _, err) = run_err_in(
+        cwd.path(),
+        &[
+            "pack",
+            book.to_str().unwrap(),
+            dest.to_str().unwrap(),
+            "--strict",
+            "--force",
+        ],
+    );
+    assert_eq!(code, 3, "--strict refuses the forced run too:\n{err}");
+    assert_eq!(
+        before,
+        std::fs::read(&dest).expect("the destination is still there"),
+        "a refusal replaces nothing"
     );
 }
 

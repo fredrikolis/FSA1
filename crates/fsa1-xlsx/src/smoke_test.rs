@@ -1,4 +1,4 @@
-// Concern: smoke-tests the writer — a calamine reopen, and an occupied-dest refusal | Non-concern: the graded conformance corpus (conformance/serde/) | IO: (a Workbook + an Overlay) -> a temp .xlsx
+// Concern: smoke-tests the writer — a calamine reopen, an occupied-dest refusal, an atomic write | Non-concern: the graded corpus (conformance/serde/) | IO: (a Workbook + an Overlay) -> a temp .xlsx
 
 use std::path::PathBuf;
 
@@ -46,7 +46,7 @@ fn writer_emits_a_package_calamine_reopens() {
     let dest = temp_xlsx("reopen");
     let _ = std::fs::remove_file(&dest);
 
-    write_xlsx(&wb, &overlay, &[], &dest).expect("write_xlsx succeeds");
+    write_xlsx(&wb, &overlay, &[], &dest, false).expect("write_xlsx succeeds");
 
     let mut book = open_workbook_auto(&dest).expect("calamine re-opens the emitted .xlsx");
 
@@ -96,7 +96,7 @@ fn excels_future_function_prefix_survives_the_pack_leg_verbatim() {
     let wb = Workbook::from_tabs(tabs).expect("the prefixed workbook loads cleanly");
     let overlay = Overlay::from_tabs(tabs).expect("its sidecars load cleanly");
     let dest = temp_xlsx("xlfn");
-    write_xlsx(&wb, &overlay, &[], &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &[], &dest, false).expect("export writes the package");
 
     let mut book = open_workbook_auto(&dest).expect("calamine reopens the export");
     let f = book
@@ -134,7 +134,7 @@ fn a_styled_workbook_reopens_with_its_values_intact() {
     let wb = Workbook::from_tabs(tabs).expect("the styled workbook loads cleanly");
     let overlay = Overlay::from_tabs(tabs).expect("its sidecars load cleanly");
     let dest = temp_xlsx("styled");
-    write_xlsx(&wb, &overlay, &[], &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &[], &dest, false).expect("export writes the package");
 
     let mut book = open_workbook_auto(&dest).expect("calamine re-opens the styled export");
     let range = book
@@ -153,13 +153,74 @@ fn export_refuses_an_occupied_dest() {
     std::fs::write(&dest, b"pre-existing").expect("seed the dest");
 
     let err =
-        write_xlsx(&wb, &overlay, &[], &dest).expect_err("an occupied dest is refused (CORE3)");
+        write_xlsx(&wb, &overlay, &[], &dest, false).expect_err("an occupied dest is refused");
     assert!(
         matches!(err, crate::ExportError::DestExists(_)),
         "the refusal names the occupied destination"
     );
 
     let _ = std::fs::remove_file(&dest);
+}
+
+/// The same seeded destination the refusal above pins, forced: the seed is gone and what stands in
+/// its place is the workbook just written, not a package appended to the bytes that were there.
+#[test]
+fn a_forced_export_replaces_an_occupied_dest() {
+    let (wb, overlay) = tiny_workbook();
+    let dest = temp_xlsx("forced");
+    std::fs::write(&dest, b"pre-existing").expect("seed the dest");
+
+    write_xlsx(&wb, &overlay, &[], &dest, true).expect("a forced export overwrites the seed");
+
+    let mut book = open_workbook_auto(&dest).expect("calamine re-opens the replacement");
+    let range = book
+        .worksheet_range("Sheet1")
+        .expect("calamine reads Sheet1's values");
+    assert_eq!(range.get_value((0, 0)), Some(&Data::String("Item".into())));
+
+    let _ = std::fs::remove_file(&dest);
+}
+
+/// The failure every atomic write exists for: the emit cannot even start, and the workbook is left
+/// with neither a half-written destination nor the temp sibling that would have become one. The
+/// parent is sealed with a mode bit, so this is unix-only.
+#[cfg(unix)]
+#[test]
+fn a_failed_export_leaves_neither_a_temp_nor_a_partial_dest() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (wb, overlay) = tiny_workbook();
+    let dir = temp_xlsx("readonly-parent").with_extension("d");
+    std::fs::create_dir_all(&dir).expect("create the dest parent");
+    let dest = dir.join("out.xlsx");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500))
+        .expect("seal the parent");
+
+    // A mode bit binds nobody privileged enough to ignore it, so the seal is PROBED, not assumed: where it does not bite, the failure this pins cannot be staged at all.
+    if std::fs::File::create(dir.join("seal-probe")).is_ok() {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("unseal");
+        std::fs::remove_dir_all(&dir).ok();
+        return;
+    }
+
+    let err = write_xlsx(&wb, &overlay, &[], &dest, false)
+        .expect_err("an unwritable parent directory fails");
+    assert!(
+        matches!(err, crate::ExportError::Io(_)),
+        "an unwritable parent is an I/O failure, not a conflict: {err}"
+    );
+
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("unseal");
+    let left: Vec<String> = std::fs::read_dir(&dir)
+        .expect("read the dest parent")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        left.is_empty(),
+        "neither the destination nor a .fsa1-tmp sibling survives the failure: {left:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -186,7 +247,7 @@ fn defined_names_survive_the_pack_leg() {
         .expect("fs read ok")
         .expect("its sidecars load");
     let dest = temp_xlsx("names");
-    write_xlsx(&wb, &overlay, &[], &dest).expect("export writes the package");
+    write_xlsx(&wb, &overlay, &[], &dest, false).expect("export writes the package");
 
     let xml = {
         let f = std::fs::File::open(&dest).expect("open the package");

@@ -458,3 +458,34 @@ fn packs_format_key_defaults_to_xlsx_and_refuses_any_other() {
     );
     assert!(!other_written, "a refused format writes no file");
 }
+
+/// A flag one front end has and the other does not is two vocabularies for one verb, so `force` is
+/// driven over the wire here exactly as `--force` is over argv.
+#[test]
+fn packs_force_key_overwrites_a_destination_an_unforced_call_refuses() {
+    let fx = Fixture::new("pack-force");
+    let root = scratch("pack-force-out");
+    let dest = root.join("out.xlsx");
+    std::fs::write(&dest, b"pre-existing").expect("seed the dest");
+    let target = dest.display().to_string();
+    let r = talk(&[
+        &call(
+            "pack",
+            serde_json::json!({ "source": fx.path(), "dest": target }),
+        ),
+        &call(
+            "pack",
+            serde_json::json!({ "source": fx.path(), "dest": target, "force": true }),
+        ),
+    ]);
+    let (refused, forced) = (text_of(&r[0]), text_of(&r[1]));
+    let replaced = std::fs::read(&dest).expect("the destination") != b"pre-existing";
+    std::fs::remove_dir_all(&root).ok();
+
+    assert!(
+        is_error(&r[0]) && refused.contains("already exists"),
+        "an occupied dest is still refused without the key: {refused}"
+    );
+    assert!(!is_error(&r[1]), "force: true overwrites it: {forced}");
+    assert!(replaced, "and what stands there is the pack, not the seed");
+}
