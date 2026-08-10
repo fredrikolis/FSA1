@@ -1,4 +1,4 @@
-// Concern: the loaded workbook and what a skeleton or demand load reads into it | Non-concern: presentation (overlay.rs), evaluation | IO: (dir [+ demand], or tabs) -> Workbook
+// Concern: the loaded workbook, what a skeleton or demand load reads into it and which faults it grades | Non-concern: presentation (overlay.rs), evaluation | IO: (dir [+ demand], or tabs) -> Workbook
 //! Every demand runs a PLAN pass then an EVALUATE pass. The dependency graph between them is a
 //! CONTAINED optimization: its type never leaves this module, and it equals a naive per-cell
 //! evaluation, which the differential test below proves.
@@ -72,10 +72,9 @@ struct LoadedFile {
     region: Rect,
     grid: Grid,
     array_formula: bool,
-    /// Its demand-provenance: `false` where the demand named it, `true` where the closure pulled it
-    /// in through a reference. Written here and read by nothing yet — plan 51 grades a file by it.
-    #[allow(dead_code)]
-    pulled: bool,
+    /// `true` where the demand named this file, `false` where the closure pulled it in through a
+    /// reference. A pulled file is read for its VALUES and is not graded.
+    demanded: bool,
 }
 
 /// The coordinate index is SPLIT because a tab post-import is overwhelmingly single-cell files:
@@ -86,6 +85,10 @@ struct LoadedFile {
 struct Tab {
     name: String,
     files: Vec<LoadedFile>,
+    /// Whether the demand reached the TAB, which is what a tab-located refusal is graded by. A tab
+    /// holding nothing but pulled files was never asked about; one holding no files was excluded by
+    /// nothing.
+    demanded: bool,
     /// How far the tab's declared cells reach, off the FULL listing rather than the loaded subset:
     /// deriving it from `files` under a demand would let `=SUM(A:A)` clamp short and answer a
     /// silently wrong number.
@@ -110,9 +113,11 @@ impl Tab {
             }
             by_name.insert(f.name.clone(), i);
         }
+        let demanded = files.is_empty() || files.iter().any(|f| f.demanded);
         Tab {
             name,
             files,
+            demanded,
             content,
             single,
             spans,
@@ -172,6 +177,9 @@ struct TabLoad {
     name: String,
     files: Vec<LoadedFile>,
     file_diags: Vec<Diagnostic>,
+    /// A pulled file's own parse fault, which is NOT fatal and is reported by
+    /// [`Workbook::lint_located`] instead — the one grade a pulled file earns.
+    pulled_faults: Vec<Diagnostic>,
     regions: Vec<(String, Rect)>,
     content: Option<Rect>,
 }
@@ -186,6 +194,10 @@ type CellKey = (u32, u32, u32);
 #[derive(Debug)]
 pub struct Workbook {
     tabs: Vec<Tab>,
+    /// The load faults of the PULLED files, kept with the sheet each sits on. They did not abort the
+    /// load — the demanded values that reference them read a load error rather than a blank — and
+    /// [`Workbook::lint_located`] emits them whatever the demand.
+    pulled_faults: Vec<(u32, Diagnostic)>,
     /// A stored formula's name tokens are already resolved to A1 in the grid, but the AD-HOC
     /// [`Workbook::eval_formula`] parses fresh text, so it resolves names through this.
     names: NameTable,
@@ -375,6 +387,7 @@ impl Workbook {
                     name,
                     files: Vec::new(),
                     file_diags: Vec::new(),
+                    pulled_faults: Vec::new(),
                     regions: listed_regions(&entries, occupied),
                     content,
                 }
@@ -415,6 +428,7 @@ impl Workbook {
         }
         let mut scratch = Vec::new();
         let mut forged = false;
+        let mut pulled_faults: Vec<Vec<Diagnostic>> = tabs.iter().map(|_| Vec::new()).collect();
         while !frontier.is_empty() {
             let mut rects: Vec<(u32, Rect)> = Vec::new();
             for (ti, ei, pulled) in std::mem::take(&mut frontier) {
@@ -423,7 +437,17 @@ impl Workbook {
                 }
                 let entry = &tabs[ti].entries[ei];
                 let text = read_file_to_string(&entry.path, &mut scratch)?;
-                let parsed = parse_one(&names, &tabs[ti].name, &entry.name, &text, pulled);
+                let parsed = match parse_one(&names, &tabs[ti].name, &entry.name, &text, !pulled) {
+                    // A pulled file's fault must abort nothing — nobody asked about it — yet answering the demanded cell as blank would be worse, so it loads as its declared region of load errors and the fault is carried for the lint instead.
+                    Err(d) if pulled => match load_error_file(&tabs[ti].name, &entry.name, d) {
+                        Ok((file, fault)) => {
+                            pulled_faults[ti].push(fault);
+                            Ok(file)
+                        }
+                        Err(d) => Err(d),
+                    },
+                    other => other,
+                };
                 if let Ok(file) = &parsed {
                     for cell in &file.grid.cells {
                         if let GridCell::Formula { expr, .. } = cell {
@@ -465,6 +489,7 @@ impl Workbook {
                 name,
                 files,
                 file_diags,
+                pulled_faults: std::mem::take(&mut pulled_faults[ti]),
                 regions: listed_regions(&entries, occupied),
                 content,
             });
@@ -529,7 +554,7 @@ impl Workbook {
                     regions.push((fname.clone(), region));
                     content = Rect::union(content, Some(region));
                 }
-                match parse_one(&name_table, &tab_name, &fname, &contents, false) {
+                match parse_one(&name_table, &tab_name, &fname, &contents, true) {
                     Ok(file) => loaded.push(file),
                     Err(d) => file_diags.extend(d),
                 }
@@ -540,6 +565,7 @@ impl Workbook {
                 name: tab_name,
                 files: loaded,
                 file_diags,
+                pulled_faults: Vec::new(),
                 regions,
                 content,
             });
@@ -731,35 +757,21 @@ impl Workbook {
     }
 
     /// Every fault a LOADED workbook can still carry, in file order throughout: the per-cell load
-    /// errors first, then the eval-time refusals, independent of the schedule the pass evaluated
-    /// them in. A structural load-time refusal aborts the load itself and surfaces from the loader.
+    /// errors first, then the eval-time refusals, then the pulled files' own parse faults —
+    /// independent of the schedule the pass evaluated them in. A structural load-time refusal aborts
+    /// the load itself and surfaces from the loader.
     pub fn lint(&self) -> Vec<Diagnostic> {
         self.lint_located().into_iter().map(|(_, d)| d).collect()
     }
 
-    /// Filters on each diagnostic's TRUE tab, resolved here because a bare-filename loc is ambiguous
-    /// across tabs. An unscoped `Scope` returns [`lint`](Workbook::lint) verbatim.
-    pub fn lint_scoped(&self, scope: &crate::scope::Scope) -> Vec<Diagnostic> {
-        let located = self.lint_located();
-        if !scope.is_scoped() {
-            return located.into_iter().map(|(_, d)| d).collect();
-        }
-        located
-            .into_iter()
-            .filter(|(sheet, d)| {
-                let (_loc_tab, region) = crate::scope::loc_target(&d.loc);
-                scope.wants(Some(&self.tab_name(*sheet)), region)
-            })
-            .map(|(_, d)| d)
-            .collect()
-    }
-
     /// The tab index resolves what a bare-filename loc cannot express: a load error is located as
     /// `Body{file}`, yet the same address can exist on two tabs, and the enclosing tab is known here.
+    /// Only the DEMANDED work is graded: a file the closure pulled in through a reference is read for
+    /// its values alone, its own parse fault (which the demanded value depends on) excepted.
     fn lint_located(&self) -> Vec<(u32, Diagnostic)> {
         let mut out: Vec<(u32, Diagnostic)> = Vec::new();
         for (s, tab) in self.tabs.iter().enumerate() {
-            for file in &tab.files {
+            for file in tab.files.iter().filter(|f| f.demanded) {
                 for cell in &file.grid.cells {
                     if let GridCell::LoadError { diag, .. } = cell {
                         out.push((s as u32, diag.clone()));
@@ -789,6 +801,7 @@ impl Workbook {
         // The pass pushes these in topo order, so sort to a deterministic FILE order. Two refusals from one multi-cell file share a key, and the stable sort leaves those in topo order.
         let mut located: Vec<(u32, usize, Diagnostic)> = eval
             .into_iter()
+            .filter(|d| self.demand_grades(&d.loc))
             .map(|d| {
                 let (sheet, file) = match &d.loc {
                     Loc::TabFile { tab, name } => (
@@ -803,7 +816,23 @@ impl Workbook {
             .collect();
         located.sort_by_key(|(sheet, file, _)| (*sheet, *file));
         out.extend(located.into_iter().map(|(sheet, _, d)| (sheet, d)));
+        out.extend(self.pulled_faults.iter().cloned());
         out
+    }
+
+    /// Whether an eval-time refusal falls on the demanded work: a file anchor is graded where THAT
+    /// file was demanded, a tab anchor where the tab was, and an anchor naming neither is kept.
+    fn demand_grades(&self, loc: &Loc) -> bool {
+        match loc {
+            Loc::TabFile { tab, name } => match (self.tab_index(tab), self.file_index(tab, name)) {
+                (Some(s), Some(i)) => self.tabs[s as usize].files[i].demanded,
+                _ => true,
+            },
+            Loc::Tab { tab } => self
+                .tab_index(tab)
+                .is_none_or(|s| self.tabs[s as usize].demanded),
+            _ => true,
+        }
     }
 
     fn refuse(&self, diag: Diagnostic) {
@@ -1118,7 +1147,7 @@ fn parse_one(
     tab: &str,
     fname: &str,
     contents: &str,
-    pulled: bool,
+    demanded: bool,
 ) -> Result<LoadedFile, Vec<Diagnostic>> {
     let resolved = names.rewrite_tsv(contents, tab);
     parse_file(fname, &resolved).map(
@@ -1132,9 +1161,45 @@ fn parse_one(
             region,
             grid,
             array_formula,
-            pulled,
+            demanded,
         },
     )
+}
+
+/// A pulled file that would not parse, as the region its NAME declares filled with the fault, plus
+/// the tab-qualified diagnostic the lint reports it by. `Err` keeps today's fatal path for a name
+/// stating no region (seeded, so demanded), one declaring over [`MAX_RANGE_CELLS`] — the grid is a
+/// cell per DECLARED coordinate, no longer bounded by the file's bytes — and any but one fault.
+fn load_error_file(
+    tab: &str,
+    fname: &str,
+    mut diags: Vec<Diagnostic>,
+) -> Result<(LoadedFile, Diagnostic), Vec<Diagnostic>> {
+    let Ok(declared) = parse_filename(fname) else {
+        return Err(diags);
+    };
+    let shape = declared.declared_shape;
+    let area = u64::from(shape.rows) * u64::from(shape.cols);
+    if area > MAX_RANGE_CELLS || diags.len() != 1 {
+        return Err(diags);
+    }
+    let mut fault = diags.remove(0);
+    fault.loc = Loc::tab_file(tab, fname);
+    let cell = GridCell::LoadError {
+        src: fault.message.clone(),
+        diag: fault.clone(),
+    };
+    let file = LoadedFile {
+        name: fname.to_string(),
+        region: declared.region,
+        grid: Grid {
+            shape,
+            cells: vec![cell; (shape.rows as usize) * (shape.cols as usize)],
+        },
+        array_formula: false,
+        demanded: false,
+    };
+    Ok((file, fault))
 }
 
 /// The phase every entry point ends in: the overlap verdict off each tab's full listing — fatal
@@ -1146,16 +1211,19 @@ fn assemble(
     mut diags: Vec<Diagnostic>,
 ) -> Result<Workbook, Vec<Diagnostic>> {
     let mut out_tabs = Vec::with_capacity(tabs.len());
+    let mut pulled_faults: Vec<(u32, Diagnostic)> = Vec::new();
     for tab in tabs {
         let TabLoad {
             name,
             files,
             file_diags,
+            pulled_faults: pulled,
             regions,
             content,
         } = tab;
         diags.extend(file_diags);
         diags.extend(detect_overlaps(&name, &regions));
+        pulled_faults.extend(pulled.into_iter().map(|d| (out_tabs.len() as u32, d)));
         out_tabs.push(Tab::new(name, files, content));
     }
     if !diags.is_empty() {
@@ -1173,6 +1241,7 @@ fn assemble(
     });
     Ok(Workbook {
         tabs: out_tabs,
+        pulled_faults,
         names,
         has_array_regions,
         has_forgers,

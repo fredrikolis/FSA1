@@ -1,7 +1,6 @@
-// Concern: states which tab and which A1 rectangle a verb wants read | Non-concern: reading anything, producing a diagnostic | IO: (&Loc) -> (tab, Rect); (tab, Rect or Root) -> bool
+// Concern: states which tab and which A1 rectangle a verb demands read | Non-concern: reading anything, classifying a diagnostic's Loc | IO: (tab, Rect or Root) -> bool
 
-use crate::diagnostic::Loc;
-use crate::filename::{Root, parse_filename};
+use crate::filename::Root;
 use crate::overlap::Rect;
 
 #[derive(Clone, Debug, Default)]
@@ -83,45 +82,6 @@ fn meets(span: AxisSpan, first: u32, last: u32) -> bool {
     span.is_none_or(|(a, b)| a <= last && first <= b)
 }
 
-/// What the loc ALONE reveals: a tab-qualified path names its tab, a BARE filename is ambiguous
-/// across tabs and yields none even though the diagnostic has one, and `Workbook::lint_scoped`
-/// supplies the true tab for those itself.
-pub fn loc_target(loc: &Loc) -> (Option<&str>, Option<Rect>) {
-    match loc {
-        Loc::File { name, .. } => path_target(name),
-        Loc::Body { file, .. } => path_target(file),
-        Loc::Tab { tab } => (Some(tab), None),
-        Loc::TabFile { tab, name } => (Some(tab), entry_region(name)),
-    }
-}
-
-/// A tab is a folder directly under the root and its entries sit directly in it, so the first `/`
-/// splits a located path into the two facts. A ROOT-level entry keeps `region_of`: it is refused
-/// precisely because it names no coordinate in a tab, so it must not be given one.
-fn path_target(path: &str) -> (Option<&str>, Option<Rect>) {
-    match path.split_once('/') {
-        Some((tab, entry)) => (Some(tab), entry_region(entry)),
-        None => (None, region_of(path)),
-    }
-}
-
-/// What an entry inside a tab covers, through the classifier that owns each form: a sidecar's root,
-/// a figure's placement, else the grid file's own range. The tab layer, an unrooted sidecar, an open
-/// root and a name-form figure cover nothing and filter on tab alone.
-fn entry_region(name: &str) -> Option<Rect> {
-    if let Some(stem) = crate::names::presentation_stem(name) {
-        return crate::names::stem_region(stem);
-    }
-    if crate::names::is_figure_entry(name) {
-        return crate::names::figure_occupancy(name);
-    }
-    region_of(name)
-}
-
-fn region_of(name: &str) -> Option<Rect> {
-    parse_filename(name).ok().map(|f| f.region)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,43 +139,5 @@ mod tests {
                 last: 199
             }
         )); // 100:200
-    }
-
-    #[test]
-    fn loc_target_reads_tab_and_region() {
-        let tabfile = Loc::tab_file("Beta", "B2:C3");
-        let (tab, region) = loc_target(&tabfile);
-        assert_eq!(tab, Some("Beta"));
-        assert_eq!(region, Some(rect(1, 1, 2, 2)));
-        let body = Loc::body("D1", 1, 2);
-        let (tab, region) = loc_target(&body);
-        assert_eq!(tab, None);
-        assert_eq!(region, Some(Rect::cell(3, 0)));
-        let tabloc = Loc::tab("Alpha");
-        let (tab, region) = loc_target(&tabloc);
-        assert_eq!(tab, Some("Alpha"));
-        assert_eq!(region, None);
-
-        let sidecar = Loc::file("Sheet1/Nope.css");
-        assert_eq!(loc_target(&sidecar), (Some("Sheet1"), None));
-        let rooted = Loc::body("Sheet1/A1:B2.css", 1, 1);
-        assert_eq!(
-            loc_target(&rooted),
-            (Some("Sheet1"), Some(rect(0, 0, 1, 1)))
-        );
-        let figure = Loc::file("Sheet1/D2:K17.json");
-        assert_eq!(
-            loc_target(&figure),
-            (Some("Sheet1"), Some(rect(3, 1, 10, 16)))
-        );
-        for floating in ["Sheet1/Chart1.json", "Sheet1/.css", "Sheet1/XFE1.css"] {
-            assert_eq!(
-                loc_target(&Loc::file(floating)),
-                (Some("Sheet1"), None),
-                "{floating} names its tab and no region"
-            );
-        }
-        let root_entry = Loc::file("A1:B2.css");
-        assert_eq!(loc_target(&root_entry), (None, None));
     }
 }

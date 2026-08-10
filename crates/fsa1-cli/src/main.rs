@@ -1044,9 +1044,12 @@ DESCRIPTION:
   cells elsewhere. A file-level diagnostic (no single cell, e.g. a whole-tab overlap) is reported
   whenever its tab is in scope. An unscoped check (a bare <wb> path) is the whole workbook — and a
   workbook that will not load is itself the failure (exit 3), scoped or not. A TAB or REGION in the
-  path also narrows what is READ, so what it never opens it never grades: a <name>.json figure is out of
-  every region scope (rename it <range>.json to make it participate), and a sidecar is in one when
-  its name shares a column or a row with the region — `A100:A200.css` sizes column A of `A1:B5`.
+  path also narrows what is READ, so what it never opens it never grades — except a fault that aborts
+  the LOAD, which is reported whatever the scope: a <name>.json figure is out of every region scope
+  (rename it <range>.json to make it participate), and a sidecar is in one when
+  its name shares a column or a row with the region — `A100:A200.css` sizes column A of `A1:B5`. A file
+  read only because a demanded formula referenced it is read for its values and is not graded, except
+  where it will not parse at all, which is reported against the demanded work.
 
 ARGUMENTS:
   <path>            (required) <wb>[/<tab>[/<A1>]] — the workbook, optionally narrowed to a tab/region.

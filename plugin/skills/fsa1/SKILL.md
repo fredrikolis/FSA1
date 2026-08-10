@@ -91,7 +91,8 @@ One table, both paths. Optional arguments are in brackets.
   ranges it binds — except under a region path, which is a rectangle of cells and lists no figure.
   `format: html` draws the figure itself.
 - `check` lints overlap, dimension mismatch, cycles and broken references. Scope it to a tab or range
-  to lint only that. `xlsx` (the CLI's `--xlsx`) additionally asks what an `.xlsx` export would NOT
+  to lint only that — except a fault that aborts the LOAD, an overlap say, which is reported whatever
+  the scope. `xlsx` (the CLI's `--xlsx`) additionally asks what an `.xlsx` export would NOT
   carry — the same losses `pack` names — and writes no file; it defaults to off on both surfaces.
 - `eval` evaluates an ad-hoc formula against the workbook, writing nothing. An error value like
   `#REF!` is the ANSWER, not a failure.

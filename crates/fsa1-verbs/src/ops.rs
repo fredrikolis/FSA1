@@ -284,14 +284,13 @@ pub fn check(args: CheckArgs<'_>) -> Result<Vec<Diagnostic>, Refusal> {
             let msg = format!("cannot read {root_display:?}: {e}");
             Err(fail(Kind::Io, &msg))
         }
-        // Best-effort: a bare-filename loc carries no tab, so a scope cannot exclude it on that axis, and with no `Workbook` to resolve against a binding is graded on its SYNTAX and no further.
-        Ok(Err(load_diags)) => {
+        // The load already read only what the demand reaches, so its refusals need no filter; with no `Workbook` to resolve against, a binding is graded on its SYNTAX and no further.
+        Ok(Err(mut load_diags)) => {
             let (sidecar, _) = sidecar_diags(&decomposed.root, &scope)?;
             let (figure, _) = figure_diags(&decomposed.root, None, &scope)?;
-            Ok(in_scope(load_diags, &scope)
-                .chain(sidecar)
-                .chain(figure)
-                .collect())
+            load_diags.extend(sidecar);
+            load_diags.extend(figure);
+            Ok(load_diags)
         }
         Ok(Ok(wb)) => {
             if let Some(name) = scope.tab()
@@ -304,7 +303,7 @@ pub fn check(args: CheckArgs<'_>) -> Result<Vec<Diagnostic>, Refusal> {
                 return Err(fail(Kind::NotFound, &msg));
             }
             // The values first and the sidecars after, the order this verb reports on either branch.
-            let mut found = wb.lint_scoped(&scope);
+            let mut found = wb.lint();
             let (sidecar, overlay) = sidecar_diags(&decomposed.root, &scope)?;
             found.extend(sidecar);
             let (figure, figures) = figure_diags(&decomposed.root, Some(&wb), &scope)?;
@@ -626,14 +625,4 @@ fn figure_diags(
         .flatten()
         .collect();
     Ok((diags, figures))
-}
-
-fn in_scope<'a>(
-    diags: Vec<fsa1_model::Diagnostic>,
-    scope: &'a fsa1_model::scope::Scope,
-) -> impl Iterator<Item = fsa1_model::Diagnostic> + 'a {
-    diags.into_iter().filter(move |d| {
-        let (loc_tab, region) = fsa1_model::scope::loc_target(&d.loc);
-        scope.wants(loc_tab, region)
-    })
 }
