@@ -1,6 +1,6 @@
 {
   "name": "fsa1-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Command line tool for FSA1: read and edit spreadsheets as a file tree. Tabs are folders, cells are files.",
   "keywords": [
     "cli",
@@ -26,10 +26,10 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "fsa1-cli-linux-x64-musl": "0.3.0",
-    "fsa1-cli-linux-arm64-musl": "0.3.0",
-    "fsa1-cli-darwin-x64": "0.3.0",
-    "fsa1-cli-darwin-arm64": "0.3.0",
-    "fsa1-cli-windows-x64": "0.3.0"
+    "fsa1-cli-linux-x64-musl": "0.3.1",
+    "fsa1-cli-linux-arm64-musl": "0.3.1",
+    "fsa1-cli-darwin-x64": "0.3.1",
+    "fsa1-cli-darwin-arm64": "0.3.1",
+    "fsa1-cli-windows-x64": "0.3.1"
   }
 }

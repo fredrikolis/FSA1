@@ -1,6 +1,6 @@
 {
   "name": "fsa1-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MCP server for FSA1: read and edit spreadsheets as a file tree. Tabs are folders, cells are files.",
   "keywords": [
     "mcp",
@@ -26,10 +26,10 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "fsa1-mcp-linux-x64-musl": "0.3.0",
-    "fsa1-mcp-linux-arm64-musl": "0.3.0",
-    "fsa1-mcp-darwin-x64": "0.3.0",
-    "fsa1-mcp-darwin-arm64": "0.3.0",
-    "fsa1-mcp-windows-x64": "0.3.0"
+    "fsa1-mcp-linux-x64-musl": "0.3.1",
+    "fsa1-mcp-linux-arm64-musl": "0.3.1",
+    "fsa1-mcp-darwin-x64": "0.3.1",
+    "fsa1-mcp-darwin-arm64": "0.3.1",
+    "fsa1-mcp-windows-x64": "0.3.1"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "fsa1-cli-windows-x64",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Prebuilt fsa1-cli binary for win32 x64. Installed automatically as an optional dependency of `fsa1-cli`.",
   "license": "MIT",
   "repository": {
