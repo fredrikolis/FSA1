@@ -12,8 +12,15 @@ cd "$(git rev-parse --show-toplevel)"
 MANIFEST=vega-manifest.txt
 BUNDLE=crates/fsa1-html/vendor/vega-bundle.js
 
-# macOS ships `shasum`, GNU ships `sha256sum`; CI runs both hosts.
-sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi; }
+# macOS ships `shasum`, GNU ships `sha256sum`; CI runs both hosts. Settled once, in THIS shell: an
+# `exit` inside the `$(...)` below would leave only the subshell and report a hash mismatch instead.
+if command -v sha256sum >/dev/null; then HASH="sha256sum"
+elif command -v shasum >/dev/null; then HASH="shasum -a 256"
+else
+	printf 'cannot verify a download: neither sha256sum nor shasum is on PATH\n' >&2
+	exit 1
+fi
+sha256() { $HASH "$1"; }
 
 mkdir -p "$(dirname "$BUNDLE")"
 work="$(mktemp -d)"
@@ -23,7 +30,13 @@ trap 'rm -rf "$work"' EXIT
 while read -r name version sha url; do
 	case "$name" in ''|\#*) continue ;; esac
 	printf 'fetching %s@%s\n' "$name" "$version" >&2
-	curl -sfL "$url" -o "$work/$name.js"
+	# Capture the status: curl's own clue -- 22 an HTTP answer, 6 a dead host -- which `set -e` spends.
+	curl -sSfL "$url" -o "$work/$name.js" && status=0 || status=$?
+	if [ "$status" -ne 0 ]; then
+		printf '%s@%s failed to fetch (curl exit %s)\n  url %s\n' \
+			"$name" "$version" "$status" "$url" >&2
+		exit "$status"
+	fi
 	got="$(sha256 "$work/$name.js" | cut -d' ' -f1)"
 	if [ "$got" != "$sha" ]; then
 		printf '%s@%s does not match its pin\n  want %s\n  got  %s\n' \
