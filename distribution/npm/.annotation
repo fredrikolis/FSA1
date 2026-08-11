@@ -1,1 +1,1 @@
-Concern: the npm channel that delivers fsa1-mcp to a Claude host through npx | Non-concern: the GitHub release assets, what the server exposes | IO: none
+Concern: the npm channel — an npx-resolvable package per front end and host | Non-concern: the release assets it packs, what a front end does | IO: none

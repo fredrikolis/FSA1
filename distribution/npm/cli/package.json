@@ -1,0 +1,35 @@
+{
+  "name": "fsa1-cli",
+  "version": "0.2.2",
+  "description": "Command line tool for FSA1: read and edit spreadsheets as a file tree. Tabs are folders, cells are files.",
+  "keywords": [
+    "cli",
+    "spreadsheet",
+    "xlsx",
+    "excel",
+    "filesystem",
+    "agents"
+  ],
+  "homepage": "https://fsa1.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fredrikolis/FSA1.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "fsa1-cli": "bin/fsa1-cli.js"
+  },
+  "files": [
+    "bin/fsa1-cli.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "fsa1-cli-linux-x64-musl": "0.2.2",
+    "fsa1-cli-linux-arm64-musl": "0.2.2",
+    "fsa1-cli-darwin-x64": "0.2.2",
+    "fsa1-cli-darwin-arm64": "0.2.2",
+    "fsa1-cli-windows-x64": "0.2.2"
+  }
+}

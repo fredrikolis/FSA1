@@ -1,0 +1,19 @@
+{
+  "name": "fsa1-cli-darwin-x64",
+  "version": "0.2.2",
+  "description": "Prebuilt fsa1-cli binary for darwin x64. Installed automatically as an optional dependency of `fsa1-cli`.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fredrikolis/FSA1.git"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "fsa1-cli"
+  ]
+}

@@ -1,4 +1,4 @@
-# Concern: turns a v* tag into Release assets, refusing one whose declared versions disagree | Non-concern: picking which asset a machine needs | IO: (a v* tag) -> release assets
+# Concern: turns a v* tag into Release assets and the npm packages built from them | Non-concern: picking which asset a machine needs | IO: (a v* tag) -> assets + npm packages
 # Both front ends are fetched by asset name, so a Release is what makes FSA1 work on a machine with
 # no Rust toolchain. Built with the toolchain pinned in rust-toolchain.toml.
 name: plugin-release
@@ -164,10 +164,10 @@ jobs:
           files: dist/*
           fail_on_unmatched_files: true
 
-  # npx is how a Claude host reaches this server: `npx -y fsa1-mcp` resolves the one binary for the
-  # machine from an npm cache that survives sessions, so no first-run download sits in front of the
-  # MCP handshake. Every local MCP server published in the official plugin directory is reached the
-  # same way.
+  # npx is how a machine reaches either front end without a Rust toolchain: `npx -y fsa1-mcp` and
+  # `npx -y fsa1-cli` each resolve the one binary for the machine from an npm cache that survives
+  # sessions, so no first-run download sits in front of the MCP handshake or the command. Every
+  # local MCP server published in the official plugin directory is reached the same way.
   npm:
     needs: release
     if: startsWith(github.ref, 'refs/tags/')
@@ -189,18 +189,26 @@ jobs:
         run: |
           set -eux
           mkdir -p dist
-          for a in fsa1-mcp-linux-x86_64-musl fsa1-mcp-linux-aarch64-musl \
+          for a in fsa1-cli-linux-x86_64-musl fsa1-cli-linux-aarch64-musl \
+                   fsa1-cli-macos-x86_64 fsa1-cli-macos-aarch64 fsa1-cli-windows-x86_64.exe \
+                   fsa1-mcp-linux-x86_64-musl fsa1-mcp-linux-aarch64-musl \
                    fsa1-mcp-macos-x86_64 fsa1-mcp-macos-aarch64 fsa1-mcp-windows-x86_64.exe; do
             gh release download "${{ github.ref_name }}" -p "$a" -O "dist/$a" --clobber
           done
-      - name: Stamp the version and inject the binaries
-        run: node distribution/npm/scripts/build-npm.mjs "${GITHUB_REF_NAME#v}" dist
       # No NODE_AUTH_TOKEN: `npm publish` auto-detects the OIDC id-token. A platform package must
-      # exist before the wrapper that names it as an optional dependency.
-      - name: Publish the platform packages, then the wrapper
+      # exist before the wrapper that names it as an optional dependency, and build-npm.mjs prints
+      # its publish dirs in exactly that order — one step, because each `run:` is its own shell and
+      # that stdout does not survive a step boundary.
+      #
+      # `set -x` because this job only ever runs against a real tag and cannot be rehearsed: the
+      # trace is the whole post-mortem, and the directories come from a subprocess's stdout, so
+      # they appear nowhere else in the log — the traced `npm publish <dir>` is where they show up.
+      # The list lands in a FILE, not a pipe: a pipe would put the loop in a subshell that reads
+      # stdin, so a future `npm publish` that drained it would publish only the first directory and
+      # still exit 0, and a process substitution would hide a build-npm.mjs failure from `set -e`.
+      - name: Stamp the version, inject the binaries, and publish
         run: |
-          set -eux
-          for plat in linux-x64-musl linux-arm64-musl darwin-x64 darwin-arm64 windows-x64; do
-            npm publish "./distribution/npm/platforms/${plat}"
-          done
-          npm publish ./distribution/npm
+          set -euxo pipefail
+          node distribution/npm/scripts/build-npm.mjs "${GITHUB_REF_NAME#v}" dist > publish-dirs.txt
+          mapfile -t dirs < publish-dirs.txt
+          for d in "${dirs[@]}"; do npm publish "$d"; done

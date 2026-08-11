@@ -26,8 +26,10 @@ Cargo.lock.orig
 
 # Injected at publish time from a release, never committed: the repo carries the packaging,
 # the release carries the bytes.
-distribution/npm/platforms/*/fsa1-mcp
-distribution/npm/platforms/*/fsa1-mcp.exe
+distribution/npm/cli/platforms/*/fsa1-cli
+distribution/npm/cli/platforms/*/fsa1-cli.exe
+distribution/npm/mcp/platforms/*/fsa1-mcp
+distribution/npm/mcp/platforms/*/fsa1-mcp.exe
 
 # The pinned Vega runtime `scripts/fetch-vega.sh` fetches and `fsa1-html/build.rs` embeds. A
 # megabyte of somebody else's minified JavaScript: the repo carries the pin (vega-manifest.txt),

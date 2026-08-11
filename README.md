@@ -15,6 +15,14 @@ A prebuilt binary, into `~/.local/bin`:
 curl -fsSL https://fsa1.sh/install-cli | sh
 ```
 
+Or a prebuilt binary from npm, on Node 18 or newer. Linux gets the static musl build, which runs
+whatever the host's libc:
+
+```
+npx fsa1-cli --help      # run it once, without installing
+npm i -g fsa1-cli        # or put it on PATH
+```
+
 As a Claude Code plugin:
 
 ```
