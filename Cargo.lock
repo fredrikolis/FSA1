@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "conformance"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "fsa1-ast",
  "fsa1-html",
@@ -343,11 +343,11 @@ dependencies = [
 
 [[package]]
 name = "fsa1-ast"
-version = "0.2.3"
+version = "0.3.0"
 
 [[package]]
 name = "fsa1-cli"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "calamine",
  "fsa1-ingest",
@@ -358,14 +358,14 @@ dependencies = [
 
 [[package]]
 name = "fsa1-html"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "fsa1-model",
 ]
 
 [[package]]
 name = "fsa1-ingest"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "calamine",
  "fsa1-ast",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "fsa1-mcp"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "fsa1-ingest",
  "fsa1-model",
@@ -387,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "fsa1-model"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "fsa1-ast",
  "serde_json",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "fsa1-verbs"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "annotated-tree",
  "comfy-table",
@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "fsa1-xlsx"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "calamine",
  "fsa1-ast",

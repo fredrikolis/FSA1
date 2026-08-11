@@ -1,6 +1,6 @@
 {
   "name": "fsa1-cli-linux-x64-musl",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Prebuilt fsa1-cli binary for linux x64. Installed automatically as an optional dependency of `fsa1-cli`.",
   "license": "MIT",
   "repository": {

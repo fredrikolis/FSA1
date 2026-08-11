@@ -53,6 +53,43 @@ jobs:
       - name: test (--include-ignored)
         run: cargo test --locked --workspace -- --include-ignored
 
+      # What `--version` PRINTS is the point, and nothing ran the binary: v0.2.3 shipped a fsa1-cli
+      # reporting 0.1.0 while every declaration agreed on 0.2.3. It lands here rather than in
+      # plugin-release.yml because it needs no tag — drift fails the push that causes it, not the
+      # tag that ships it — and this job already holds a toolchain and a built workspace.
+      - name: Build both front ends
+        run: cargo build --locked -p fsa1-cli -p fsa1-mcp
+
+      - name: Both built front ends report the workspace version
+        # `want` MUST come from the workspace manifest — [workspace.package] in the root Cargo.toml,
+        # the declaration a bump edits — and never from a resolved PACKAGE version. `cargo metadata`
+        # / `cargo pkgid` report for fsa1-cli the same number env!("CARGO_PKG_VERSION") compiled into
+        # the binary being tested, so `cli == want` would hold by construction: it would still pass
+        # with both front-end crates carrying `version = "0.1.0"` while the workspace says 0.3.0,
+        # which is precisely how v0.2.3 shipped a fsa1-cli reporting 0.1.0.
+        # scripts/workspace-version.sh is the ONE parser, shared with plugin-release.yml's `versions`
+        # job, so there is no hand-kept duplicate free to drift.
+        # fsa1-cli prints a JSON envelope, so `.data.version` is READ — a grep for the bare number
+        # would pass on a build that printed it anywhere, a timestamp included. fsa1-mcp prints the
+        # bare number.
+        run: |
+          set -uo pipefail
+          want=$(bash scripts/workspace-version.sh)
+          cli=$(./target/debug/fsa1-cli --version | jq -r .data.version)
+          mcp=$(./target/debug/fsa1-mcp --version)
+          echo "workspace Cargo.toml : ${want:-<unset>}"
+          echo "fsa1-cli --version   : ${cli:-<unset>}"
+          echo "fsa1-mcp --version   : ${mcp:-<unset>}"
+          ok=1
+          [ -n "$want" ] && [ -n "$cli" ] && [ -n "$mcp" ] || ok=0
+          [ "$cli" = "$want" ] || ok=0
+          [ "$mcp" = "$want" ] || ok=0
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::a built front end does not report the workspace version" >&2
+            exit 1
+          fi
+          echo "both front ends report: $want"
+
   # FSA1-specific mechanical gates — OS-independent, so once on ubuntu. No cargo toolchain needed
   # (bash only).
   gates:

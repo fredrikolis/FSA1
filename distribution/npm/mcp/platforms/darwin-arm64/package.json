@@ -1,6 +1,6 @@
 {
   "name": "fsa1-mcp-darwin-arm64",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Prebuilt fsa1-mcp binary for darwin arm64. Installed automatically as an optional dependency of `fsa1-mcp`.",
   "license": "MIT",
   "repository": {

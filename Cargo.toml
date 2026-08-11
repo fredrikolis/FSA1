@@ -15,5 +15,5 @@ members = ["crates/fsa1-ast", "crates/fsa1-cli", "crates/fsa1-verbs", "crates/fs
 # ONE version for every member, so `fsa1-cli --version`, `fsa1-mcp --version` and `initialize`'s
 # serverInfo cannot disagree about which build a user is holding. `plugin-release.yml`'s `versions`
 # job holds this value, `plugin/.claude-plugin/plugin.json` and the tag to each other.
-version = "0.2.3"
+version = "0.3.0"
 license = "MIT"

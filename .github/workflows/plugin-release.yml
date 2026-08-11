@@ -13,18 +13,20 @@ permissions:
 
 jobs:
   # A tag whose surfaces disagree must produce no assets rather than wrong ones, so this runs first
-  # and everything else waits on it. `plugin.json` is NOT stamped at build time: `/plugin update`
-  # reads it from the repo, so a value injected here would never reach the file a host fetches — the
-  # bump is a commit, and this job is what proves it happened.
+  # and everything else waits on it. NO version is written at build time — `/plugin update` and an
+  # npm reader both take the number from the repo, so a value injected here would never reach the
+  # file they fetch. The bump is a commit, and this job is what proves it happened.
   versions:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: The workspace, the plugin manifest and the tag state one version
+      - name: The workspace, the plugin manifest, the tag and every npm manifest state one version
         run: |
           set -uo pipefail
-          workspace=$(awk '/^\[workspace\.package\]/{f=1;next} /^\[/{f=0}
-                           f && /^version *= *"/{sub(/^version *= *"/,"");sub(/".*/,"");print;exit}' Cargo.toml)
+          # scripts/workspace-version.sh reads [workspace.package] out of the root Cargo.toml. It is
+          # the ONE parser: ci.yml's built-binary assertion calls the same script, so the two gates
+          # cannot come to mean different things about which number is the workspace's.
+          workspace=$(bash scripts/workspace-version.sh)
           plugin=$(jq -r .version plugin/.claude-plugin/plugin.json)
           # workflow_dispatch has no tag to compare, so the two file values are held to each other
           # and the tag leg is skipped.
@@ -47,6 +49,41 @@ jobs:
             echo "$strays"
             ok=0
           fi
+          # The npm manifests state a version too, and each wrapper pins five optional dependencies
+          # to it. Nothing rewrites them at publish time, so they are held HERE rather than only by
+          # build-npm.mjs: that script runs in the `npm` job, which `needs: release`, and a pin left
+          # behind would refuse only after the Release is public.
+          manifests=$(find distribution/npm -name package.json | sort)
+          [ -n "$manifests" ] || { echo "no npm manifests found under distribution/npm"; ok=0; }
+          for m in $manifests; do
+            bad=$(jq -r --arg v "$workspace" '
+              [ select(.version != $v) | "version = \(.version // "<unset>")" ]
+              + [ (.optionalDependencies // {}) | to_entries[] | select(.value != $v)
+                  | "optionalDependencies.\(.key) = \(.value // "<unset>")" ]
+              | .[]' "$m") || { echo "$m could not be read"; ok=0; continue; }
+            [ -z "$bad" ] || { echo "$m disagrees with ${workspace:-<unset>}:"; echo "$bad"; ok=0; }
+          done
+          # The pin SET, not only the pins that happen to be there. Iterating optionalDependencies
+          # checks the values of whatever it finds, so a wrapper with the block DELETED iterates zero
+          # times and passes — and the tag then publishes a shim that resolves no binary on any
+          # platform. One dropped key is worse: four platforms work and the fifth is unreachable.
+          # The expected names are DERIVED from build-npm.mjs's MATRIX, the single source of truth
+          # this repo already names for the platform packages, so this job carries no second list of
+          # its own to drift. (build-npm.mjs holds the same set itself: it runs in the `npm` job,
+          # which `needs: release`, so it would refuse only after the Release is public.)
+          lines() { printf '%s\n' "$1" | sed '/^$/d'; }
+          rows=$(grep -oE 'front: *"[a-z]+", *plat: *"[a-z0-9-]+"' distribution/npm/scripts/build-npm.mjs \
+                 | sed -E 's/front: *"([a-z]+)", *plat: *"([a-z0-9-]+)"/\1 fsa1-\1-\2/') || true
+          [ -n "$rows" ] || { echo "no MATRIX rows found in distribution/npm/scripts/build-npm.mjs"; ok=0; }
+          for front in $(lines "$rows" | awk '{print $1}' | sort -u); do
+            w="distribution/npm/$front/package.json"
+            want=$(lines "$rows" | awk -v f="$front" '$1 == f {print $2}' | sort)
+            have=$(jq -r '(.optionalDependencies // {}) | keys[]' "$w" | sort) || { echo "$w could not be read"; ok=0; continue; }
+            miss=$(comm -23 <(lines "$want") <(lines "$have"))
+            extra=$(comm -13 <(lines "$want") <(lines "$have"))
+            [ -z "$miss" ] || { printf '%s does not pin these MATRIX platform packages:\n%s\n' "$w" "$miss"; ok=0; }
+            [ -z "$extra" ] || { printf '%s pins these, which the MATRIX does not name:\n%s\n' "$w" "$extra"; ok=0; }
+          done
           if [ "$ok" -ne 1 ]; then
             echo "::error::the versions above disagree; no assets will be built" >&2
             exit 1
@@ -206,7 +243,7 @@ jobs:
       # The list lands in a FILE, not a pipe: a pipe would put the loop in a subshell that reads
       # stdin, so a future `npm publish` that drained it would publish only the first directory and
       # still exit 0, and a process substitution would hide a build-npm.mjs failure from `set -e`.
-      - name: Stamp the version, inject the binaries, and publish
+      - name: Check the versions, inject the binaries, and publish
         run: |
           set -euxo pipefail
           node distribution/npm/scripts/build-npm.mjs "${GITHUB_REF_NAME#v}" dist > publish-dirs.txt

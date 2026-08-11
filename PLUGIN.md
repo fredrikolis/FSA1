@@ -35,7 +35,9 @@ renaming it breaks all of them. Relabel with `displayName` instead.
 The obligation is enforced, not merely stated: the `versions` job in `.github/workflows/plugin-release.yml`
 runs before any build and fails the release when the version surfaces disagree, naming each one in the
 log. A tag that forgot this bump therefore ships nothing, rather than assets that misreport which
-build they are.
+build they are. The surfaces it holds to one number are the workspace `Cargo.toml`, the plugin
+manifest, the tag itself, and the twelve npm manifests under `distribution/npm/` together with each
+wrapper's optional-dependency pins.
 
 `plugin/.mcp.json` = the capability (the host starts the server and its tools appear).
 `plugin/skills/` = the instructions (a tool list alone doesn't teach Claude *when* to reach for one).

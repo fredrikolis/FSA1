@@ -1,4 +1,4 @@
-// Concern: stamps the version and drops each binary into its package, in publish order | Non-concern: running `npm publish` | IO: (version, binaries) -> a stamped tree + the order to publish it in
+// Concern: holds every npm manifest to the given version and drops each binary into its package | Non-concern: running `npm publish` | IO: (version, binaries) -> package directories, in publish order
 //
 // Usage:  node distribution/npm/scripts/build-npm.mjs <version> <binaries-dir>
 //
@@ -6,7 +6,7 @@
 // `gh release download` leaves them. Binaries are NEVER committed — they are injected here, so the
 // repo carries the packaging and the release carries the bytes.
 
-import { readFileSync, writeFileSync, copyFileSync, existsSync, chmodSync } from "node:fs";
+import { readFileSync, copyFileSync, existsSync, chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,17 +38,51 @@ if (!version || !binariesDir) {
 
 const npmDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
-function stampVersion(pkgPath, mutate = (p) => p) {
+// The committed number is the real one and nothing here writes it back: a value stamped at publish
+// time is a value no reader and no gate can check. `pins` is a wrapper's EXPECTED
+// optionalDependencies names, off the MATRIX; null for a platform package.
+//
+// The pin SET is held, not just the values of whichever pins exist: iterating the block checks
+// nothing when the block is absent, and a wrapper published that way resolves no binary on any
+// platform. A single missing key is quieter still — four platforms ship and the fifth is
+// unreachable — so a missing key, an absent block and an unexpected extra each refuse by name. Each
+// pin is this exact version: a range would let npm resolve a binary from a different release than
+// the shim that reads it.
+function disagreements(pkgPath, pins) {
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-  pkg.version = version;
-  mutate(pkg);
-  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+  const found = pkg.optionalDependencies ?? {};
+  const declared = [["version", pkg.version]];
+  const unexpected = [];
+  if (pins) {
+    for (const name of pins) declared.push([`optionalDependencies.${name}`, found[name]]);
+    for (const name of Object.keys(found)) {
+      if (!pins.includes(name)) unexpected.push(`${pkgPath}: optionalDependencies.${name} is not a MATRIX platform package`);
+    }
+  }
+  return declared
+    .filter(([, got]) => got !== version)
+    .map(([key, got]) => `${pkgPath}: ${key} is ${got ?? "<missing>"}, expected ${version}`)
+    .concat(unexpected);
+}
+
+// The front ends come off the MATRIX rather than a list beside it, so adding a row is all it takes,
+// and so does the platform-package name each wrapper must pin.
+const fronts = [...new Set(MATRIX.map((r) => r.front))];
+const pinsFor = (front) => MATRIX.filter((r) => r.front === front).map((r) => `fsa1-${front}-${r.plat}`);
+
+// Every manifest is read before a single binary is copied, so a refusal leaves the tree untouched.
+const wrong = [
+  ...MATRIX.map((r) => disagreements(join(npmDir, r.front, "platforms", r.plat, "package.json"), null)),
+  ...fronts.map((front) => disagreements(join(npmDir, front, "package.json"), pinsFor(front))),
+].flat();
+if (wrong.length) {
+  console.error(wrong.join("\n"));
+  process.exit(1);
 }
 
 const publishDirs = [];
 
-// The front ends come off the MATRIX rather than a list beside it, so adding a row is all it takes.
-for (const front of [...new Set(MATRIX.map((r) => r.front))]) {
+for (const front of fronts) {
   for (const { plat, asset, bin } of MATRIX.filter((r) => r.front === front)) {
     const platDir = join(npmDir, front, "platforms", plat);
     const src = join(binariesDir, asset);
@@ -56,7 +90,6 @@ for (const front of [...new Set(MATRIX.map((r) => r.front))]) {
       console.error(`missing binary for ${front} ${plat}: ${src}`);
       process.exit(1);
     }
-    stampVersion(join(platDir, "package.json"));
     const dest = join(platDir, bin);
     copyFileSync(src, dest);
     // The download loses the mode, and a binary npm ships without +x is one no host can spawn.
@@ -64,16 +97,9 @@ for (const front of [...new Set(MATRIX.map((r) => r.front))]) {
     publishDirs.push(platDir);
   }
 
-  // The wrapper pins each optional dependency to this exact version: a range would let npm resolve a
-  // binary from a different release than the shim that reads it. It is pushed AFTER its own platform
-  // dirs, because a wrapper naming a package that is not published yet resolves to nothing.
-  const frontDir = join(npmDir, front);
-  stampVersion(join(frontDir, "package.json"), (pkg) => {
-    for (const key of Object.keys(pkg.optionalDependencies)) {
-      pkg.optionalDependencies[key] = version;
-    }
-  });
-  publishDirs.push(frontDir);
+  // The wrapper is pushed AFTER its own platform dirs, because a wrapper naming a package that is
+  // not published yet resolves to nothing.
+  publishDirs.push(join(npmDir, front));
 }
 
 console.log(publishDirs.join("\n"));
