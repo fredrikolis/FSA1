@@ -857,11 +857,11 @@ fn unpack_help() -> String {
 const GLOBAL_HELP: &str = r#"fsa1-cli — render, lint, and evaluate a spreadsheet stored as a filesystem (tabs = folders, cells/ranges = files)
 
 USAGE:
-  fsa1-cli render <path> [--mode <combined|values|functions>] [--format <ascii|html>]   # <path>: <wb>[/<tab>[/<A1>]]
-  fsa1-cli check  <path> [--xlsx]                                 # <path>: <wb>[/<tab>[/<A1>]]
+  fsa1-cli render <path> [--mode <combined|values|functions>] [--format <ascii|html>]   # <path>: <wb>[/<tab>[/<A1>|<Name>|<file>]]
+  fsa1-cli check  <path> [--xlsx]                                 # <path>: <wb>[/<tab>[/<A1>|<Name>|<file>]]
   fsa1-cli eval   <path> --formula '=<formula>'                  # <path>: <wb>[/<tab>]
   fsa1-cli trace  <path> [--dependents] [--depth <N>]           # <path>: <wb>/<tab>/<A1> (one cell)
-  fsa1-cli tree   <path> [--mode <combined|values|functions>]    # <path>: <wb>[/<tab>[/<A1>]]
+  fsa1-cli tree   <path> [--mode <combined|values|functions>]    # <path>: <wb>[/<tab>[/<A1>|<Name>|<file>]]
   fsa1-cli sample <dir>
   fsa1-cli unpack [--strict] [--decompose <policy>] <src> [<dst>]   # <src> is .ods/.xlsx; <dst> derives to ./<src-stem>/
   fsa1-cli pack   [--strict] [--force] [--target xlsx] <workbook-dir> [<dst>]  # <dst> derives to ./<basename>.xlsx; --force overwrites it
@@ -959,11 +959,12 @@ const RENDER_HELP: &str = r#"fsa1-cli render — draw a tab (or a sub-range) of 
 USAGE:
   fsa1-cli render <path> [--mode <combined|values|functions>] [--format <ascii|html>]
 
-  <path> is <wb>[/<tab>[/<A1>|<Name>]] — the tab and A1 cell/range or defined NAME are PART OF THE PATH:
+  <path> is <wb>[/<tab>[/<A1>|<Name>|<file>]] — the tab and A1 cell/range, defined NAME or FILE are PART OF THE PATH:
     render ./budget                draw EVERY tab, each at its used region
     render ./budget/Summary        draw the Summary tab
     render ./budget/Summary/A1:E14 draw exactly that A1 rectangle on Summary
     render ./budget/Summary/total  draw the region an FS4 defined name resolves to
+    render ./budget/Summary/A1:E14.css  draw what a file the tab holds governs
 
 DESCRIPTION:
   Render the path's scope to grids. ONLY the path's scope is READ — the files whose names it meets,
@@ -981,7 +982,8 @@ DESCRIPTION:
   prints a stderr note but still draws the padded grid and exits 0.
 
 ARGUMENTS:
-  <path>            (required) <wb>[/<tab>[/<A1>]] (tabs = sub-folders; the A1 selector is logical).
+  <path>            (required) <wb>[/<tab>[/<A1>|<Name>|<file>]] (tabs = sub-folders; the A1 selector
+                    is logical; a file the tab holds scopes what that file governs).
   --mode <m>        (optional) One of: combined (default), values (computed only), functions (authored
                     source only: a formula shows its =… text, a literal shows its value).
   --format <f>      (optional) The CARRIER: ascii (default) or html, which takes no --mode. --mode picks
@@ -1031,11 +1033,12 @@ const CHECK_HELP: &str = r#"fsa1-cli check — lint a filesystem spreadsheet
 USAGE:
   fsa1-cli check <path> [--xlsx]
 
-  <path> is <wb>[/<tab>[/<A1>|<Name>]] — a tab/region or defined NAME in the path scopes the report:
+  <path> is <wb>[/<tab>[/<A1>|<Name>|<file>]] — a tab/region, defined NAME or FILE in the path scopes the report:
     check ./budget                 lint the whole workbook
     check ./budget/Sheet1          lint only the Sheet1 tab
     check ./budget/Sheet1/H3       lint only cell H3
     check ./budget/Sheet1/Days     lint only the region a defined name resolves to
+    check ./budget/Sheet1/H3.css   lint what a file the tab holds governs
 
 DESCRIPTION:
   Lint the workbook: overlap, dimension-mismatch, cycle, and the load-time filename refusals.
@@ -1056,7 +1059,8 @@ DESCRIPTION:
   where it will not parse at all, which is reported against the demanded work.
 
 ARGUMENTS:
-  <path>            (required) <wb>[/<tab>[/<A1>]] — the workbook, optionally narrowed to a tab/region.
+  <path>            (required) <wb>[/<tab>[/<A1>|<Name>|<file>]] — the workbook, optionally narrowed
+                    to a tab/region, or to what a file the tab holds governs.
 
 OPTIONS:
   --xlsx            also report what an .xlsx export will not carry; exit 3 if anything will be lost.
@@ -1091,7 +1095,7 @@ const EVAL_HELP: &str = r##"fsa1-cli eval — evaluate an ad-hoc formula against
 USAGE:
   fsa1-cli eval <path> --formula '=<formula>'
 
-  <path> is <wb> or <wb>/<tab> (NO A1 selector — eval has no region):
+  <path> is <wb> or <wb>/<tab> (NO A1 selector, and no file the tab holds — eval has no region):
     eval ./budget --formula …          unqualified refs bind to the first tab
     eval ./budget/Orders --formula …   unqualified refs bind to the Orders tab
 
@@ -1103,7 +1107,8 @@ DESCRIPTION:
   your references need, and a narrower read would sum unopened cells as blank.
 
 ARGUMENTS:
-  <path>            (required) <wb> or <wb>/<tab> — the tab unqualified references resolve against.
+  <path>            (required) <wb> or <wb>/<tab> — the tab unqualified references resolve against; a
+                    segment naming a file the tab holds is refused, whatever that file governs.
   --formula '=…'    (required) The formula to evaluate.
 
 EXAMPLES:
@@ -1131,7 +1136,8 @@ const TRACE_HELP: &str = r#"fsa1-cli trace — inspect a cell's dependency tree
 USAGE:
   fsa1-cli trace <path> [--dependents] [--depth <N>]
 
-  <path> is <wb>/<tab>/<A1>|<Name> naming a SINGLE cell (a range selector or named range is refused):
+  <path> is <wb>/<tab>/<A1>|<Name>|<file> naming a SINGLE cell (a range selector, a named range, or a
+  file governing more than one cell is refused):
     trace ./budget/Sheet1/D1               trace D1's upstream dependencies
     trace ./budget/Sheet1/D1 --dependents  trace D1's downstream consumers
     trace ./budget/Sheet1/anchor           trace the single cell a defined name resolves to
@@ -1145,7 +1151,8 @@ DESCRIPTION:
   reads the WHOLE workbook: which cells read yours is answerable only by opening every one of them.
 
 ARGUMENTS:
-  <path>            (required) <wb>/<tab>/<A1> — the single cell to trace (a range is refused).
+  <path>            (required) <wb>/<tab>/<A1>|<Name>|<file> — the single cell to trace; a file the
+                    tab holds is refused wherever what it governs is not one cell.
   --dependents      (optional) Trace downstream consumers instead of upstream dependencies.
   --depth <N>       (optional) Cap the DISPLAYED tree depth. Default: the whole cone, however deep.
 
@@ -1176,10 +1183,11 @@ const TREE_HELP: &str = r#"fsa1-cli tree — present a workbook's complete struc
 USAGE:
   fsa1-cli tree <path> [--mode <combined|values|functions>] [--full]
 
-  <path> is <wb>[/<tab>[/<A1>]] — the tab and A1 region are PART OF THE PATH:
+  <path> is <wb>[/<tab>[/<A1>|<Name>|<file>]] — the tab and A1 region are PART OF THE PATH:
     tree ./budget                  the whole workbook
     tree ./budget/Summary          just the Summary tab
     tree ./budget/Summary/A1:A60   exactly that viewport's cells, ALL of them (uncapped)
+    tree ./budget/Summary/A1:A60.css   what a file the tab holds governs
 
 DESCRIPTION:
   Present the workbook's COMPLETE authored structure (CLI3) — every tab, every cell of every cell/range
@@ -1201,7 +1209,8 @@ DESCRIPTION:
   all, .cache/ included — as does every other command.
 
 ARGUMENTS:
-  <path>            (required) <wb>[/<tab>[/<A1>]] — the workbook, a tab, or a tab region.
+  <path>            (required) <wb>[/<tab>[/<A1>|<Name>|<file>]] — the workbook, a tab, a tab region,
+                    or what a file the tab holds governs.
   --mode <m>        (optional) One of: combined (default: value AND source, `<value> ← =<formula>`),
                     values (computed only), functions (authored source only).
   --full            (optional) Lift the per-range coordinate cap on the whole-structure view: expand

@@ -1,4 +1,4 @@
-// Concern: what an entry's NAME means — a range, a sidecar, a figure, a defined name — and what it resolves to | Non-concern: finding the entries on disk, evaluating | IO: (entries) -> NameTable
+// Concern: what an entry's NAME means — range, sidecar, figure, defined name — what it resolves to | Non-concern: finding them on disk | IO: (entries) -> NameTable; (name, stems, content) -> EntryScope
 
 use crate::diagnostic::{Code, Diagnostic, Loc};
 use crate::overlap::Rect;
@@ -225,6 +225,49 @@ pub fn figure_occupancy(name: &str) -> Option<Rect> {
 /// Asked BEFORE the defined-name branch, which would otherwise claim the stem as a name.
 pub fn is_figure_entry(name: &str) -> bool {
     figure_stem(name).is_some()
+}
+
+/// The extent an entry participates in: the rectangle its name STATES, or the whole tab where the
+/// name states none — a superset that is never a narrower region that is wrong.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryScope {
+    Rect(Rect),
+    Tab,
+}
+
+/// What scope a range file, a sidecar or a figure participates in, read off its NAME alone —
+/// nothing is opened, so no file's bytes decide it. `None` for a name that is none of those: the
+/// defined-name table answers those. TAB-AWARE through `stems`, as [`css_entry`] is; `content` is
+/// what an OPEN root clamps against, so a tab stating none leaves that root reaching nothing.
+pub fn entry_scope(name: &str, stems: &FigureStems, content: Option<Rect>) -> Option<EntryScope> {
+    if let Some(entry) = css_entry(name, stems) {
+        return Some(match entry {
+            CssEntry::Root(stem) => stated(
+                crate::filename::parse_root(stem)
+                    .ok()
+                    .and_then(|root| root.resolve(content)),
+            ),
+            CssEntry::TabLayer | CssEntry::Unrooted(_) => EntryScope::Tab,
+        });
+    }
+    if is_figure_entry(name) {
+        return Some(stated(figure_occupancy(name)));
+    }
+    if is_cell_filename(name) {
+        return Some(stated(
+            crate::filename::parse_filename(name).ok().map(|f| f.region),
+        ));
+    }
+    None
+}
+
+/// A name whose rectangle will not parse states no extent, so it scopes to the tab — the fault it
+/// carries is a DIAGNOSTIC the caller asked about, not a reason to refuse the path.
+fn stated(region: Option<Rect>) -> EntryScope {
+    match region {
+        Some(region) => EntryScope::Rect(region),
+        None => EntryScope::Tab,
+    }
 }
 
 /// The routing predicate both loader paths share. A range separator cannot occur in a name, so `:`
@@ -1306,6 +1349,86 @@ mod tests {
         ] {
             assert!(stem_region(stem).is_none(), "{stem} is the name form");
         }
+    }
+
+    /// The four kinds whose NAME states a rectangle, the three that state none, and a name that is
+    /// no entry of this module's at all.
+    #[test]
+    fn every_entry_kind_scopes_to_what_its_name_states() {
+        let content = Rect {
+            min_col: 0,
+            min_row: 0,
+            max_col: 3,
+            max_row: 8,
+        };
+        let figures = figure_stems(["H1:K10.json", "Chart1.json"]);
+        let scope = |name: &str| entry_scope(name, &figures, Some(content));
+
+        assert_eq!(
+            scope("A1:D9"),
+            Some(EntryScope::Rect(stem_region("A1:D9").unwrap()))
+        );
+        assert_eq!(
+            scope("A1:A5.css"),
+            Some(EntryScope::Rect(stem_region("A1:A5").unwrap()))
+        );
+        assert_eq!(
+            scope("A:A.css"),
+            Some(EntryScope::Rect(Rect {
+                min_col: 0,
+                max_col: 0,
+                min_row: content.min_row,
+                max_row: content.max_row,
+            })),
+            "an open root is clamped by the tab's content"
+        );
+        assert_eq!(
+            scope("H1:K10.json"),
+            Some(EntryScope::Rect(stem_region("H1:K10").unwrap()))
+        );
+
+        assert_eq!(scope(".css"), Some(EntryScope::Tab), "the tab's own layer");
+        assert_eq!(
+            scope("Chart1.json"),
+            Some(EntryScope::Tab),
+            "a floating figure"
+        );
+        assert_eq!(scope("Chart1.css"), Some(EntryScope::Tab), "its placement");
+
+        assert_eq!(scope("total"), None, "a defined name is no entry kind here");
+        assert_eq!(scope("Days.begin"), None);
+    }
+
+    /// The SIBLING decides here too: `Q4.json` is a range-form figure, so it scopes to its rectangle
+    /// while the `Q4.css` beside it is that figure's placement and scopes to the tab.
+    #[test]
+    fn a_css_stem_with_a_json_sibling_scopes_to_the_tab_not_its_stems_rectangle() {
+        let figures = figure_stems(["Q4.json"]);
+        assert_eq!(
+            entry_scope("Q4.json", &figures, None),
+            Some(EntryScope::Rect(stem_region("Q4").unwrap()))
+        );
+        assert_eq!(entry_scope("Q4.css", &figures, None), Some(EntryScope::Tab));
+        assert_eq!(
+            entry_scope("Q4.css", &FigureStems::new(), None),
+            Some(EntryScope::Rect(stem_region("Q4").unwrap())),
+            "with no sibling the name decides"
+        );
+    }
+
+    /// A file that exists but participates in nothing legal is a DIAGNOSTIC the caller asked about,
+    /// so it scopes to the tab rather than refusing the path that named it.
+    #[test]
+    fn a_name_stating_no_workable_rectangle_scopes_to_the_tab() {
+        let none = FigureStems::new();
+        assert_eq!(entry_scope("Units.css", &none, None), Some(EntryScope::Tab));
+        assert_eq!(
+            entry_scope("A:A.css", &none, None),
+            Some(EntryScope::Tab),
+            "an open root over a tab with no content reaches nothing"
+        );
+        assert_eq!(entry_scope("a1", &none, None), Some(EntryScope::Tab));
+        assert_eq!(entry_scope("A1:A1.css", &none, None), Some(EntryScope::Tab));
     }
 
     #[test]

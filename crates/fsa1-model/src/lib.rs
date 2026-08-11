@@ -44,9 +44,10 @@ pub use grid::{
     Cell, Grid, deserialize_tsv, encode_field, lex_literal, load_error_value, split_format_marker,
 };
 pub use names::{
-    CssEntry, FIGURE_SUFFIX, FigureStems, Name, NameRepr, NameScope, NameTable, NameTarget,
-    PRESENTATION_SUFFIX, RawNameEntry, css_entry, figure_occupancy, figure_stems, is_cell_filename,
-    is_figure_entry, is_presentation_entry, is_tab_layer, presentation_stem, quote_sheet,
+    CssEntry, EntryScope, FIGURE_SUFFIX, FigureStems, Name, NameRepr, NameScope, NameTable,
+    NameTarget, PRESENTATION_SUFFIX, RawNameEntry, css_entry, entry_scope, figure_occupancy,
+    figure_stems, is_cell_filename, is_figure_entry, is_presentation_entry, is_tab_layer,
+    presentation_stem, quote_sheet,
 };
 pub use number_literal::{display_number_literal, effective_literal_format, is_display_exact};
 pub use overlap::{Rect, detect_overlaps};

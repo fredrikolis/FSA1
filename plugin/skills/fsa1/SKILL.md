@@ -64,8 +64,11 @@ write the cell files directly with ordinary file tools, then use `render` or `ch
 
 ## Tools
 
-Path grammar: `<wb>[/<tab>[/<A1>]]` — the tab and cell/range are PART OF THE PATH. Every MCP tool that
-takes a `target` takes it in this form, and on the CLI it is the positional `<path>` argument.
+Path grammar: `<wb>[/<tab>[/<A1>|<Name>|<file>]]` — the tab and cell/range are PART OF THE PATH. After
+a tab, that final segment may equally name a defined NAME or a FILE the tab holds (`A1:A5.css`,
+`H1:K10.json`), and it scopes what that file governs; `eval`, which takes no region, refuses one.
+Every MCP tool that takes a `target` takes it in this form, and on the CLI it is the positional
+`<path>` argument.
 
 One table, both paths. Optional arguments are in brackets.
 

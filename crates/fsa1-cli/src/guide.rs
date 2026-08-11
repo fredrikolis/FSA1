@@ -114,7 +114,9 @@ NAMES — a named cell/range/formula, by an identifier (not an A1 address)
   A name is an entry in its SCOPE folder: a tab folder = sheet-scoped, the workbook root = workbook-
   scoped (a sheet-scoped name shadows a workbook one of the same identifier). Reference it in a
   formula by its identifier: =SUM(Days), =total*2. A name is also ADDRESSABLE on the CLI as a path's
-  final segment — render/check/trace <wb>/<tab>/<Name> resolves it to its target cell/range.
+  final segment — render/check/trace <wb>/<tab>/<Name> resolves it to its target cell/range. That
+  segment may equally name a FILE the tab holds (A1:A5.css, H1:K10.json), and it scopes what that
+  file governs.
     single cell → a SYMLINK to the cell file:            ln -s B5 Sheet1/total
     a range     → two corner symlinks .begin / .end:     ln -s A2 Sheet1/Days.begin
                                                          ln -s A366 Sheet1/Days.end
@@ -131,10 +133,12 @@ AUTHORING — the filesystem IS the write surface; there is NO write command
     fsa1-cli check budget/Sheet1/H3             # scoped validation of just that cell
   Then render/check to verify. Repair a rejected cell by editing its file and re-checking.
 
-COMMANDS  (the tab and A1 cell/range are PART OF THE PATH: <wb>[/<tab>[/<A1>]])
+COMMANDS  (the tab and A1 cell/range are PART OF THE PATH: <wb>[/<tab>[/<A1>|<Name>|<file>]])
   fsa1-cli render <path> [--mode combined|values|functions] [--format ascii|html]
-                                          <path>=<wb>[/<tab>[/<A1>]]; default COMBINED: a formula shows
-                                          `<value> ← =<formula>`. render wb/Tab/A1:D9 draws that region.
+                                          <path>=<wb>[/<tab>[/<A1>|<Name>|<file>]]; default COMBINED:
+                                          a formula shows `<value> ← =<formula>`. render wb/Tab/A1:D9
+                                          draws that region; render wb/Tab/A1:D9.css draws what that
+                                          file governs.
                                           --format html writes one standalone styled document to stdout,
                                           always VALUES with each formula in its formula bar, and so
                                           takes no --mode
