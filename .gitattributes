@@ -28,3 +28,7 @@ distribution/npm/scripts/build-npm.mjs text eol=lf
 *.expected text eol=lf
 conformance/encoding/artifacts/** text eol=lf
 conformance/render/oracle/** text eol=lf
+
+# The build parses this, so it is LF everywhere: a CRLF checkout puts a carriage return on the
+# last field, and curl reads the URL it lands on as malformed (exit 3).
+vega-manifest.txt text eol=lf

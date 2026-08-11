@@ -29,6 +29,9 @@ trap 'rm -rf "$work"' EXIT
 : >"$work/bundle.js"
 while read -r name version sha url; do
 	case "$name" in ''|\#*) continue ;; esac
+	# A CRLF checkout puts the carriage return on the last field; strip it from every one, since
+	# the column order is not a promise and on the sha it would read as a pin mismatch.
+	name="${name%$'\r'}" version="${version%$'\r'}" sha="${sha%$'\r'}" url="${url%$'\r'}"
 	printf 'fetching %s@%s\n' "$name" "$version" >&2
 	# Capture the status: curl's own clue -- 22 an HTTP answer, 6 a dead host -- which `set -e` spends.
 	curl -sSfL "$url" -o "$work/$name.js" && status=0 || status=$?
