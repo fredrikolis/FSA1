@@ -393,7 +393,7 @@ pre,.term{
 .term .d{ color:var(--dim); }            /* directory headers in ls   */
 .term .fx{ color:var(--l-fx); }          /* an =formula, anywhere     */
 
-/* ---------- 3 · the three claims ---------- */
+/* ---------- 4 · the three claims ---------- */
 ul.claims{ list-style:none; margin:0; padding:0; }
 ul.claims li{
   display:flex;
@@ -745,23 +745,6 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
     </div></div>
   </section>
 
-  <!-- 3 ------------------------------------------------------- -->
-  <section>
-    <p class="kicker">[ FSA1 figures ]</p>
-    <h2>A figure is a file.</h2>
-    <p class="figlede">Every chart below is a <code>.json</code> beside the cells, bound to
-    <code>Orders!A1:D4</code>. Change a cell and the figure follows — it draws what the sheet computes,
-    not a copy of it.</p>
-    <p class="figlede">The JSON is a <a href="https://vega.github.io/schema/vega-lite/v5.json">Vega-Lite</a>
-    spec, written straight: the file an author edits is the file FSA1 draws, plus one
-    <code>datasets</code> key holding what each binding resolved to.</p>
-    <div class="window figwin"><div class="loop" id="figloop">
-      <div class="frame on"><div class="fig" data-spec='{"title":"Orders/total.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"layer":[{"mark":{"type":"bar","cornerRadiusEnd":3,"color":"#4fd4a8","opacity":0.9}},{"mark":{"type":"text","dy":-8,"color":"#9aa4b2","fontSize":11},"encoding":{"text":{"field":"Total","type":"quantitative"}}}],"encoding":{"x":{"field":"Item","type":"nominal","axis":{"labelAngle":0,"title":null}},"y":{"field":"Total","type":"quantitative","title":"Total","axis":{"grid":true}}}}'></div></div>
-      <div class="frame"><div class="fig" data-spec='{"title":"Orders/price-vs-qty.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"layer":[{"mark":{"type":"point","filled":true,"size":260,"opacity":0.95},"encoding":{"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"top-right","title":null}}}},{"mark":{"type":"text","dy":-16,"color":"#9aa4b2","fontSize":10},"encoding":{"text":{"field":"Item","type":"nominal"}}}],"encoding":{"x":{"field":"Price","type":"quantitative","title":"Price","scale":{"zero":true},"axis":{"grid":true}},"y":{"field":"Qty","type":"quantitative","title":"Qty","scale":{"zero":true},"axis":{"grid":true}}}}'></div></div>
-      <div class="frame"><div class="fig" data-spec='{"title":"Orders/share.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"mark":{"type":"arc","innerRadius":52,"outerRadius":84,"stroke":"#161b22","strokeWidth":2},"encoding":{"theta":{"field":"Total","type":"quantitative","stack":true},"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"right","title":null}},"tooltip":[{"field":"Item","type":"nominal"},{"field":"Total","type":"quantitative"}]}}'></div></div>
-    </div></div>
-  </section>
-
   <!-- 4 ------------------------------------------------------- -->
   <section id="advantages">
     <p class="kicker">[ FSA1 advantages ]</p>
@@ -775,7 +758,24 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
     </ul>
   </section>
 
-  <!-- 4 ------------------------------------------------------- -->
+  <!-- 5 ------------------------------------------------------- -->
+  <section>
+    <p class="kicker">[ FSA1 figures ]</p>
+    <h2>A figure is a file.</h2>
+    <p class="figlede">Every chart below is a <code>.json</code> beside the cells, its
+    <code>data.name</code> an A1 reference into the sheet, here <code>Orders!A1:D4</code>. Change a cell
+    and it redraws from what the sheet computes, not a snapshot. The file is a
+    <a href="https://vega.github.io/schema/vega-lite/v5.json">Vega-Lite</a> spec verbatim: what FSA1
+    draws is the file an author edits, plus one <code>datasets</code> key holding what each reference
+    resolved to.</p>
+    <div class="window figwin"><div class="loop" id="figloop">
+      <div class="frame on"><div class="fig" data-spec='{"title":"Orders/total.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"layer":[{"mark":{"type":"bar","cornerRadiusEnd":3,"color":"#4fd4a8","opacity":0.9}},{"mark":{"type":"text","dy":-8,"color":"#9aa4b2","fontSize":11},"encoding":{"text":{"field":"Total","type":"quantitative"}}}],"encoding":{"x":{"field":"Item","type":"nominal","axis":{"labelAngle":0,"title":null}},"y":{"field":"Total","type":"quantitative","title":"Total","axis":{"grid":true}}}}'></div></div>
+      <div class="frame"><div class="fig" data-spec='{"title":"Orders/price-vs-qty.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"layer":[{"mark":{"type":"point","filled":true,"size":260,"opacity":0.95},"encoding":{"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"top-right","title":null}}}},{"mark":{"type":"text","dy":-16,"color":"#9aa4b2","fontSize":10},"encoding":{"text":{"field":"Item","type":"nominal"}}}],"encoding":{"x":{"field":"Price","type":"quantitative","title":"Price","scale":{"zero":true},"axis":{"grid":true}},"y":{"field":"Qty","type":"quantitative","title":"Qty","scale":{"zero":true},"axis":{"grid":true}}}}'></div></div>
+      <div class="frame"><div class="fig" data-spec='{"title":"Orders/share.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"mark":{"type":"arc","innerRadius":52,"outerRadius":84,"stroke":"#161b22","strokeWidth":2},"encoding":{"theta":{"field":"Total","type":"quantitative","stack":true},"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"right","title":null}},"tooltip":[{"field":"Item","type":"nominal"},{"field":"Total","type":"quantitative"}]}}'></div></div>
+    </div></div>
+  </section>
+
+  <!-- 6 ------------------------------------------------------- -->
   <section>
     <p class="kicker">[ FSA1 rendering ]</p>
     <h2><code>fsa1-cli</code> renders the output<br /><span class="soft">but never writes to the cells.</span></h2>
@@ -851,7 +851,7 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
     </div></div>
   </section>
 
-  <!-- 5 ------------------------------------------------------- -->
+  <!-- 7 ------------------------------------------------------- -->
   <section>
     <p class="kicker">[ FSA1 authoring ]</p>
     <h2>Agents use whichever tool<br /><span class="soft">is cheapest for the edit.</span></h2>
