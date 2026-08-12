@@ -5,7 +5,7 @@
 # Enable per clone: git config core.hooksPath .githooks
 set -euo pipefail
 
-git agent-verdict --check-min-version 0.4.0
+git agent-verdict --require-version 1.0
 
 git agent-verdict --rubric-guard \
 	--doc docs/repo-standards.md --doc docs/annotation-guide.md --doc docs/communication-style.md
