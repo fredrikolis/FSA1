@@ -29,28 +29,30 @@ pub(crate) fn block(after: &[&BoundFigure]) -> String {
     out
 }
 
-/// A figure drawn IN the cells it names, `area` being the grid placement they resolve to. Those
-/// cells are its whole size, which is why the spec is respelled to fill its container and the view
-/// is a flex item — the caption takes its line and the drawing takes the rest. `margin: 0` because a
-/// page styling `.fsa1-fig` for the figures a document APPENDS would push this one off its cells.
+/// A figure drawn IN the cells it names, `area` being the grid placement they resolve to. Those cells
+/// are its whole size, so the spec fills its container and the view is a flex item; `margin: 0` keeps
+/// a page's own rule from pushing it off them. `data-fills` earns ground and border from the HARNESS,
+/// never inline: inline outranks every layer, pinning white into the dark theme of an embedding page.
 pub(crate) fn filling(figure: &BoundFigure, area: &str) -> String {
     element(
         figure,
         &format!(
-            " style=\"{area};width:100%;height:100%;margin:0;display:flex;\
-             flex-direction:column;min-width:0;min-height:0\""
+            " data-fills style=\"{area};width:100%;height:100%;margin:0;\
+             display:flex;flex-direction:column;min-width:0;min-height:0\""
         ),
         &filling_cells(&figure.spec),
         " style=\"flex:1;min-height:0\"",
     )
 }
 
+/// Unlabelled: a `title` is Vega's to draw, and a figure stating none is not labelled by its FILENAME
+/// — the drawing is what this form shows. The entry rides `data-figure`, findable and unrendered.
 fn element(figure: &BoundFigure, style: &str, spec: &str, view: &str) -> String {
     format!(
-        "<figure class=\"fsa1-fig\"{style}><figcaption>{caption}</figcaption>\
+        "<figure class=\"fsa1-fig\" data-figure=\"{name}\"{style}>\
          <div class=\"fsa1-fig-view\"{view}></div>\
          <script class=\"fsa1-spec\" type=\"application/json\">{spec}</script></figure>",
-        caption = crate::escape::text(&figure.name),
+        name = crate::escape::text(&figure.name),
         spec = script_json(spec),
     )
 }

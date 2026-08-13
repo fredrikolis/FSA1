@@ -1,4 +1,4 @@
-// Concern: where a figure sits, in EMU, and the cells it covers | Non-concern: the OOXML anchor (fsa1-xlsx), the rule text | IO: (text) <-> Placement; (runs, cell) <-> EMU; (runs) -> Rect
+// Concern: where a figure sits, the cells it covers, and the default cell size rulers derive from | Non-concern: the OOXML anchor (fsa1-xlsx), the rule text | IO: (text) <-> Placement; (runs) -> Rect
 
 use crate::declaration::{Chars, Points};
 use crate::diagnostic::{Code, Diagnostic, Loc};
@@ -14,9 +14,14 @@ const CM: f64 = 360000.0;
 const PT: f64 = 12700.0;
 
 /// A column no sidecar sizes: Excel's 8.43ch, which is 64 pixels under the same rounding.
-pub const DEFAULT_COL_EMU: i64 = 64 * 9525;
+pub const DEFAULT_COL_PX: f64 = 64.0;
 /// A row no sidecar sizes: Excel's 15pt.
-pub const DEFAULT_ROW_EMU: i64 = 15 * 12700;
+pub const DEFAULT_ROW_PT: f64 = 15.0;
+
+/// The same two defaults in EMU, DERIVED so a carrier that draws a track and the ruler that places a
+/// figure over it read one number apiece.
+pub const DEFAULT_COL_EMU: i64 = (DEFAULT_COL_PX * PX) as i64;
+pub const DEFAULT_ROW_EMU: i64 = (DEFAULT_ROW_PT * PT) as i64;
 
 /// A figure with no `width`/`height`: 15cm by 7.5cm, Excel's own default chart box.
 pub const DEFAULT_W_EMU: i64 = 5_400_000;

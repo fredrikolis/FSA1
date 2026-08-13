@@ -32,10 +32,10 @@ pub fn fills(placement: Option<Placement>) -> Option<Rect> {
     }
 }
 
-/// Everything the exporter itself paints, sorted FIRST of all layers so the narrowest sidecar root
-/// stands whatever a selector's specificity; a cell states only its own top and left edge, and
-/// `fsa1-sheet` closes the far two. A grid item is blockified, where `vertical-align` does nothing,
-/// so the strut fills the cell and takes its computed value by `inherit` — [`base`] states it.
+/// Everything the exporter paints, sorted FIRST of all layers so the narrowest sidecar root stands
+/// whatever a selector's specificity. A cell states its top and left edge, `fsa1-sheet` closes the
+/// far two, and a blockified grid item leaves `vertical-align` to the `::before` strut. A value clips
+/// at its track with an ellipsis: a number cut to a shorter WHOLE one is CORE2's silent wrong answer.
 fn harness() -> String {
     format!(
         "\
@@ -43,13 +43,17 @@ fsa1-sheet {{ display: grid; width: max-content; \
 border-right: 1px solid #dddddd; border-bottom: 1px solid #dddddd }}
 fsa1-caption {{ font-weight: bold; padding: 4px 0 }}
 fsa1-region, fsa1-rows, fsa1-row {{ display: contents }}
-fsa1-cell, fsa1-head {{ display: block; box-sizing: border-box; padding: 2px 6px; \
+fsa1-cell, fsa1-head {{ display: block; box-sizing: border-box; overflow: hidden; \
+text-overflow: ellipsis; padding: 2px 6px; \
 {base}; \
 border-top: 1px solid #dddddd; border-left: 1px solid #dddddd }}
 fsa1-cell::before, fsa1-head::before {{ content: \"\"; display: inline-block; width: 0; \
 height: 100%; vertical-align: inherit }}
 fsa1-cell[hidden], fsa1-head[hidden] {{ display: none }}
 fsa1-head {{ background-color: #f0f0f0 }}
+.fsa1-fig[data-fills] {{ box-sizing: border-box; background-color: #ffffff; \
+border-top: 1px solid #dddddd; border-left: 1px solid #dddddd }}
+fsa1-cell[data-covered] {{ border-color: transparent; background-color: transparent }}
 ",
         base = base(),
     )

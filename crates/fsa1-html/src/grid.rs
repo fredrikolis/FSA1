@@ -30,10 +30,21 @@ pub(crate) fn sheet(
     let _ = write!(
         out,
         "<fsa1-sheet id=\"fsa1-s{n}\" data-tab=\"{tab}\" style=\"grid-template-columns:{};grid-template-rows:{}\">",
-        tracks(&overlay.column_widths(wb, n), vp.min_col, vp.max_col, |s| s
-            .spell()),
-        tracks(&overlay.row_heights(wb, n), vp.min_row, vp.max_row, |s| s
-            .spell()),
+        tracks(
+            &overlay.column_widths(wb, n),
+            vp.min_col,
+            vp.max_col,
+            |s| s.spell(),
+            &format!("{}px", fsa1_model::DEFAULT_COL_PX),
+        ),
+        tracks(
+            &overlay.row_heights(wb, n),
+            vp.min_row,
+            vp.max_row,
+            |s| s.spell(),
+            // A MINIMUM, not a height: a default row auto-fits its text, and a fixed one clips every descender under `overflow: hidden`. A row a sidecar sizes stays exactly that.
+            &format!("minmax({}pt, auto)", fsa1_model::DEFAULT_ROW_PT),
+        ),
     );
 
     out.push_str(&head(1, 1, ""));
@@ -60,7 +71,8 @@ pub(crate) fn sheet(
         for row in root.min_row..=root.max_row {
             out.push_str("<fsa1-row>");
             for col in root.min_col..=root.max_col {
-                out.push_str(&cell(wb, view, vp, outer, col, row));
+                let under = drawn.iter().any(|(c, _)| c.contains(col, row));
+                out.push_str(&cell(wb, view, vp, outer, under, col, row));
             }
             out.push_str("</fsa1-row>");
         }
@@ -81,7 +93,8 @@ pub(crate) fn sheet(
             out.push_str("<fsa1-row>");
             for col in stated.min_col..=stated.max_col {
                 if regions.iter().all(|(_, root)| !root.contains(col, row)) {
-                    out.push_str(&cell(wb, view, vp, outer, col, row));
+                    let under = drawn.iter().any(|(c, _)| c.contains(col, row));
+                    out.push_str(&cell(wb, view, vp, outer, under, col, row));
                 }
             }
             out.push_str("</fsa1-row>");
@@ -138,11 +151,14 @@ pub(crate) fn layer(sheet: u32, at: usize) -> String {
 
 /// The label track and then one per VIEWPORT column, which is where an authored size BINDS: the cell
 /// filling it states `width: 100%` inline, so the axis run overwrites what the cell cascade resolved.
+/// An index no run sizes takes `default`, the ruler a figure's cover is measured with, so the cells
+/// one fills are the box it draws in; only the LABEL track is `auto`, holding a coordinate no axis sizes.
 fn tracks<T: Copy>(
     runs: &[fsa1_model::AxisRun<T>],
     lo: u32,
     hi: u32,
     spell: fn(T) -> String,
+    default: &str,
 ) -> String {
     let mut out = String::from("auto");
     for index in lo..=hi {
@@ -150,7 +166,9 @@ fn tracks<T: Copy>(
             Some(run) => {
                 let _ = write!(out, " {}", spell(run.size));
             }
-            None => out.push_str(" auto"),
+            None => {
+                let _ = write!(out, " {default}");
+            }
         }
     }
     out
@@ -170,6 +188,7 @@ fn cell(
     view: &SheetView<'_>,
     vp: Rect,
     outer: Option<Rect>,
+    covered: bool,
     col: u32,
     row: u32,
 ) -> String {
@@ -183,8 +202,9 @@ fn cell(
         Some(root) if !root.contains(col, row) => " data-outside",
         _ => "",
     };
+    let covered = if covered { " data-covered" } else { "" };
     format!(
-        "<fsa1-cell data-ref=\"{at}\"{outside}{formula} tabindex=\"0\" \
+        "<fsa1-cell data-ref=\"{at}\"{outside}{covered}{formula} tabindex=\"0\" \
          style=\"grid-row:{};grid-column:{};width:100%;height:100%\">{}</fsa1-cell>",
         row - vp.min_row + 2,
         col - vp.min_col + 2,

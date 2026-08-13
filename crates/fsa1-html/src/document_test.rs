@@ -255,9 +255,10 @@ fn a_viewport_that_cuts_a_root_hides_cells_rather_than_dropping_them() {
     );
 }
 
-/// A size belongs to the AXIS, which is where an authored one BINDS: the sheet states one track per
-/// viewport column behind the label track, and the cell filling it is `width: 100%` inline —
-/// unbeatable, so a `width` that reached a cell could never overrule the run the model resolved.
+/// A size belongs to the AXIS, where an authored one BINDS: one track per viewport column behind the
+/// label track, and the cell filling it is `width: 100%` inline — unbeatable, so a `width` reaching a
+/// cell could never overrule the model's run. A STATED height is exactly that; an unsized ROW is a
+/// minimum, since 11pt Calibri needs 21px in a 15pt track and a fixed one clips every cell.
 #[test]
 fn an_axis_size_states_the_grid_track_and_never_the_cell() {
     let html = doc(&[
@@ -268,14 +269,72 @@ fn an_axis_size_states_the_grid_track_and_never_the_cell() {
         ),
     ]);
     assert!(
-        html.contains("grid-template-columns:auto auto 14.5ch")
-            && html.contains("grid-template-rows:auto auto 22.5pt"),
-        "each run states its own track, the leading one standing for the labels:\n{html}"
+        html.contains("grid-template-columns:auto 64px 14.5ch")
+            && html.contains("grid-template-rows:auto minmax(15pt, auto) 22.5pt"),
+        "each run states its own track, the leading one standing for the labels, and a STATED \
+         height is exactly that where an unsized row is a minimum:\n{html}"
     );
     assert_eq!(
         html.matches("width:100%;height:100%").count(),
         4 + 5,
         "every cell and head fills the track it sits in:\n{html}"
+    );
+}
+
+/// A track no sidecar sizes takes the MODEL's own ruler — the one `Placement::cover` measures a
+/// figure's range with — so a cell is the width the placement counted on. `auto` over an empty cell
+/// collapses to its padding, which drew a figure at a fifth of the range it was placed over.
+#[test]
+fn a_track_no_sidecar_sizes_spells_the_models_own_default() {
+    let html = doc(&[("A1:B2", "1\t2\n3\t4")]);
+    let tracks = format!(
+        "grid-template-columns:auto {col}px {col}px;\
+         grid-template-rows:auto minmax({row}pt, auto) minmax({row}pt, auto)",
+        col = fsa1_model::DEFAULT_COL_PX,
+        row = fsa1_model::DEFAULT_ROW_PT,
+    );
+    assert!(
+        html.contains(&tracks),
+        "an unsized track is the ruler's default, not `auto`; wanted {tracks:?}:\n{html}"
+    );
+    assert!(
+        html.contains("overflow: hidden"),
+        "and a value clips at its track rather than painting over the neighbour:\n{html}"
+    );
+}
+
+/// The cells a figure fills go FLAT — still emitted, but their borders transparent — and the figure
+/// draws the one outer edge that perimeter used to. Ground and border are LAYERED rules earned by
+/// `data-fills`, never inline, so an embedding page can tone them. An APPENDED figure covers no cell,
+/// so it takes neither.
+#[test]
+fn a_filling_figure_grounds_on_the_paper_and_an_appended_one_does_not() {
+    let spec = r#"{"background":null,"data":{"name":"A1:B2"},"mark":"bar"}"#;
+    let html = figured(
+        &[("A1:B2", "x\ty\n3\t4")],
+        &[("Sheet1/D2:E3.json", spec), ("Sheet1/floats.json", spec)],
+        ViewScope::Workbook,
+    );
+    let (sheet, tail) = html
+        .split_once("</fsa1-sheet>")
+        .expect("the sheet closes once");
+    assert!(
+        sheet.contains(" data-fills ") && !sheet.contains("background-color:#ffffff"),
+        "the filling figure EARNS the ground, and does not carry it inline:\n{html}"
+    );
+    assert!(
+        html.contains(".fsa1-fig[data-fills] {"),
+        "the harness is where that ground is painted, so a page can layer over it:\n{html}"
+    );
+    assert!(
+        sheet.contains("data-covered")
+            && html.contains("fsa1-cell[data-covered] { border-color: transparent")
+            && html.contains(".fsa1-fig[data-fills] {"),
+        "the covered cells go flat and the figure draws the edge they used to:\n{html}"
+    );
+    assert!(
+        !tail.contains("data-fills") && tail.contains("<figure class=\"fsa1-fig\" data-figure="),
+        "and the appended one earns neither:\n{html}"
     );
 }
 
@@ -429,7 +488,7 @@ fn a_range_form_figure_fills_the_cells_its_name_states() {
         "the cells are its box, so the spec's own size is replaced:\n{html}"
     );
     assert!(
-        html.contains("grid-template-columns:auto auto auto auto auto auto")
+        html.contains("grid-template-columns:auto 64px 64px 64px 64px 64px")
             && sheet.contains("data-ref=\"E1\""),
         "the grid reaches E, and the cells the figure covers are still addressable:\n{html}"
     );
@@ -452,7 +511,7 @@ fn a_figure_stating_no_placement_still_follows_the_sheet_at_its_own_size() {
         .split_once("</fsa1-sheet>")
         .expect("the sheet closes once");
     assert!(
-        !sheet.contains("<figure") && tail.contains("<figure class=\"fsa1-fig\">"),
+        !sheet.contains("<figure") && tail.contains("<figure class=\"fsa1-fig\" data-figure="),
         "an unplaced figure follows the sheet, and carries no grid area:\n{html}"
     );
     assert!(
@@ -460,7 +519,7 @@ fn a_figure_stating_no_placement_still_follows_the_sheet_at_its_own_size() {
         "at the size its own spec asked for:\n{html}"
     );
     assert!(
-        html.contains("grid-template-columns:auto auto auto;"),
+        html.contains("grid-template-columns:auto 64px 64px;"),
         "and widens no sheet: exactly the gutter and A-B, so the `;` must follow:\n{html}"
     );
 }

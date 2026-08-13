@@ -96,7 +96,7 @@ extract() {
 			# What sits between the two runs is the whole inlined Vega runtime, and what follows
 			# the last </figure> is the mount that drives it; the page carries both already.
 			after = substr(doc, closes + length("</fsa1-sheet>"))
-			f = index(after, "<figure class=\"fsa1-fig\">")
+			f = index(after, "<figure class=\"fsa1-fig\"")
 			if (f > 0) {
 				figs = substr(after, f)
 				e = 0
@@ -110,7 +110,7 @@ extract() {
 			}
 			printf "%s", out
 		} else {
-			cap = "<figcaption>" name "</figcaption>"
+			cap = "data-figure=\"" name "\""
 			n = count(doc, cap)
 			if (n == 0) exit 3
 			if (n > 1) exit 4
