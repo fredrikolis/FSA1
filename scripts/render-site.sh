@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Concern: fills index.html's fsa1 regions | Non-concern: the page's hand-written markup, the fixture | IO: (index.html, website/fixture, the CLI) -> itself; 1 on drift
+# Concern: fills index.html's fsa1 regions, dropping the CLI's Vega runtime and mount the page supplies | Non-concern: the fixture | IO: (index.html, website/fixture, the CLI) -> itself; 1 on drift
 set -euo pipefail
 # ls order and the [A-Za-z] class are collation-dependent; the page is bytes, so pin the locale.
 export LC_ALL=C
@@ -76,7 +76,7 @@ extract() {
 	}
 	{ doc = doc $0 "\n" }
 	END {
-		if (mode == "sheet" || mode == "style") {
+		if (mode == "doc" || mode == "style") {
 			n = count(doc, "<fsa1-caption>")
 			if (n == 0) exit 3
 			if (n > 1) exit 4
@@ -87,9 +87,24 @@ extract() {
 			if (n == 0 || index(head, "</style>") == 0) exit 3
 			if (n > 1) exit 4
 			printf "%s", span(head, "<style>", "</style>")
-		} else if (mode == "sheet") {
+		} else if (mode == "doc") {
 			if (index(doc, "</fsa1-sheet>") == 0) exit 3
-			printf "%s", span(doc, "<fsa1-caption>", "</fsa1-sheet>")
+			out = span(doc, "<fsa1-caption>", "</fsa1-sheet>")
+			# What sits between the two runs is the whole inlined Vega runtime, and what follows
+			# the last </figure> is the mount that drives it; the page carries both already.
+			f = index(doc, "<figure class=\"fsa1-fig\">")
+			if (f > 0) {
+				figs = substr(doc, f)
+				e = 0
+				off = 1
+				while ((p = index(substr(figs, off), "</figure>")) > 0) {
+					off = off + p + length("</figure>") - 1
+					e = off - 1
+				}
+				if (e == 0) exit 3
+				out = out "\n" substr(figs, 1, e)
+			}
+			printf "%s", out
 		} else {
 			cap = "<figcaption>" name "</figcaption>"
 			n = count(doc, cap)
@@ -222,7 +237,7 @@ while :; do
 				outdir[$n]=$directive
 			fi
 			;;
-		sheet|style)
+		doc|style)
 			if [ -z "$args" ]; then refuse 'a verb without argv' "$directive"; fi
 			anchored "$verb" '' "$args" "$directive"
 			;;
