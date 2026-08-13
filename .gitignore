@@ -30,6 +30,9 @@ distribution/npm/cli/platforms/*/fsa1-cli
 distribution/npm/cli/platforms/*/fsa1-cli.exe
 distribution/npm/mcp/platforms/*/fsa1-mcp
 distribution/npm/mcp/platforms/*/fsa1-mcp.exe
+# The pre-<cli|mcp>-split path. Nothing writes it now, but a stale local copy is 20MB of binaries
+# one `git add -A` away from history.
+distribution/npm/platforms/
 
 # The pinned Vega runtime `scripts/fetch-vega.sh` fetches and `fsa1-html/build.rs` embeds. A
 # megabyte of somebody else's minified JavaScript: the repo carries the pin (vega-manifest.txt),

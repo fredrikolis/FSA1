@@ -1,18 +1,175 @@
 #!/usr/bin/env bash
-# Concern: the mechanical gates, each invoking the one shared definition CI also runs | Non-concern: the review attestation (commit-msg declares it) or the test suite | IO: (working tree + index) -> exit status
-# The full suite stays a deliberate, observed step: bash scripts/gate.sh.
+# Concern: runs the per-commit gates, and the suite with --full | Non-concern: ci.yml's oracle and installer jobs, the attestation | IO: (the tree) -> verdicts, a fetched bundle, a linter and fsa1-cli
+#
+# CI runs this same file (`bash .githooks/pre-commit --full`), so a gate means one thing in both places.
 # Enable per clone: git config core.hooksPath .githooks
-set -euo pipefail
+set -uo pipefail
 
-# Hooks run with a minimal environment, so cargo is often off PATH (a GUI git client, a cron shell).
+full=0
+case "${1:-}" in
+	'') ;;
+	--full) full=1 ;;
+	*) printf 'usage: pre-commit [--full]\n' >&2; exit 2 ;;
+esac
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+# Hooks run with a minimal environment, so cargo is often off PATH (a GUI git client, a cron shell),
+# and a globally installed annotated-tree lives in the npm prefix's bin.
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 case ":$PATH:" in *":$cargo_home/bin:"*) ;; *) PATH="$cargo_home/bin:$PATH" ;; esac
-export PATH
 [ -f "$cargo_home/env" ] && . "$cargo_home/env"
+npm_bin="${npm_config_prefix:-$HOME/.npm-global}/bin"
+case ":$PATH:" in *":$npm_bin:"*) ;; *) PATH="$npm_bin:$PATH" ;; esac
+export PATH
 
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-# $PRECOMMIT_*_CMD are test-only seams the selftest stubs to force an exit code, so no row lints or
-# scans this repo. Unset, each resolves to the script CI and scripts/gate.sh call.
-"${PRECOMMIT_COMMENT_GATE_CMD:-$(git rev-parse --show-toplevel)/scripts/comment-gate.sh}"
-"${PRECOMMIT_ANNOTATION_CMD:-$(git rev-parse --show-toplevel)/scripts/annotation-gate.sh}"
+LOG_DIR="${TMPDIR:-/tmp}/fsa1-gate.$$"
+mkdir -p "$LOG_DIR"
+trap 'rm -rf "$LOG_DIR"' EXIT
+
+failed=0
+
+fail() {
+	printf 'FAILED\n'
+	tail -30 "$1" >&2
+	printf '  --- full log: %s ---\n\n' "$1" >&2
+	trap - EXIT
+	failed=1
+}
+
+stage() {
+	local name="$1"; shift
+	local log="$LOG_DIR/${name//[^a-zA-Z0-9]/_}.log"
+	printf '%-24s ' "$name"
+	if "$@" >"$log" 2>&1; then printf 'ok\n'; else fail "$log"; fi
+}
+
+# A FLOOR, not an exact version: a newer annotated-tree finds MORE, never fewer, so a clone above it
+# fails safe. npx installs the floor exactly, keeping CI reproducible.
+ANNOTATION_MIN=0.7.0
+
+annotation_gate() {
+	# THE single exclusion list. A duplicated one once made CI check 149 files where the hook checked
+	# 156, so seven serde graders were gated locally and not in CI.
+	#
+	# The conformance corpora are graded oracle INPUTS, not authored source. Their data files carry no
+	# recognized code extension, but their .md/.py ledgers would otherwise be governed. The GRADERS are
+	# NOT excluded and stay annotated (the Python harness, and every tests/*.rs).
+	local args=(--strict-check --include-tests
+		-I 'conformance/encoding/**'
+		-I 'conformance/formula/**'
+		-I 'conformance/render/**'
+		-I 'conformance/serde/accept/**'
+		-I 'conformance/serde/refuse/**'
+		# The landing page's fixture workbook is CONTENT the page renders, not authored source: a
+		# <name>.annotation sidecar would join the workbook and show up in the `ls -R` the page prints,
+		# and a comment would be rendered as a cell's bytes. Its directory charter is the whole map.
+		-I 'website/fixture/**'
+		# The npm manifests describe a PUBLISHING channel, not a crate in this workspace's graph, so
+		# the orphan rule has nothing real to say about them. Their scripts and shim stay governed.
+		-I 'distribution/npm/**/package.json'
+		.)
+
+	# `|| true` because the probe must not decide the run: an absent binary (127) or one too broken to
+	# answer `--version` must still fall through to npx — the only path a machine without the tool has,
+	# CI included.
+	local have
+	have="$(annotated-tree --version 2>/dev/null | tr -dc '0-9.' || true)"
+	if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$ANNOTATION_MIN" "$have" | sort -V | head -1)" = "$ANNOTATION_MIN" ]; then
+		annotated-tree "${args[@]}"
+	elif command -v npx >/dev/null 2>&1; then
+		npx --yes "annotated-tree@$ANNOTATION_MIN" "${args[@]}"
+	else
+		echo "need annotated-tree >= $ANNOTATION_MIN (have ${have:-none}); install: 'npm i -g annotated-tree', or ensure npx is on PATH" >&2
+		return 1
+	fi
+}
+
+COMMENT_LINTER_REV=7a232179e45414108d28047acd6315d9a2c4946b
+COMMENT_LINTER_BIN="target/lint-tools/$COMMENT_LINTER_REV/bin/cargo-lint-extra"
+
+comment_gate() {
+	# No -W: it exits 1 on ANY diagnostic including the warn-level rules (glob-imports,
+	# todo-comments), which would make this gate permanently red at zero blocking findings. Blocking
+	# comes from level = "deny" in .cargo-lint-extra.toml.
+	"$COMMENT_LINTER_BIN" lint-extra --config .cargo-lint-extra.toml . && return 0
+	# The bar the findings are judged against is NAMED, never dumped: `stage` captures this stream
+	# and `fail` prints its last 30 lines, so catting a 40-line document here buries the diagnostic
+	# that says which file, function and threshold tripped.
+	echo >&2
+	echo "the bar these are judged against: docs/comment-standards.md" >&2
+	return 1
+}
+
+if [ "$full" -eq 1 ]; then echo 'fsa1 gate (--full)'; else echo 'fsa1 gate (fast; --full adds the suite)'; fi
+echo
+
+# fsa1-html's build.rs embeds the pinned runtime, so a fresh clone cannot compile without it. Fetched
+# here rather than left to the developer: a gate that fails on a clean checkout teaches nothing. On
+# BOTH paths: `clippy --workspace` runs that build.rs, so a fast commit on a fresh clone needs it too.
+if [ -z "${FSA1_VEGA_BUNDLE:-}" ] && [ ! -f crates/fsa1-html/vendor/vega-bundle.js ]; then
+	printf '%-24s ' 'vega bundle'
+	if bash scripts/fetch-vega.sh >"$LOG_DIR/vega.log" 2>&1; then
+		printf 'fetched\n'
+	else
+		printf 'FAILED -- see %s\n' "$LOG_DIR/vega.log"
+		trap - EXIT
+		exit 1
+	fi
+fi
+
+# The linter is a pinned git rev, so it must be BUILT. Announced outside the stage table because the
+# one-time build is minutes long and a silent `comments` row looks like a hang.
+if [ ! -x "$COMMENT_LINTER_BIN" ]; then
+	printf '%-24s ' 'comment linter'
+	if cargo install --git https://github.com/fredrikolis/cargo-lint-extra \
+		--rev "$COMMENT_LINTER_REV" --root "target/lint-tools/$COMMENT_LINTER_REV" \
+		--locked --quiet cargo-lint-extra >"$LOG_DIR/lint-tools.log" 2>&1; then
+		printf 'built @ %s\n' "${COMMENT_LINTER_REV:0:7}"
+	else
+		printf 'FAILED -- see %s\n' "$LOG_DIR/lint-tools.log"
+		trap - EXIT
+		exit 1
+	fi
+fi
+
+# render-site.sh builds fsa1-cli when FSA1_CLI is unset, and `clippy` emits no binary — so on a cold
+# target/ that is a full codegen build. Announced out here for the same reason as the linter: a
+# silent `site` row is indistinguishable from a hang. Exported so the stage reuses what this built.
+if [ -z "${FSA1_CLI:-}" ]; then
+	printf '%-24s ' 'fsa1-cli'
+	if cargo build --locked -p fsa1-cli >"$LOG_DIR/build-cli.log" 2>&1; then
+		printf 'built\n'
+	else
+		printf 'FAILED -- see %s\n' "$LOG_DIR/build-cli.log"
+		trap - EXIT
+		exit 1
+	fi
+	export FSA1_CLI="$PWD/target/debug/fsa1-cli"
+fi
+
+stage 'fmt' cargo fmt --all -- --check
+stage 'clippy' cargo clippy --workspace --all-targets --locked -- -D warnings
+
+# `cargo test` exits 0 when nothing matched, so an empty run is checked for explicitly.
+if [ "$full" -eq 1 ]; then
+	printf '%-24s ' 'test'
+	test_log="$LOG_DIR/test.log"
+	if ! cargo test --locked --workspace -- --include-ignored >"$test_log" 2>&1; then
+		fail "$test_log"
+	elif ! grep -qE '^test result: ok\. [1-9][0-9]* passed' "$test_log"; then
+		printf 'FAILED (zero tests ran)\n'
+		trap - EXIT
+		failed=1
+	else
+		printf 'ok (%s passed)\n' "$(grep '^test result' "$test_log" | awk '{p+=$4} END {print p+0}')"
+	fi
+fi
+
+stage 'comments' comment_gate
+stage 'annotations' annotation_gate
+stage 'site' ./scripts/render-site.sh --check
+
+echo
+[ "$failed" -eq 0 ] || { echo 'gate: FAILED' >&2; exit 1; }
+echo 'gate: OK'

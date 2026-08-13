@@ -87,7 +87,7 @@ trailing `;`, and a newline after the last rule.
 | `conformance/tests/presentation_scope.rs` | `cargo test --workspace` — no venv, no network | the frozen stylesheet and warnings; `check` accepts what `unpack` wrote; `unpack(pack(unpack(x))) == unpack(x)` |
 | `presentation_oracle.py` (via `run.sh`) | the CI `presentation-roundtrip` job | the same frozen expectation through the CLI, plus a **third-party reopen**: openpyxl must find the source's own look on the packed export |
 
-`scripts/gate.sh` does not run the Python leg (it needs a network `pip install`), so the Rust half is
+`.githooks/pre-commit --full` does not run the Python leg (it needs a network `pip install`), so the Rust half is
 what the workspace gate picks up. The Python half is the one that can say FSA1's export is *visually*
 right, because openpyxl — not FSA1 — is what reads it back.
 

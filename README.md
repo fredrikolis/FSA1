@@ -51,8 +51,9 @@ fsa1-cli --help      # commands, flags, exit codes (source-owned)
 
 ## Working on it
 
-Every file's first line says what it is for, so `annotated-tree` on any directory is the map. Run
-every mechanical check with `bash scripts/gate.sh`.
+Every file's first line says what it is for, so `annotated-tree` on any directory is the map. Run the
+per-commit gate with `bash .githooks/pre-commit --full`, the same file the commit hook and CI run;
+without `--full` it skips only the test suite. CI runs oracle and installer jobs besides.
 
 ## Licence
 

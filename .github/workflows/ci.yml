@@ -1,4 +1,4 @@
-# Concern: runs every mechanical gate on Linux and macOS | Non-concern: publishing a release (plugin-release.yml), deploying the site (deploy-site.yml) | IO: (a push or a manual run) -> per-job verdicts
+# Concern: runs the per-commit gate on both OSes, plus the oracle, installer and version jobs | Non-concern: what a gate checks (.githooks/pre-commit) | IO: (a push) -> per-job verdicts
 name: ci
 
 # The mechanical commit gate (.githooks/pre-commit + commit-msg), plus the checks that need a clean
@@ -18,7 +18,8 @@ permissions:
   contents: read
 
 jobs:
-  # fmt + clippy + the full test gate. Every name that becomes a FILE now goes through RANGE_SEP,
+  # The whole mechanical gate, `.githooks/pre-commit --full`, on both OS legs. Every name that
+  # becomes a FILE now goes through RANGE_SEP,
   # every alias through write_name_alias, and an assertion names a REGION rather than a spelling --
   # but a POSIX host accepts `:` as a filename, so a green run here cannot prove any of that. Adding
   # windows-latest is what would, and it goes on its own commit so a red row is one line to undo.
@@ -41,32 +42,43 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # The annotation stage falls back to `npx annotated-tree@<floor>` when no global install is
+      # found, which is every runner, so the gate needs a Node on PATH.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # The comment linter is a pinned git rev, so the gate BUILDS it; the cache makes that a
+      # once-ever cost. The key is the rev READ OUT of the hook, never restated here — the hook owns
+      # it, and a second copy free to drift is the one failure that stays green (a stale key restores
+      # the wrong binary and the gate still passes). Bumping the rev misses the cache once, on purpose.
+      - id: linter-rev
+        run: echo "rev=$(sed -n 's/^COMMENT_LINTER_REV=//p' .githooks/pre-commit)" >> "$GITHUB_OUTPUT"
+      - name: cache the pinned comment linter
+        uses: actions/cache@v4
+        with:
+          path: target/lint-tools
+          # Keyed on the PINNED rev read out of the hook, never on the hook's bytes: the hook is now
+          # every gate, so hashing it would rebuild the linter (minutes, both legs) on any gate edit.
+          key: lint-tools-${{ runner.os }}-${{ steps.linter-rev.outputs.rev }}
       - name: fetch the pinned Vega runtime
         run: bash scripts/fetch-vega.sh
-      - name: fmt --check
-        run: cargo fmt --all -- --check
-      - name: clippy -D warnings
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      # Unfiltered workspace run: --include-ignored so an #[ignore] never silently skips a load-bearing
-      # test; --locked so lockfile drift FAILS
-      # CI instead of silently updating it.
-      - name: test (--include-ignored)
-        run: cargo test --locked --workspace -- --include-ignored
 
       # What `--version` PRINTS is the point, and nothing ran the binary: v0.2.3 shipped a fsa1-cli
       # reporting 0.1.0 while every declaration agreed on 0.2.3. It lands here rather than in
       # plugin-release.yml because it needs no tag — drift fails the push that causes it, not the
-      # tag that ships it — and this job already holds a toolchain and a built workspace.
+      # tag that ships it — and this job already holds a toolchain and a built workspace. Built
+      # BEFORE the gate so the gate's `site` stage reuses the binary instead of building a second one.
       - name: Build both front ends
         run: cargo build --locked -p fsa1-cli -p fsa1-mcp
 
-      # The landing page's terminal blocks are the binary's own output or they are fiction. --check
-      # re-renders website/src/index.html from website/fixture/ and fails on any drift. FSA1_CLI names
-      # the binary the step above just built, so the check reuses it rather than building a second time.
-      - name: The website's command output is what the CLI printed
+      # THE gate, the same file a developer's commit runs: fmt, clippy, the comment budget, the
+      # annotation charter, the site re-render, and under --full the unfiltered workspace test run
+      # (--include-ignored, so an #[ignore] never silently skips a load-bearing test). One definition,
+      # so a gate cannot mean one thing locally and another here.
+      - name: mechanical gates (.githooks/pre-commit --full)
         env:
           FSA1_CLI: ${{ github.workspace }}/target/debug/fsa1-cli
-        run: ./scripts/render-site.sh --check
+        run: bash .githooks/pre-commit --full
 
       - name: Both built front ends report the workspace version
         # `want` MUST come from the workspace manifest — [workspace.package] in the root Cargo.toml,
@@ -104,15 +116,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # lfs: true is REQUIRED — the serde round-trip corpus (accept/ + refuse/ .xlsx) are Git LFS
-      # objects, and the selftest runs from a full checkout.
+      # objects, and the steps below run from a full checkout.
       - uses: actions/checkout@v4
         with:
           lfs: true
-      - name: pre-commit selftest
-        # The hook's own regression table — pure bash, no cargo. This is its ONLY mechanical
-        # entrypoint, so an edit that breaks a locked row fails here.
-        run: bash .githooks/pre-commit.selftest.sh
-
       - name: installers resolve the asset names plugin-release publishes
         # Exercises only the release-download branch: FSA1_VERSION and the wget path are not covered.
         run: |
@@ -169,43 +176,6 @@ jobs:
               || { echo "$f on SunOS/sparc64 -> '${r:-no download}' exit $(cat "$W/e"), want a refusal"; rc=1; }
           done
           exit $rc
-
-  # Dogfood: the suite-wide first-line annotation convention + the architecture rules in
-  # .annotated-tree.toml. Same call site as .githooks/pre-commit and scripts/gate.sh, so the pin and
-  # the corpus exclusions have ONE definition and cannot drift apart.
-  annotations:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Enforce annotations + architecture rules
-        run: ./scripts/annotation-gate.sh
-
-  # The comment BUDGET — a mechanical bound on comment volume (per-file and per-function ratios, a
-  # max-consecutive-run, plus file- and line-length caps). Thresholds live in .cargo-lint-extra.toml;
-  # the bar a comment must clear lives in docs/comment-standards.md, which the runner prints on
-  # failure. Same call site as .githooks/pre-commit — scripts/comment-gate.sh — so the budget means
-  # one thing locally and here.
-  #
-  # The linter is a pinned git rev, so it must be BUILT; the cache makes that a once-ever cost. The
-  # key hashes scripts/comment-gate.sh rather than naming the rev, because the script already OWNS
-  # the rev — writing it here too would be a second copy free to drift, and a stale cache key is the
-  # one drift that fails silently (it restores the wrong binary and the gate still reports green).
-  # Bumping the rev in the script therefore misses the cache exactly once, on purpose.
-  comments:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.96.0
-      - name: cache the pinned comment linter
-        uses: actions/cache@v4
-        with:
-          path: target/lint-tools
-          key: lint-tools-${{ runner.os }}-${{ hashFiles('scripts/comment-gate.sh') }}
-      - name: comment budget
-        run: ./scripts/comment-gate.sh
 
   # SER2 round-trip oracle: the "opens-identically" fitness (plan 06 §7.3). Ubuntu-only — the `formulas`
   # reference stack is platform-independent, and (like conformance/xl-oracle) it needs only a pinned
