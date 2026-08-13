@@ -1,4 +1,4 @@
-# Concern: publishes website/ to GitHub Pages | Non-concern: the page's content (website/src/ owns it), the plugin release (plugin-release.yml) | IO: (a push touching website/) -> a Pages deployment
+# Concern: publishes website/ to GitHub Pages | Non-concern: the page's content (website/src/ owns it), the plugin release | IO: (a push to website/src/ or website/public/) -> a Pages deployment
 # The Pages source must be set to GitHub Actions, NOT a branch: a branch source can only publish the
 # repo root or /docs, and the site lives in website/ so the root stays a Rust workspace.
 # No generator is wired because the page needs none — it is one file with inline CSS and JS that
@@ -9,7 +9,7 @@ name: deploy-site
 on:
   push:
     branches: [main]
-    paths: ["website/**", ".github/workflows/deploy-site.yml"]
+    paths: ["website/src/**", "website/public/**", ".github/workflows/deploy-site.yml"]
   workflow_dispatch: {}
 
 permissions:

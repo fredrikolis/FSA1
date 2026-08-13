@@ -21,6 +21,10 @@ ARGS=(--strict-check --include-tests
 	-I 'conformance/render/**'
 	-I 'conformance/serde/accept/**'
 	-I 'conformance/serde/refuse/**'
+	# The landing page's fixture workbook is CONTENT the page renders, not authored source: a
+	# <name>.annotation sidecar would join the workbook and show up in the `ls -R` the page prints,
+	# and a comment would be rendered as a cell's bytes. Its directory charter is the whole map.
+	-I 'website/fixture/**'
 	# The npm manifests describe a PUBLISHING channel, not a crate in this workspace's graph, so
 	# the orphan rule has nothing real to say about them. Their scripts and shim stay governed.
 	-I 'distribution/npm/**/package.json'

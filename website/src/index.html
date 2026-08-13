@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Concern: the whole fsa1.sh landing page — copy, style and motion in one file | Non-concern: publishing it, the CLI's own docs | IO: none -->
+<!-- Concern: the hand-written fsa1.sh landing page — copy, style and motion in one file | Non-concern: filling its fsa1 regions (render-site.sh), publishing it | IO: (../fixture) -> its terminal blocks -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -8,6 +8,16 @@
 <meta name="description" content="Tabs are folders. Cells are files. Styling is CSS. Figures are JSON. A file-system based spreadsheet format designed for AI agents." />
 <meta name="color-scheme" content="light dark" />
 <style>
+/* Layer order is fixed by FIRST appearance, so naming both known
+   layers here is what ranks them: the binary's harness defaults
+   below the page's toning of them. The per-sheet layer the binary
+   declares beside the harness one is new at that point and lands
+   above both — harness < page < workbook, which is the order the
+   `.rendered` rules below depend on. Its name is generated per
+   sheet, so this file must not spell it. Unlayered rules would
+   outrank all three. */
+@layer fsa1-harness, fsa1-page;
+
 /* ==========================================================
    FSA1.sh — the simple cut.
    One column, six beats, and one driver behind every motion
@@ -526,6 +536,9 @@ ul.claims .note{
   min-height:1.6em;
 }
 .cmd .p{ color:var(--accent); }
+/* the prompt line each render frame carries as SOURCE, lifted into #rendercmd
+   by the loop's onstep — one command line on the page, not two */
+.cmdsrc{ display:none; }
 
 /* The html frame is a whole document, so it takes the window rather
    than sitting in a second box inside it: the surface turns to paper for
@@ -543,18 +556,22 @@ ul.claims .note{
   border-color:light-dark(rgba(0,0,0,.13),rgba(0,0,0,.28));
   box-shadow:none;
 }
-.rendered table{ border-collapse:collapse; font-family:var(--sans); font-size:13px; }
-.rendered caption{ font-weight:600; padding:0 0 8px; text-align:left; color:#111; }
-.rendered th,.rendered td{ border:1px solid light-dark(#ddd,#C4C7CB); padding:3px 9px; white-space:pre; }
-.rendered th{ background:light-dark(#f0f0f0,#D6D8DC); font-weight:400; color:#444; }
-/* these two classes are emitted by fsa1-cli, one per distinct style in
-   the workbook — the cells' own CSS, carried into the document. The
-   literal hex is quoted verbatim in the anatomy block above, so it is
-   the workbook's colour and not the page's, and it does not move when
-   the page's palette does. On the toned paper it is dimmed by exactly
-   the same factor as the paper, so the workbook's own contrast holds. */
-.rendered .c0{ background-color:light-dark(#d9e1f2,#C2CAD9); font-weight:bold; text-align:center; }
-.rendered .c1{ border-top:2px solid #1b6b58; }
+/* Inside the frame is the binary's own markup — <fsa1-caption> and
+   <fsa1-sheet> with per-cell style attributes — under the binary's own
+   stylesheet, spliced into <head> as the `style` region. That sheet is
+   already a light document (#fff paper, #ddd rules, #f0f0f0 heads), so
+   the page has nothing left to say about it except the dark-theme toning
+   below, which it says from @layer fsa1-page: above the harness defaults
+   it retones, below the workbook's own layer.
+   That second half is the point, not a compromise. `border-color` on a
+   cell is the same property D5.css sets to #1b6b58, and the one colour in
+   this frame that must be the WORKBOOK's and never the page's. Unlayered,
+   the page would win and repaint it grey. */
+@layer fsa1-page{
+  .rendered fsa1-sheet{ border-color:light-dark(#ddd,#C4C7CB); }
+  .rendered fsa1-cell,.rendered fsa1-head{ border-color:light-dark(#ddd,#C4C7CB); color:#111; }
+  .rendered fsa1-head{ background-color:light-dark(#f0f0f0,#D6D8DC); color:#444; }
+}
 
 .aside{
   margin:16px 0 0;
@@ -633,6 +650,25 @@ footer{
   html{ scroll-behavior:auto; }
 }
 </style>
+<!-- fsa1-cli's own harness stylesheet, verbatim: the html frame below is the
+     binary's output and this is the CSS that output ships with. A sibling of
+     the page's <style> and never inside it — a marker in raw-text content is
+     not a comment. -->
+<!--fsa1:style Q3/Orders--><style>
+@layer fsa1-harness, fsa1-s0-0;
+@layer fsa1-harness {
+fsa1-sheet { display: grid; width: max-content; border-right: 1px solid #dddddd; border-bottom: 1px solid #dddddd }
+fsa1-caption { font-weight: bold; padding: 4px 0 }
+fsa1-region, fsa1-rows, fsa1-row { display: contents }
+fsa1-cell, fsa1-head { display: block; box-sizing: border-box; padding: 2px 6px; color: #000000; font-family: Calibri; font-size: 11pt; font-style: normal; font-weight: normal; text-decoration: none; vertical-align: bottom; white-space: pre; border-top: 1px solid #dddddd; border-left: 1px solid #dddddd }
+fsa1-cell::before, fsa1-head::before { content: ""; display: inline-block; width: 0; height: 100%; vertical-align: inherit }
+fsa1-cell[hidden], fsa1-head[hidden] { display: none }
+fsa1-head { background-color: #f0f0f0 }
+}
+#fx { position: sticky; top: 0; background: #ffffff; border-bottom: 1px solid #cccccc; display: flex; font-family: monospace; font-size: 10pt; gap: 8px; padding: 4px 6px }
+#fx-ref { color: #666666; min-width: 6ch }
+fsa1-cell:focus { outline: 2px solid #3f6fb7 }
+</style><!--fsa1:end-->
 </head>
 <body>
 <main>
@@ -661,57 +697,61 @@ footer{
     <div class="loop" id="lsloop">
 
       <div class="frame on">
-        <div class="term">
-<span class="p">$</span> ls -R Q3
+        <div class="term"><!--fsa1:cmd ls -R Q3--><span class="p">$</span> ls -R Q3<!--fsa1:end-->
 
-<span class="d">Q3:</span>
+<!--fsa1:out +d ls -R Q3--><span class="d">Q3:</span>
 Orders
 Summary
 
 <span class="d">Q3/Orders:</span>
-A1:D1  <span class="c"># Item · Price · Qty · Total</span>
-A2:A4  <span class="c"># Nut · Bolt · Cog</span>
-A5:C5  <span class="c"># Sum</span>
-B2:B4  <span class="c"># 10 · 15 · 4</span>
-C2:C4  <span class="c"># 4 · 2 · 10</span>
-D2:D4  <span class="c"># <span class="fx">=B2*C2</span> · <span class="fx">=B3*C3</span> · <span class="fx">=B4*C4</span></span>
-D5     <span class="c"># <span class="fx">=SUM(D2:D4)</span></span>
+A1:D1
+A2:A4
+A5:C5
+B2:B4
+C2:C4
+D2:D4
+D5
+D5.css
+F1:G2.json
+F3:G4.json
+F5:G6.json
 
 <span class="d">Q3/Summary:</span>
-A1:B1  <span class="c"># Metric · Value</span>
-A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
+A1:B1
+A2:B2<!--fsa1:end-->
 
-<span class="p">$</span> cat Q3/Orders/D2:D4
-<span class="fx">=B2*C2
-=B3*C3
-=B4*C4</span></div>
+<!--fsa1:cmd cat Q3/Orders/D2:D4--><span class="p">$</span> cat Q3/Orders/D2:D4<!--fsa1:end-->
+<!--fsa1:out +fx cat Q3/Orders/D2:D4--><span class="fx">=B2*C2</span>
+<span class="fx">=B3*C3</span>
+<span class="fx">=B4*C4</span><!--fsa1:end--></div>
       </div>
 
       <div class="frame">
-        <div class="term">
-<span class="p">$</span> fsa1-cli render Q3/Orders
-+---+------+-------+-----+--------------------+
-|   | A    | B     | C   | D                  |
-+=============================================+
-| 1 | Item | Price | Qty | Total              |
-|---+------+-------+-----+--------------------|
-| 2 | Nut  | 10    | 4   | 40 ← =B2*C2        |
-|---+------+-------+-----+--------------------|
-| 3 | Bolt | 15    | 2   | 30 ← =B3*C3        |
-|---+------+-------+-----+--------------------|
-| 4 | Cog  | 4     | 10  | 40 ← =B4*C4        |
-|---+------+-------+-----+--------------------|
-| 5 | Sum  |       |     | $110 ← =SUM(D2:D4) |
-+---+------+-------+-----+--------------------+
+        <div class="term"><!--fsa1:cmd fsa1-cli render Q3/Orders--><span class="p">$</span> fsa1-cli render Q3/Orders<!--fsa1:end-->
+<!--fsa1:out fsa1-cli render Q3/Orders-->+---+------+-------+-----+--------------------+---+-----+-----+
+|   | A    | B     | C   | D                  | E | F   | G   |
++=============================================================+
+| 1 | Item | Price | Qty | Total              |   |F1:G2.json |
+|---+------+-------+-----+--------------------+---+           |
+| 2 | Nut  | 10    | 4   | 40 ← =B2*C2        |   |layer(bar,…|
+|---+------+-------+-----+--------------------+---+-----------|
+| 3 | Bolt | 15    | 2   | 30 ← =B3*C3        |   |F3:G4.json |
+|---+------+-------+-----+--------------------+---+           |
+| 4 | Cog  | 4     | 10  | 40 ← =B4*C4        |   |layer(poin…|
+|---+------+-------+-----+--------------------+---+-----------|
+| 5 | Sum  |       |     | $110 ← =SUM(D2:D4) |   |F5:G6.json |
+|---+------+-------+-----+--------------------+---+           |
+| 6 |      |       |     |                    |   |   arc←…   |
++---+------+-------+-----+--------------------+---+-----------+<!--fsa1:end-->
 
-<span class="p">$</span> fsa1-cli render Q3/Summary
-+---+--------+------------------+
+<!--fsa1:cmd fsa1-cli render Q3/Summary--><span class="p">$</span> fsa1-cli render Q3/Summary<!--fsa1:end-->
+<!--fsa1:out fsa1-cli render Q3/Summary-->+---+--------+------------------+
 |   | A      | B                |
 +===============================+
 | 1 | Metric | Value            |
 |---+--------+------------------|
 | 2 | Sales  | 110 ← =Orders!D5 |
-+---+--------+------------------+</div>
++---+--------+------------------+<!--fsa1:end--></div>
       </div>
 
     </div>
@@ -734,12 +774,11 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
       </div>
 
       <div class="frame">
-        <div class="term">
-<span class="p">$</span> fsa1-cli unpack Q3.xlsx
-<span class="p">$</span> cat Q3/Orders/D5
-<span class="fx">=SUM(D2:D4)</span><span class="fmt">~$#,##0</span>
-<span class="p">$</span> cat Q3/Orders/D5.css
-<span class="css"><span class="decl">fsa1-cell { border-top: 2px solid #1b6b58 }</span></span></div>
+        <div class="term"><!--fsa1:cmd fsa1-cli unpack Q3.xlsx--><span class="p">$</span> fsa1-cli unpack Q3.xlsx<!--fsa1:end-->
+<!--fsa1:cmd cat Q3/Orders/D5--><span class="p">$</span> cat Q3/Orders/D5<!--fsa1:end-->
+<!--fsa1:out +fx cat Q3/Orders/D5--><span class="fx">=SUM(D2:D4)</span><span class="fmt">~$#,##0</span><!--fsa1:end-->
+<!--fsa1:cmd cat Q3/Orders/D5.css--><span class="p">$</span> cat Q3/Orders/D5.css<!--fsa1:end-->
+<span class="css"><span class="decl"><!--fsa1:out cat Q3/Orders/D5.css-->fsa1-cell { border-top: 2px solid #1b6b58 }<!--fsa1:end--></span></span></div>
       </div>
 
     </div></div>
@@ -769,9 +808,9 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
     draws is the file an author edits, plus one <code>datasets</code> key holding what each reference
     resolved to.</p>
     <div class="window figwin"><div class="loop" id="figloop">
-      <div class="frame on"><div class="fig" data-spec='{"title":"Orders/total.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"layer":[{"mark":{"type":"bar","cornerRadiusEnd":3,"color":"#4fd4a8","opacity":0.9}},{"mark":{"type":"text","dy":-8,"color":"#9aa4b2","fontSize":11},"encoding":{"text":{"field":"Total","type":"quantitative"}}}],"encoding":{"x":{"field":"Item","type":"nominal","axis":{"labelAngle":0,"title":null}},"y":{"field":"Total","type":"quantitative","title":"Total","axis":{"grid":true}}}}'></div></div>
-      <div class="frame"><div class="fig" data-spec='{"title":"Orders/price-vs-qty.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"layer":[{"mark":{"type":"point","filled":true,"size":260,"opacity":0.95},"encoding":{"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"top-right","title":null}}}},{"mark":{"type":"text","dy":-16,"color":"#9aa4b2","fontSize":10},"encoding":{"text":{"field":"Item","type":"nominal"}}}],"encoding":{"x":{"field":"Price","type":"quantitative","title":"Price","scale":{"zero":true},"axis":{"grid":true}},"y":{"field":"Qty","type":"quantitative","title":"Qty","scale":{"zero":true},"axis":{"grid":true}}}}'></div></div>
-      <div class="frame"><div class="fig" data-spec='{"title":"Orders/share.json","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"values":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]},"mark":{"type":"arc","innerRadius":52,"outerRadius":84,"stroke":"#161b22","strokeWidth":2},"encoding":{"theta":{"field":"Total","type":"quantitative","stack":true},"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"right","title":null}},"tooltip":[{"field":"Item","type":"nominal"},{"field":"Total","type":"quantitative"}]}}'></div></div>
+      <div class="frame on"><div class="fig"><!--fsa1:spec Orders/F1:G2.json -- Q3/Orders--><script class="fsa1-spec" type="application/json">{"title":"Total by item","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"name":"Orders!A1:D4"},"layer":[{"mark":{"type":"bar","cornerRadiusEnd":3,"color":"#4fd4a8","opacity":0.9}},{"mark":{"type":"text","dy":-8,"color":"#9aa4b2","fontSize":11},"encoding":{"text":{"field":"Total","type":"quantitative"}}}],"encoding":{"x":{"field":"Item","type":"nominal","axis":{"labelAngle":0,"title":null}},"y":{"field":"Total","type":"quantitative","title":"Total","axis":{"grid":true}}},"datasets":{"Orders!A1:D4":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]}}</script><!--fsa1:end--></div></div>
+      <div class="frame"><div class="fig"><!--fsa1:spec Orders/F3:G4.json -- Q3/Orders--><script class="fsa1-spec" type="application/json">{"title":"Price vs quantity","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"name":"Orders!A1:D4"},"layer":[{"mark":{"type":"point","filled":true,"size":260,"opacity":0.95},"encoding":{"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"top-right","title":null}}}},{"mark":{"type":"text","dy":-16,"color":"#9aa4b2","fontSize":10},"encoding":{"text":{"field":"Item","type":"nominal"}}}],"encoding":{"x":{"field":"Price","type":"quantitative","title":"Price","scale":{"zero":true},"axis":{"grid":true}},"y":{"field":"Qty","type":"quantitative","title":"Qty","scale":{"zero":true},"axis":{"grid":true}}},"datasets":{"Orders!A1:D4":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]}}</script><!--fsa1:end--></div></div>
+      <div class="frame"><div class="fig"><!--fsa1:spec Orders/F5:G6.json -- Q3/Orders--><script class="fsa1-spec" type="application/json">{"title":"Share of total","width":360,"height":190,"background":null,"padding":8,"config":{"background":null,"font":"Inter, system-ui, sans-serif","view":{"stroke":null},"axis":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","domainColor":"#3a4250","tickColor":"#3a4250","gridColor":"#2b323d","labelFontSize":11,"titleFontSize":11,"titleFontWeight":500},"legend":{"labelColor":"#9aa4b2","titleColor":"#9aa4b2","labelFontSize":11,"titleFontSize":11},"title":{"color":"#9aa4b2","fontSize":12,"fontWeight":500,"anchor":"start","dy":-4}},"data":{"name":"Orders!A1:D4"},"mark":{"type":"arc","innerRadius":52,"outerRadius":84,"stroke":"#161b22","strokeWidth":2},"encoding":{"theta":{"field":"Total","type":"quantitative","stack":true},"color":{"field":"Item","type":"nominal","scale":{"range":["#4fd4a8","#e0a44a","#7ea8f0"]},"legend":{"orient":"right","title":null}},"tooltip":[{"field":"Item","type":"nominal"},{"field":"Total","type":"quantitative"}]},"datasets":{"Orders!A1:D4":[{"Item":"Nut","Price":10,"Qty":4,"Total":40},{"Item":"Bolt","Price":15,"Qty":2,"Total":30},{"Item":"Cog","Price":4,"Qty":10,"Total":40}]}}</script><!--fsa1:end--></div></div>
     </div></div>
   </section>
 
@@ -783,69 +822,66 @@ A2:B2  <span class="c"># Sales · <span class="fx">=Orders!D5</span></span>
     <div class="window"><div class="loop" id="renderloop">
 
       <div class="frame on">
-        <div class="term">+---+------+-------+-----+--------------------+
-|   | A    | B     | C   | D                  |
-+=============================================+
-| 1 | Item | Price | Qty | Total              |
-|---+------+-------+-----+--------------------|
-| 2 | Nut  | 10    | 4   | 40 ← =B2*C2        |
-|---+------+-------+-----+--------------------|
-| 3 | Bolt | 15    | 2   | 30 ← =B3*C3        |
-|---+------+-------+-----+--------------------|
-| 4 | Cog  | 4     | 10  | 40 ← =B4*C4        |
-|---+------+-------+-----+--------------------|
-| 5 | Sum  |       |     | $110 ← =SUM(D2:D4) |
-+---+------+-------+-----+--------------------+</div>
+        <div class="term"><!--fsa1:out fsa1-cli render Q3/Orders --mode combined-->+---+------+-------+-----+--------------------+---+-----+-----+
+|   | A    | B     | C   | D                  | E | F   | G   |
++=============================================================+
+| 1 | Item | Price | Qty | Total              |   |F1:G2.json |
+|---+------+-------+-----+--------------------+---+           |
+| 2 | Nut  | 10    | 4   | 40 ← =B2*C2        |   |layer(bar,…|
+|---+------+-------+-----+--------------------+---+-----------|
+| 3 | Bolt | 15    | 2   | 30 ← =B3*C3        |   |F3:G4.json |
+|---+------+-------+-----+--------------------+---+           |
+| 4 | Cog  | 4     | 10  | 40 ← =B4*C4        |   |layer(poin…|
+|---+------+-------+-----+--------------------+---+-----------|
+| 5 | Sum  |       |     | $110 ← =SUM(D2:D4) |   |F5:G6.json |
+|---+------+-------+-----+--------------------+---+           |
+| 6 |      |       |     |                    |   |   arc←…   |
++---+------+-------+-----+--------------------+---+-----------+<!--fsa1:end--></div>
+        <i class="cmdsrc"><!--fsa1:cmd fsa1-cli render Q3/Orders --mode combined--><span class="p">$</span> fsa1-cli render Q3/Orders --mode combined<!--fsa1:end--></i>
       </div>
 
       <div class="frame">
-        <div class="term">+---+------+-------+-----+-------+
-|   | A    | B     | C   | D     |
-+================================+
-| 1 | Item | Price | Qty | Total |
-|---+------+-------+-----+-------|
-| 2 | Nut  | 10    | 4   | 40    |
-|---+------+-------+-----+-------|
-| 3 | Bolt | 15    | 2   | 30    |
-|---+------+-------+-----+-------|
-| 4 | Cog  | 4     | 10  | 40    |
-|---+------+-------+-----+-------|
-| 5 | Sum  |       |     | $110  |
-+---+------+-------+-----+-------+</div>
+        <div class="term"><!--fsa1:out fsa1-cli render Q3/Orders --mode values-->+---+------+-------+-----+-------+---+-----+-----+
+|   | A    | B     | C   | D     | E | F   | G   |
++================================================+
+| 1 | Item | Price | Qty | Total |   |F1:G2.json |
+|---+------+-------+-----+-------+---+           |
+| 2 | Nut  | 10    | 4   | 40    |   |layer(bar,…|
+|---+------+-------+-----+-------+---+-----------|
+| 3 | Bolt | 15    | 2   | 30    |   |F3:G4.json |
+|---+------+-------+-----+-------+---+           |
+| 4 | Cog  | 4     | 10  | 40    |   |layer(poin…|
+|---+------+-------+-----+-------+---+-----------|
+| 5 | Sum  |       |     | $110  |   |F5:G6.json |
+|---+------+-------+-----+-------+---+           |
+| 6 |      |       |     |       |   |   arc←…   |
++---+------+-------+-----+-------+---+-----------+<!--fsa1:end--></div>
+        <i class="cmdsrc"><!--fsa1:cmd fsa1-cli render Q3/Orders --mode values--><span class="p">$</span> fsa1-cli render Q3/Orders --mode values<!--fsa1:end--></i>
       </div>
 
       <div class="frame">
-        <div class="term">+---+------+-------+-----+-------------+
-|   | A    | B     | C   | D           |
-+======================================+
-| 1 | Item | Price | Qty | Total       |
-|---+------+-------+-----+-------------|
-| 2 | Nut  | 10    | 4   | =B2*C2      |
-|---+------+-------+-----+-------------|
-| 3 | Bolt | 15    | 2   | =B3*C3      |
-|---+------+-------+-----+-------------|
-| 4 | Cog  | 4     | 10  | =B4*C4      |
-|---+------+-------+-----+-------------|
-| 5 | Sum  |       |     | =SUM(D2:D4) |
-+---+------+-------+-----+-------------+</div>
+        <div class="term"><!--fsa1:out fsa1-cli render Q3/Orders --mode functions-->+---+------+-------+-----+-------------+---+-----+-----+
+|   | A    | B     | C   | D           | E | F   | G   |
++======================================================+
+| 1 | Item | Price | Qty | Total       |   |F1:G2.json |
+|---+------+-------+-----+-------------+---+           |
+| 2 | Nut  | 10    | 4   | =B2*C2      |   |layer(bar,…|
+|---+------+-------+-----+-------------+---+-----------|
+| 3 | Bolt | 15    | 2   | =B3*C3      |   |F3:G4.json |
+|---+------+-------+-----+-------------+---+           |
+| 4 | Cog  | 4     | 10  | =B4*C4      |   |layer(poin…|
+|---+------+-------+-----+-------------+---+-----------|
+| 5 | Sum  |       |     | =SUM(D2:D4) |   |F5:G6.json |
+|---+------+-------+-----+-------------+---+           |
+| 6 |      |       |     |             |   |   arc←…   |
++---+------+-------+-----+-------------+---+-----------+<!--fsa1:end--></div>
+        <i class="cmdsrc"><!--fsa1:cmd fsa1-cli render Q3/Orders --mode functions--><span class="p">$</span> fsa1-cli render Q3/Orders --mode functions<!--fsa1:end--></i>
       </div>
 
       <div class="frame">
-        <div class="rendered">
-          <table>
-            <caption>Orders</caption>
-            <thead>
-              <tr><th></th><th>A</th><th>B</th><th>C</th><th>D</th></tr>
-            </thead>
-            <tbody>
-              <tr><th>1</th><td class="c0">Item</td><td class="c0">Price</td><td class="c0">Qty</td><td class="c0">Total</td></tr>
-              <tr><th>2</th><td>Nut</td><td>10</td><td>4</td><td>40 ← =B2*C2</td></tr>
-              <tr><th>3</th><td>Bolt</td><td>15</td><td>2</td><td>30 ← =B3*C3</td></tr>
-              <tr><th>4</th><td>Cog</td><td>4</td><td>10</td><td>40 ← =B4*C4</td></tr>
-              <tr><th>5</th><td>Sum</td><td></td><td></td><td class="c1">$110 ← =SUM(D2:D4)</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <div class="rendered"><!--fsa1:sheet Q3/Orders--><fsa1-caption>Orders</fsa1-caption><fsa1-sheet id="fsa1-s0" data-tab="Orders" style="grid-template-columns:auto auto auto auto auto;grid-template-rows:auto auto auto auto auto auto"><fsa1-head style="grid-row:1;grid-column:1;width:100%;height:100%"></fsa1-head><fsa1-head style="grid-row:1;grid-column:2;width:100%;height:100%">A</fsa1-head><fsa1-head style="grid-row:1;grid-column:3;width:100%;height:100%">B</fsa1-head><fsa1-head style="grid-row:1;grid-column:4;width:100%;height:100%">C</fsa1-head><fsa1-head style="grid-row:1;grid-column:5;width:100%;height:100%">D</fsa1-head><fsa1-head style="grid-row:2;grid-column:1;width:100%;height:100%">1</fsa1-head><fsa1-head style="grid-row:3;grid-column:1;width:100%;height:100%">2</fsa1-head><fsa1-head style="grid-row:4;grid-column:1;width:100%;height:100%">3</fsa1-head><fsa1-head style="grid-row:5;grid-column:1;width:100%;height:100%">4</fsa1-head><fsa1-head style="grid-row:6;grid-column:1;width:100%;height:100%">5</fsa1-head><fsa1-rows><fsa1-row><fsa1-cell data-ref="A1" tabindex="0" style="grid-row:2;grid-column:2;width:100%;height:100%">Item</fsa1-cell><fsa1-cell data-ref="B1" tabindex="0" style="grid-row:2;grid-column:3;width:100%;height:100%">Price</fsa1-cell><fsa1-cell data-ref="C1" tabindex="0" style="grid-row:2;grid-column:4;width:100%;height:100%">Qty</fsa1-cell><fsa1-cell data-ref="D1" tabindex="0" style="grid-row:2;grid-column:5;width:100%;height:100%">Total</fsa1-cell></fsa1-row><fsa1-row><fsa1-cell data-ref="A2" tabindex="0" style="grid-row:3;grid-column:2;width:100%;height:100%">Nut</fsa1-cell><fsa1-cell data-ref="B2" tabindex="0" style="grid-row:3;grid-column:3;width:100%;height:100%">10</fsa1-cell><fsa1-cell data-ref="C2" tabindex="0" style="grid-row:3;grid-column:4;width:100%;height:100%">4</fsa1-cell><fsa1-cell data-ref="D2" data-formula="=B2*C2" tabindex="0" style="grid-row:3;grid-column:5;width:100%;height:100%">40</fsa1-cell></fsa1-row><fsa1-row><fsa1-cell data-ref="A3" tabindex="0" style="grid-row:4;grid-column:2;width:100%;height:100%">Bolt</fsa1-cell><fsa1-cell data-ref="B3" tabindex="0" style="grid-row:4;grid-column:3;width:100%;height:100%">15</fsa1-cell><fsa1-cell data-ref="C3" tabindex="0" style="grid-row:4;grid-column:4;width:100%;height:100%">2</fsa1-cell><fsa1-cell data-ref="D3" data-formula="=B3*C3" tabindex="0" style="grid-row:4;grid-column:5;width:100%;height:100%">30</fsa1-cell></fsa1-row><fsa1-row><fsa1-cell data-ref="A4" tabindex="0" style="grid-row:5;grid-column:2;width:100%;height:100%">Cog</fsa1-cell><fsa1-cell data-ref="B4" tabindex="0" style="grid-row:5;grid-column:3;width:100%;height:100%">4</fsa1-cell><fsa1-cell data-ref="C4" tabindex="0" style="grid-row:5;grid-column:4;width:100%;height:100%">10</fsa1-cell><fsa1-cell data-ref="D4" data-formula="=B4*C4" tabindex="0" style="grid-row:5;grid-column:5;width:100%;height:100%">40</fsa1-cell></fsa1-row><fsa1-row><fsa1-cell data-ref="A5" tabindex="0" style="grid-row:6;grid-column:2;width:100%;height:100%">Sum</fsa1-cell><fsa1-cell data-ref="B5" tabindex="0" style="grid-row:6;grid-column:3;width:100%;height:100%"></fsa1-cell><fsa1-cell data-ref="C5" tabindex="0" style="grid-row:6;grid-column:4;width:100%;height:100%"></fsa1-cell><fsa1-cell data-ref="D5" data-formula="=SUM(D2:D4)" tabindex="0" style="grid-row:6;grid-column:5;width:100%;height:100%">$110</fsa1-cell></fsa1-row></fsa1-rows><style>@layer fsa1-s0-0 { @scope (#fsa1-s0 fsa1-row:has(> fsa1-cell[data-ref="D5"])) to (fsa1-cell:not([data-ref="D5"])) {fsa1-cell { border-top: 2px solid #1b6b58 }
+} }</style></fsa1-sheet><!--fsa1:end--></div>
+        <i class="cmdsrc"><!--fsa1:cmd fsa1-cli render Q3/Orders --format html > out.html--><span class="p">$</span> fsa1-cli render Q3/Orders --format html &gt; out.html<!--fsa1:end--></i>
       </div>
 
     </div></div>
@@ -1006,19 +1042,18 @@ Edit("Orders/C2:C4", old="10", new="12")</div>
     lstimer = setTimeout(function(){ lsshow(0); }, 5000);
   });
 
+  /* The command line is not a fifth copy of itself: each frame carries the
+     prompt it was rendered from in a hidden .cmdsrc, and the caption above
+     the window is lifted straight out of it. innerHTML, because the source
+     holds the `$` as a span that .cmd .p paints. */
   var cmd = document.getElementById("rendercmd"),
+      renderframes = document.querySelectorAll("#renderloop .frame"),
       renderwin = document.getElementById("renderloop").parentNode;
-  var flags = [
-    "--mode combined",            /* the default: value ← formula */
-    "--mode values",
-    "--mode functions",
-    "--format html > out.html"
-  ];
   cycle(
-    document.querySelectorAll("#renderloop .frame"),
+    renderframes,
     3200,
     function(i){
-      cmd.innerHTML = '<span class="p">$</span> fsa1-cli render Q3/Orders ' + flags[i];
+      cmd.innerHTML = renderframes[i].querySelector(".cmdsrc").innerHTML;
       renderwin.classList.toggle("doc", i === 3);
     }
   );
@@ -1034,7 +1069,7 @@ Edit("Orders/C2:C4", old="10", new="12")</div>
   var figs = [].slice.call(document.querySelectorAll("#figloop .fig"));
   if (figs.length && window.vegaEmbed) {
     Promise.all(figs.map(function (el) {
-      return vegaEmbed(el, JSON.parse(el.dataset.spec), {
+      return vegaEmbed(el, JSON.parse(el.querySelector("script.fsa1-spec").textContent), {
         actions: false,
         renderer: "svg"
       }).catch(function () {});

@@ -60,6 +60,14 @@ jobs:
       - name: Build both front ends
         run: cargo build --locked -p fsa1-cli -p fsa1-mcp
 
+      # The landing page's terminal blocks are the binary's own output or they are fiction. --check
+      # re-renders website/src/index.html from website/fixture/ and fails on any drift. FSA1_CLI names
+      # the binary the step above just built, so the check reuses it rather than building a second time.
+      - name: The website's command output is what the CLI printed
+        env:
+          FSA1_CLI: ${{ github.workspace }}/target/debug/fsa1-cli
+        run: ./scripts/render-site.sh --check
+
       - name: Both built front ends report the workspace version
         # `want` MUST come from the workspace manifest — [workspace.package] in the root Cargo.toml,
         # the declaration a bump edits — and never from a resolved PACKAGE version. `cargo metadata`

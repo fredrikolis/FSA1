@@ -4,16 +4,18 @@
 # is INVARIANT and lives at the annotated-tree project page — it is NOT configured here. This file
 # owns only the repo-wide ARCHITECTURAL rules the gate enforces. Valid tables: display, limits,
 # rules, languages (there is NO ignore key — corpus/fixture exclusion is done at the CALL site with
-# `-I` globs in .githooks/pre-commit and the `annotations` job of .github/workflows/ci.yml; keep them
-# in sync).
+# `-I` globs in scripts/annotation-gate.sh, which the hook, scripts/gate.sh and ci.yml all invoke,
+# so the list has ONE definition and cannot drift).
 #
-# ACTIVE EXCLUSION GLOBS (identical at both call sites — the hook and ci.yml's `annotations` job.
-# They were out of sync until 2026-07-30, when ci.yml's broader 'conformance/serde/**' was narrowed
-# to the accept/refuse pair so the seven serde GRADERS are gated in CI as well as locally):
+# ACTIVE EXCLUSION GLOBS (all in scripts/annotation-gate.sh. They lived at two call sites and were
+# out of sync until 2026-07-30, when ci.yml's broader 'conformance/serde/**' was narrowed to the
+# accept/refuse pair so the seven serde GRADERS are gated in CI as well as locally):
 #   -I 'conformance/encoding/**'
 #   -I 'conformance/formula/**'
 #   -I 'conformance/render/**'
 #   -I 'conformance/serde/accept/**' -I 'conformance/serde/refuse/**'
+#   -I 'website/fixture/**'
+# website/fixture/ is the landing page's workbook — content the page renders, not authored source.
 # Four conformance corpora are SANCTIONED graded inputs, not authored source:
 #   - conformance/encoding/ (W1, see its PROVENANCE.md): `.range`/`.cell` sheet files + `.md` ledgers.
 #   - conformance/formula/  (W3, see its PROVENANCE.md): the `.fixtures` value probes, PROVENANCE.md,

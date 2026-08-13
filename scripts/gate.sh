@@ -58,6 +58,7 @@ fi
 
 stage 'annotations' ./scripts/annotation-gate.sh
 stage 'comments' ./scripts/comment-gate.sh
+stage 'site' ./scripts/render-site.sh --check
 stage 'pre-commit selftest' bash .githooks/pre-commit.selftest.sh
 
 echo
