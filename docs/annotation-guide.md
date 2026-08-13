@@ -1,8 +1,8 @@
-<!-- Concern: the annotation rubric Gate B grades against, captured from annotated-tree at the gate's floor | Non-concern: the floor (scripts/annotation-gate.sh owns it), the comment budget | IO: none -->
+<!-- Concern: the annotation rubric Gate B grades against, captured from annotated-tree at the gate's floor | Non-concern: the floor (.githooks/pre-commit owns it), the comment budget | IO: none -->
 # Annotation Guide
 
-Captured verbatim from `annotated-tree --annotation-guide` at **0.7.0**, the version `MIN` in
-`scripts/annotation-gate.sh` names. It is a copy, so it goes stale when that floor moves, or a clone runs a newer tool:
+Captured verbatim from `annotated-tree --annotation-guide` at **0.7.0**, the version `ANNOTATION_MIN`
+in `.githooks/pre-commit` names. It is a copy, so it goes stale when that floor moves, or a clone runs a newer tool:
 regenerate it in the same commit that bumps the floor, with
 `annotated-tree --annotation-guide` at the new version, and keep this header.
 
