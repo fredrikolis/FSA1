@@ -1,4 +1,6 @@
-// Concern: spells each figure as a <figure> and the one script that mounts it | Non-concern: expanding a spec, the sheets a figure is drawn beneath | IO: (bound specs) -> markup + a script
+// Concern: spells one figure as a <figure> and the script that mounts every one | Non-concern: expanding a spec, deciding which cells a figure fills | IO: (a bound figure, a grid area) -> markup
+
+use crate::BoundFigure;
 
 /// The pinned runtime, inlined so the export stays ONE self-contained file: a CDN `src=` would make
 /// a saved page a page that stops drawing the day the network is gone. `build.rs` locates it.
@@ -14,24 +16,43 @@ var view=new vega.View(vega.parse(vegaLite.compile(spec).spec),\
 view.runAsync();});
 ";
 
-/// The whole figure block, or the EMPTY string where the document holds none — a workbook stating no
-/// figure carries no runtime, no `<figure>` and not one extra byte. `figures` is `(name, bound spec)`.
-pub(crate) fn block(figures: &[(String, String)]) -> String {
-    if figures.is_empty() {
-        return String::new();
-    }
+/// The runtime, every figure no sheet drew, and the one mounting pass — the tail of a document that
+/// holds a figure at all. A workbook stating none carries no runtime, no `<figure>` and not one
+/// extra byte, which is [`crate::document`]'s call and not this one's. A figure here states no
+/// placement, so it keeps the size its own spec asks for and follows the sheets at it.
+pub(crate) fn block(after: &[&BoundFigure]) -> String {
     let mut out = format!("\n<script>{RUNTIME}</script>");
-    for (name, spec) in figures {
-        out.push_str(&format!(
-            "\n<figure class=\"fsa1-fig\"><figcaption>{caption}</figcaption>\
-             <div class=\"fsa1-fig-view\"></div>\
-             <script class=\"fsa1-spec\" type=\"application/json\">{spec}</script></figure>",
-            caption = crate::escape::text(name),
-            spec = script_json(spec),
-        ));
+    for figure in after {
+        out.push_str(&format!("\n{}", element(figure, "", &figure.spec, "")));
     }
     out.push_str(&format!("\n<script>{MOUNT}</script>"));
     out
+}
+
+/// A figure drawn IN the cells it names, `area` being the grid placement they resolve to. Those
+/// cells are its whole size, which is why the spec is respelled to fill its container and the view
+/// is a flex item — the caption takes its line and the drawing takes the rest. `margin: 0` because a
+/// page styling `.fsa1-fig` for the figures a document APPENDS would push this one off its cells.
+pub(crate) fn filling(figure: &BoundFigure, area: &str) -> String {
+    element(
+        figure,
+        &format!(
+            " style=\"{area};width:100%;height:100%;margin:0;display:flex;\
+             flex-direction:column;min-width:0;min-height:0\""
+        ),
+        &filling_cells(&figure.spec),
+        " style=\"flex:1;min-height:0\"",
+    )
+}
+
+fn element(figure: &BoundFigure, style: &str, spec: &str, view: &str) -> String {
+    format!(
+        "<figure class=\"fsa1-fig\"{style}><figcaption>{caption}</figcaption>\
+         <div class=\"fsa1-fig-view\"{view}></div>\
+         <script class=\"fsa1-spec\" type=\"application/json\">{spec}</script></figure>",
+        caption = crate::escape::text(&figure.name),
+        spec = script_json(spec),
+    )
 }
 
 /// A `<script>` is a RAW-TEXT element, so an author's cell text spelling `</script>` inside the spec
@@ -39,4 +60,22 @@ pub(crate) fn block(figures: &[(String, String)]) -> String {
 /// `<` is the same character — so escaping every one of them is lossless and closes the hole.
 fn script_json(spec: &str) -> String {
     spec.replace('<', "\\u003c")
+}
+
+/// A bound spec respelled for the carrier that draws the figure INSIDE the cells it names: there the
+/// cells are the box, so the view's own `width`/`height` are REPLACED — a spec at its declared size
+/// would overflow them — and `autosize` fits the drawing, its padding included, to what they resolve
+/// to. `expand` yields a JSON object or nothing, so a non-object cannot reach here.
+fn filling_cells(spec: &str) -> String {
+    let mut root = match serde_json::from_str::<serde_json::Value>(spec) {
+        Ok(serde_json::Value::Object(root)) => root,
+        _ => unreachable!("a bound spec is a JSON object: Figure::expand yields no other shape"),
+    };
+    root.insert("width".to_string(), "container".into());
+    root.insert("height".to_string(), "container".into());
+    root.insert(
+        "autosize".to_string(),
+        serde_json::json!({"type": "fit", "contains": "padding"}),
+    );
+    serde_json::Value::Object(root).to_string()
 }

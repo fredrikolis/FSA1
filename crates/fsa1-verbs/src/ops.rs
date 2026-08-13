@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use fsa1_html::BoundFigure;
 use fsa1_ingest::{Decomposition, ImportReport};
 use fsa1_model::{
     Axis, Diagnostic, Direction, Figure, FigureView, Figures, FormulaOutcome, Overlay, Placement,
@@ -106,9 +107,9 @@ fn view_at(
         ));
     }
 
-    // Where each figure sits, in CELLS, so the note below reads the rectangle it just built. Only the ASCII table MEASURES a cover: HTML draws the figure itself, and `tree` has no coordinate plane to occlude.
+    // Where each figure sits, in CELLS: the ASCII table MARKS those cells and the html one DRAWS the figure in them, so both carriers widen the viewport to reach them and neither can disagree about the extent. `tree` has no coordinate plane to occlude.
     let mut placed: Vec<(u32, FigureView)> = Vec::new();
-    if let (Presenter::Table, Format::Ascii) = (presenter, format) {
+    if let Presenter::Table = presenter {
         for (s, tab) in wb.sheet_names().iter().enumerate() {
             let s = s as u32;
             let tab_figures = figures.in_tab(tab);
@@ -126,9 +127,12 @@ fn view_at(
                 },
             );
             for figure in tab_figures {
-                let cover = figures
-                    .placement(figure)
-                    .map(|placement| placement.cover(&cols, &rows));
+                let placement = figures.placement(figure).copied();
+                // ASCII MARKS every cover; html DRAWS only a figure that fills cells, so a fixed box widening an html viewport would open space nothing is ever drawn in.
+                let cover = match format {
+                    Format::Html => fsa1_html::fills(placement),
+                    _ => placement.map(|p| p.cover(&cols, &rows)),
+                };
                 placed.push((s, figure_view(figure, cover)));
             }
         }
@@ -166,14 +170,20 @@ fn view_at(
     }
 
     // A figure is in scope for its TAB, and bound only for the carrier that DRAWS one: ASCII discards the spec, so expanding for it buys a fetch and a JSON build for nothing and reports each fault twice.
-    let mut bound: Vec<(String, String)> = Vec::new();
+    let mut bound: Vec<BoundFigure> = Vec::new();
     for sheet in &v.sheets {
         for figure in figures.in_tab(sheet.name) {
             match format {
                 Format::Html => {
                     let sheet_id = wb.tab_index(sheet.name).expect("a view names its own tabs");
                     match figure.expand(wb, sheet_id) {
-                        Ok(spec) => bound.push((figure.name.clone(), spec.to_string())),
+                        // The placement rides along UNMEASURED: the document draws the figure over the very cells it names, and it is the renderer's business what those cells resolve to.
+                        Ok(spec) => bound.push(BoundFigure {
+                            name: figure.name.clone(),
+                            spec: spec.to_string(),
+                            sheet: sheet.sheet,
+                            placement: figures.placement(figure).copied(),
+                        }),
                         Err(diags) => notes.extend(diags.iter().map(Diagnostic::to_string)),
                     }
                 }

@@ -87,13 +87,18 @@ extract() {
 			if (n > 1) exit 4
 			printf "%s", span(head, "<style>", "</style>")
 		} else if (mode == "doc") {
-			if (index(doc, "</fsa1-sheet>") == 0) exit 3
+			closes = index(doc, "</fsa1-sheet>")
+			if (closes == 0) exit 3
 			out = span(doc, "<fsa1-caption>", "</fsa1-sheet>")
+			# The second run starts where the sheet ends: a figure that fills cells is drawn
+			# INSIDE the sheet, so the run above already carries it and appending from the
+			# first <figure> anywhere in the document would carry it a second time.
 			# What sits between the two runs is the whole inlined Vega runtime, and what follows
 			# the last </figure> is the mount that drives it; the page carries both already.
-			f = index(doc, "<figure class=\"fsa1-fig\">")
+			after = substr(doc, closes + length("</fsa1-sheet>"))
+			f = index(after, "<figure class=\"fsa1-fig\">")
 			if (f > 0) {
-				figs = substr(doc, f)
+				figs = substr(after, f)
 				e = 0
 				off = 1
 				while ((p = index(substr(figs, off), "</figure>")) > 0) {

@@ -1,8 +1,10 @@
 // Concern: freezes the document's output contract | Non-concern: the CLI dispatch (fsa1-cli/tests owns it), the ASCII table | IO: (range files, sidecars, figures) -> assertions
 
-use fsa1_model::{Figure, Overlay, Rect, RenderMode, ViewScope, Workbook, view};
+use fsa1_model::{
+    Figure, Overlay, Placement, Rect, RenderMode, ViewScope, Workbook, figure_occupancy, view,
+};
 
-use crate::document;
+use crate::{BoundFigure, document};
 
 /// A tab layer, two DISJOINT blocks, a row only one of them covers, and a single-cell root NESTED in
 /// the wider block — every shape one tab may hold, in the cascade order `Overlay::scopes` yields:
@@ -23,20 +25,46 @@ fn scoped(files: &[(&str, &str)], scope: ViewScope) -> String {
     figured(files, &[], scope)
 }
 
-/// `figures` is `(name, spec text)`, expanded here exactly as `fsa1-verbs` expands it.
+/// `figures` is `(name, spec text)`, expanded and placed here exactly as `fsa1-verbs` does it: a
+/// RANGE-form name is its own placement, and a name-form one with no sidecar beside it has none.
 fn figured(files: &[(&str, &str)], figures: &[(&str, &str)], scope: ViewScope) -> String {
     let wb = Workbook::from_tabs(&[("Sheet1", files)]).expect("loads clean");
     let overlay = Overlay::from_tabs(&[("Sheet1", files)]).expect("its sidecars load clean");
-    let v = view(&wb, Some(&overlay), scope, RenderMode::Values, &[]).expect("a view");
-    let bound: Vec<(String, String)> = figures
+    let bound: Vec<BoundFigure> = figures
         .iter()
         .map(|(name, text)| {
             let figure = Figure::parse(name, text).expect("the figure parses");
             let spec = figure.expand(&wb, 0).expect("its bindings resolve");
-            ((*name).to_string(), spec.to_string())
+            BoundFigure {
+                name: (*name).to_string(),
+                spec: spec.to_string(),
+                sheet: 0,
+                placement: placement_of(name),
+            }
         })
         .collect();
+    let covers: Vec<(u32, fsa1_model::FigureView)> = bound
+        .iter()
+        .map(|f| {
+            (
+                f.sheet,
+                fsa1_model::FigureView {
+                    name: f.name.clone(),
+                    kind: String::new(),
+                    binds: Vec::new(),
+                    cover: crate::fills(f.placement),
+                    range_form: f.placement.is_some(),
+                },
+            )
+        })
+        .collect();
+    let v = view(&wb, Some(&overlay), scope, RenderMode::Values, &covers).expect("a view");
     document(&wb, &overlay, &v, &bound)
+}
+
+fn placement_of(name: &str) -> Option<Placement> {
+    let entry = name.rsplit('/').next().unwrap_or(name);
+    figure_occupancy(entry).map(Placement::Cells)
 }
 
 /// PRES2's first half, and the whole point of the carrier: the exporter WRAPS a sidecar's bytes and
@@ -333,6 +361,27 @@ fn a_figured_document_carries_the_runtime_once_and_fetches_nothing() {
     );
 }
 
+/// `MAX_VIEWPORT_CELLS` is "a refusal, never a crash", and `view` honours it by declining to widen
+/// for a cover that would breach it. The grid honours the SAME bound: a raw union of the cover it
+/// refused emits one `<fsa1-cell>` per coordinate, which IS the crash.
+#[test]
+fn a_cover_the_viewport_refused_does_not_widen_the_grid() {
+    let html = figured(
+        &[("A1:B2", "x\ty\n3\t4")],
+        &[(
+            // 26 columns x 40_000 rows is 1.04M cells, past the 1M bound.
+            "Sheet1/A1:Z40000.json",
+            r#"{"width":360,"height":190,"data":{"name":"A1:B2"},"mark":"bar"}"#,
+        )],
+        ViewScope::Workbook,
+    );
+    let cells = html.matches("<fsa1-cell").count();
+    assert!(
+        cells <= 16,
+        "the sheet holds four cells; the refused cover must not widen it, but {cells} were emitted"
+    );
+}
+
 /// A `<script>` is a raw-text element, so a cell spelling `</script>` inside a bound spec would end
 /// it and turn the rest of the document into markup.
 #[test]
@@ -347,4 +396,71 @@ fn a_cell_cannot_close_the_spec_script_it_rides_in() {
         "the cell may never become markup:\n{html}"
     );
     assert!(html.contains(r"\u003c/script>"), "escaped instead:\n{html}");
+}
+
+/// `format-spec.md`: "the filename is the placement and the size, and the figure fills exactly the
+/// cells it names". So the sheet's grid reaches those cells even where no file holds one, the figure
+/// is a grid item over them rather than a block after them, and its own declared size is replaced by
+/// the container the cells resolve to — a figure at 360px would overflow the four columns it fills.
+#[test]
+fn a_range_form_figure_fills_the_cells_its_name_states() {
+    let html = figured(
+        &[("A1:B2", "x\ty\n3\t4")],
+        &[(
+            "Sheet1/D2:E3.json",
+            r#"{"width":360,"height":190,"data":{"name":"A1:B2"},"mark":"bar"}"#,
+        )],
+        ViewScope::Workbook,
+    );
+    let (sheet, tail) = html
+        .split_once("</fsa1-sheet>")
+        .expect("the sheet closes once");
+    assert!(
+        sheet.contains("<figure class=\"fsa1-fig\"") && !tail.contains("<figure"),
+        "the figure is drawn IN the sheet, not after it:\n{html}"
+    );
+    assert!(
+        sheet.contains("grid-row:3/5;grid-column:5/7"),
+        "D2:E3, offset by the label row and the gutter column:\n{html}"
+    );
+    assert!(
+        sheet.contains(r#""width":"container","height":"container""#)
+            && sheet.contains(r#""autosize":{"type":"fit","contains":"padding"}"#),
+        "the cells are its box, so the spec's own size is replaced:\n{html}"
+    );
+    assert!(
+        html.contains("grid-template-columns:auto auto auto auto auto auto")
+            && sheet.contains("data-ref=\"E1\""),
+        "the grid reaches E, and the cells the figure covers are still addressable:\n{html}"
+    );
+}
+
+/// The NAME form with no sidecar beside it is "placed by the writer" (`format-spec.md`), so it
+/// states no cells to fill and nothing decides its size but its own spec. Only a figure that says
+/// where it sits is placed.
+#[test]
+fn a_figure_stating_no_placement_still_follows_the_sheet_at_its_own_size() {
+    let html = figured(
+        &[("A1:B2", "x\ty\n3\t4")],
+        &[(
+            "Sheet1/floats.json",
+            r#"{"width":360,"height":190,"data":{"name":"A1:B2"},"mark":"bar"}"#,
+        )],
+        ViewScope::Workbook,
+    );
+    let (sheet, tail) = html
+        .split_once("</fsa1-sheet>")
+        .expect("the sheet closes once");
+    assert!(
+        !sheet.contains("<figure") && tail.contains("<figure class=\"fsa1-fig\">"),
+        "an unplaced figure follows the sheet, and carries no grid area:\n{html}"
+    );
+    assert!(
+        tail.contains(r#""width":360,"height":190"#) && !html.contains(r#""width":"container""#),
+        "at the size its own spec asked for:\n{html}"
+    );
+    assert!(
+        html.contains("grid-template-columns:auto auto auto;"),
+        "and widens no sheet: exactly the gutter and A-B, so the `;` must follow:\n{html}"
+    );
 }

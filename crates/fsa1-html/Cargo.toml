@@ -1,4 +1,4 @@
-# Concern: declares the package and its one dep, fsa1-model | Non-concern: the deny edge barring it from fsa1-ast (.annotated-tree.toml) | IO: none
+# Concern: declares the package and what it builds against | Non-concern: the deny edge barring it from fsa1-ast (.annotated-tree.toml) | IO: none
 [package]
 name = "fsa1-html"
 version.workspace = true
@@ -7,3 +7,4 @@ license.workspace = true
 
 [dependencies]
 fsa1-model = { path = "../fsa1-model" }
+serde_json = { version = "1", features = ["preserve_order"] }

@@ -1,10 +1,10 @@
-// Concern: frames one sheet as a grid of addressed cells, scoping each sidecar into its layer | Non-concern: the harness, a rule's grammar | IO: (wb, overlay, view, scopes) -> markup; a layer's name
+// Concern: frames a sheet as addressed cells, each sidecar in its layer and each figure in its grid area | Non-concern: the harness, a rule's grammar | IO: (wb, overlay, view, scopes, figures) -> markup
 
 use std::fmt::Write;
 
 use fsa1_model::{Overlay, Rect, SheetView, SidecarScope, Workbook};
 
-use crate::escape;
+use crate::{BoundFigure, escape, figures};
 
 /// The cell text is [`SheetView`]'s, already spelled under the view's mode, so an HTML cell and an
 /// ASCII cell can never disagree. `scopes` is [`Overlay::scopes`] for this sheet, in the order
@@ -15,6 +15,7 @@ pub(crate) fn sheet(
     overlay: &Overlay,
     view: &SheetView<'_>,
     scopes: &[SidecarScope<'_>],
+    drawn: &[(Rect, &BoundFigure)],
 ) -> String {
     let n = view.sheet;
     let tab = escape::text(view.name);
@@ -69,7 +70,13 @@ pub(crate) fn sheet(
     }
 
     out.push_str("<fsa1-rows>");
-    if let Some(stated) = overlay.stated_region(wb, n) {
+    // Each cover is CLIPPED to the viewport before it counts: `view` declines to widen past MAX_VIEWPORT_CELLS, and an unclipped union emits a cell per coordinate of the cover it refused. The stated region is not clipped -- a viewport cutting a root still emits its cells, hidden.
+    let stated = drawn
+        .iter()
+        .fold(overlay.stated_region(wb, n), |extent, (cover, _)| {
+            Rect::union(extent, cover.intersect(&vp))
+        });
+    if let Some(stated) = stated {
         for row in stated.min_row..=stated.max_row {
             out.push_str("<fsa1-row>");
             for col in stated.min_col..=stated.max_col {
@@ -94,8 +101,24 @@ pub(crate) fn sheet(
             out.push_str(&carried(n, i, &prelude, scope.text));
         }
     }
+    // After the cells, so a figure paints over the ones it fills; they are emitted all the same, since a covered cell is still a cell an author addresses.
+    for (cover, figure) in drawn {
+        out.push_str(&figures::filling(figure, &grid_area(vp, *cover)));
+    }
     out.push_str("</fsa1-sheet>");
     out
+}
+
+/// The grid area `cover`'s cells occupy, offset by the label row and the gutter column exactly as
+/// the cell at that coordinate is, and clipped to the viewport as that cell's visibility is.
+fn grid_area(vp: Rect, cover: Rect) -> String {
+    format!(
+        "grid-row:{}/{};grid-column:{}/{}",
+        cover.min_row.max(vp.min_row) - vp.min_row + 2,
+        cover.max_row.min(vp.max_row) - vp.min_row + 3,
+        cover.min_col.max(vp.min_col) - vp.min_col + 2,
+        cover.max_col.min(vp.max_col) - vp.min_col + 3,
+    )
 }
 
 /// The sidecar's bytes reach the document UNCHANGED, wrapped and nothing else: this is the whole of
