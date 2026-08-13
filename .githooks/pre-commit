@@ -62,7 +62,7 @@ annotation_gate() {
 		-I 'conformance/serde/accept/**'
 		-I 'conformance/serde/refuse/**'
 		# The landing page's fixture workbook is CONTENT the page renders, not authored source: a
-		# <name>.annotation sidecar would join the workbook and show up in the `ls -R` the page prints,
+		# <name>.annotation sidecar would join the workbook and show up in the listing the page prints,
 		# and a comment would be rendered as a cell's bytes. Its directory charter is the whole map.
 		-I 'website/fixture/**'
 		# The npm manifests describe a PUBLISHING channel, not a crate in this workspace's graph, so

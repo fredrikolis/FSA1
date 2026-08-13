@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Concern: fills index.html's fsa1 regions, dropping the CLI's Vega runtime and mount the page supplies | Non-concern: the fixture | IO: (index.html, website/fixture, the CLI) -> itself; 1 on drift
+# Concern: fills index.html's fsa1 regions, dropping the CLI's runtime and mount the page supplies | Non-concern: the fixture | IO: (index.html, website/fixture, the commands its regions name) -> itself
 set -euo pipefail
 # ls order and the [A-Za-z] class are collation-dependent; the page is bytes, so pin the locale.
 export LC_ALL=C
@@ -39,18 +39,17 @@ refuse() {
 	exit 1
 }
 
-# argv is source text from the page, so it is split on spaces and never globbed.
+# argv is source text from the page, and a page quoting what an agent types must run the pipeline an
+# agent types, so it reaches a shell whole. bash with pipefail, not sh: a POSIX shell reports only the
+# LAST command's status, so a failing `find` beside a succeeding `sort` would return 0 and write an
+# empty region straight past the refusal that exists to catch it.
 run_cmd() {
-	local w
-	local -a cmd=()
-	set -f
-	for w in $1; do
-		if [ ${#cmd[@]} -eq 0 ] && [ "$w" = fsa1-cli ]; then w=$CLI; fi
-		cmd[${#cmd[@]}]=$w
-	done
-	set +f
-	if [ ${#cmd[@]} -eq 0 ]; then return 2; fi
-	( cd "$FIXTURE" && "${cmd[@]}" )
+	local argv=$1
+	case $argv in
+		fsa1-cli|'fsa1-cli '*) argv=$(printf '%q' "$CLI")${argv#fsa1-cli} ;;
+		'') return 2 ;;
+	esac
+	( cd "$FIXTURE" && bash -c 'set -o pipefail; '"$argv" )
 }
 
 RKEY=
@@ -149,14 +148,10 @@ fx_line() {
 }
 
 decorate() {
-	local text=$1 fx=$2 d=$3 line res= first=1 dline
+	local text=$1 fx=$2 line res= first=1
 	while IFS= read -r line; do
 		if [ $first -eq 1 ]; then first=0; else res=$res$NL; fi
-		dline=0
-		case $line in ?*:) dline=1 ;; esac
-		if [ "$d" = 1 ] && [ $dline -eq 1 ]; then
-			res=$res'<span class="d">'$line'</span>'
-		elif [ "$fx" = 1 ]; then
+		if [ "$fx" = 1 ]; then
 			res=$res$(fx_line "$line")
 		else
 			res=$res$line
@@ -211,15 +206,8 @@ while :; do
 	case $verb in
 		out|cmd)
 			fx=0
-			d=0
 			if [ "$verb" = out ]; then
-				while :; do
-					case $args in
-						'+fx '*) fx=1; args=${args#+fx } ;;
-						'+d '*) d=1; args=${args#+d } ;;
-						*) break ;;
-					esac
-				done
+				case $args in '+fx '*) fx=1; args=${args#+fx } ;; esac
 			fi
 			if [ -z "$args" ]; then refuse 'a verb without argv' "$directive"; fi
 			if [ "$verb" = cmd ]; then
@@ -231,7 +219,7 @@ while :; do
 				# or drops a final blank line renders identically and passes --check.
 				stdout=$(run_cmd "$args") || status=$?
 				if [ $status -ne 0 ]; then refuse "exited $status: $args" "$directive"; fi
-				payload=$(decorate "$(esc "$stdout")" "$fx" "$d")
+				payload=$(decorate "$(esc "$stdout")" "$fx")
 				outframe[$n]=$frame
 				outargv[$n]=$args
 				outdir[$n]=$directive
