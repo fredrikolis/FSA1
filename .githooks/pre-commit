@@ -5,12 +5,19 @@
 # Enable per clone: git config core.hooksPath .githooks
 set -uo pipefail
 
+# --no-site drops one stage, for the only caller that must not run it: ci.yml's macOS leg. The check
+# diffs generated text against a checked-in file, so it is a statement about ONE host's tools, and a
+# matrix that runs it twice asks two hosts to agree on output no contract makes portable. CI runs it
+# once, in its own job (the `site` job), on Linux.
 full=0
-case "${1:-}" in
-	'') ;;
-	--full) full=1 ;;
-	*) printf 'usage: pre-commit [--full]\n' >&2; exit 2 ;;
-esac
+site=1
+for a in "$@"; do
+	case "$a" in
+		--full) full=1 ;;
+		--no-site) site=0 ;;
+		*) printf 'usage: pre-commit [--full] [--no-site]\n' >&2; exit 2 ;;
+	esac
+done
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
@@ -136,7 +143,7 @@ fi
 # render-site.sh builds fsa1-cli when FSA1_CLI is unset, and `clippy` emits no binary — so on a cold
 # target/ that is a full codegen build. Announced out here for the same reason as the linter: a
 # silent `site` row is indistinguishable from a hang. Exported so the stage reuses what this built.
-if [ -z "${FSA1_CLI:-}" ]; then
+if [ "$site" -eq 1 ] && [ -z "${FSA1_CLI:-}" ]; then
 	printf '%-24s ' 'fsa1-cli'
 	if cargo build --locked -p fsa1-cli >"$LOG_DIR/build-cli.log" 2>&1; then
 		printf 'built\n'
@@ -168,7 +175,7 @@ fi
 
 stage 'comments' comment_gate
 stage 'annotations' annotation_gate
-stage 'site' ./scripts/render-site.sh --check
+[ "$site" -eq 1 ] && stage 'site' ./scripts/render-site.sh --check
 
 echo
 [ "$failed" -eq 0 ] || { echo 'gate: FAILED' >&2; exit 1; }

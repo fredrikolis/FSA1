@@ -72,13 +72,15 @@ jobs:
         run: cargo build --locked -p fsa1-cli -p fsa1-mcp
 
       # THE gate, the same file a developer's commit runs: fmt, clippy, the comment budget, the
-      # annotation charter, the site re-render, and under --full the unfiltered workspace test run
-      # (--include-ignored, so an #[ignore] never silently skips a load-bearing test). One definition,
-      # so a gate cannot mean one thing locally and another here.
-      - name: mechanical gates (.githooks/pre-commit --full)
+      # annotation charter, and under --full the unfiltered workspace test run (--include-ignored, so
+      # an #[ignore] never silently skips a load-bearing test). One definition, so a gate cannot mean
+      # one thing locally and another here. --no-site because the site check compares generated text
+      # against a checked-in file: that is a statement about one host's tools, so it runs once, in the
+      # `site` job below, and not twice across a matrix that cannot agree on it.
+      - name: mechanical gates (.githooks/pre-commit --full --no-site)
         env:
           FSA1_CLI: ${{ github.workspace }}/target/debug/fsa1-cli
-        run: bash .githooks/pre-commit --full
+        run: bash .githooks/pre-commit --full --no-site
 
       - name: Both built front ends report the workspace version
         # `want` MUST come from the workspace manifest — [workspace.package] in the root Cargo.toml,
@@ -112,6 +114,25 @@ jobs:
 
   # FSA1-specific mechanical gates — OS-independent, so once on ubuntu. No cargo toolchain needed
   # (bash only).
+  # The landing page's terminal blocks are the binary's own output or they are fiction. Its own job,
+  # on ONE OS: `--check` re-renders and diffs against what is committed, and `ls`-family layout is the
+  # implementation's, not POSIX's — a matrix asks two hosts to agree on text no contract makes
+  # portable, and macOS failed exactly there.
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - name: fetch the pinned Vega runtime
+        run: bash scripts/fetch-vega.sh
+      - name: build the binary the page is rendered by
+        run: cargo build --locked -p fsa1-cli
+      - name: the website's command output is what the CLI printed
+        env:
+          FSA1_CLI: ${{ github.workspace }}/target/debug/fsa1-cli
+        run: ./scripts/render-site.sh --check
+
   gates:
     runs-on: ubuntu-latest
     steps:
