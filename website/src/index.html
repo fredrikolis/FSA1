@@ -561,8 +561,8 @@ ul.claims .note{
    shows the very figures the section above it does. */
 .rendered{ color:#111; letter-spacing:normal; }
 /* The document's figures lie in a row under its sheet, never in a column: this
-   frame shares one box with four ASCII modes, and fit() pins that box to the
-   tallest frame in it. Inline-grid to keep the shrink-wrap `.loop .rendered`
+   frame shares one box with the ASCII frame beside it, and fit() pins that box
+   to the taller of the two. Inline-grid to keep the shrink-wrap `.loop .rendered`
    relies on; the caption and the sheet span the row and stay max-content wide. */
 .loop .rendered{
   display:inline-grid;
@@ -855,7 +855,7 @@ Q3/Summary/A2:B2<!--fsa1:end-->
     <div class="window"><div class="loop" id="renderloop">
 
       <div class="frame on">
-        <div class="term"><!--fsa1:out fsa1-cli render Q3/Orders --mode combined-->+---+------+-------+-----+--------------------+---+-----+-----+-----+-----+
+        <div class="term"><!--fsa1:out fsa1-cli render Q3/Orders-->+---+------+-------+-----+--------------------+---+-----+-----+-----+-----+
 |   | A    | B     | C   | D                  | E | F   | G   | H   | I   |
 +=========================================================================+
 | 1 | Item | Price | Qty | Total              |   |                       |
@@ -874,53 +874,7 @@ Q3/Summary/A2:B2<!--fsa1:end-->
 |---+------+-------+-----+--------------------+---+                       |
 | 8 |      |       |     |                    |   |                       |
 +---+------+-------+-----+--------------------+---+-----------------------+<!--fsa1:end--></div>
-        <i class="cmdsrc"><!--fsa1:cmd fsa1-cli render Q3/Orders --mode combined--><span class="p">$</span> fsa1-cli render Q3/Orders --mode combined<!--fsa1:end--></i>
-      </div>
-
-      <div class="frame">
-        <div class="term"><!--fsa1:out fsa1-cli render Q3/Orders --mode values-->+---+------+-------+-----+-------+---+-----+-----+-----+-----+
-|   | A    | B     | C   | D     | E | F   | G   | H   | I   |
-+============================================================+
-| 1 | Item | Price | Qty | Total |   |                       |
-|---+------+-------+-----+-------+---+                       |
-| 2 | Nut  | 10    | 4   | 40    |   |                       |
-|---+------+-------+-----+-------+---+                       |
-| 3 | Bolt | 15    | 2   | 30    |   |      F1:I8.json       |
-|---+------+-------+-----+-------+---+                       |
-| 4 | Cog  | 4     | 10  | 40    |   |   layer(bar, text)←   |
-|---+------+-------+-----+-------+---+                       |
-| 5 | Sum  |       |     | $110  |   |     Orders!A1:D4      |
-|---+------+-------+-----+-------+---+                       |
-| 6 |      |       |     |       |   |                       |
-|---+------+-------+-----+-------+---+                       |
-| 7 |      |       |     |       |   |                       |
-|---+------+-------+-----+-------+---+                       |
-| 8 |      |       |     |       |   |                       |
-+---+------+-------+-----+-------+---+-----------------------+<!--fsa1:end--></div>
-        <i class="cmdsrc"><!--fsa1:cmd fsa1-cli render Q3/Orders --mode values--><span class="p">$</span> fsa1-cli render Q3/Orders --mode values<!--fsa1:end--></i>
-      </div>
-
-      <div class="frame">
-        <div class="term"><!--fsa1:out fsa1-cli render Q3/Orders --mode functions-->+---+------+-------+-----+-------------+---+-----+-----+-----+-----+
-|   | A    | B     | C   | D           | E | F   | G   | H   | I   |
-+==================================================================+
-| 1 | Item | Price | Qty | Total       |   |                       |
-|---+------+-------+-----+-------------+---+                       |
-| 2 | Nut  | 10    | 4   | =B2*C2      |   |                       |
-|---+------+-------+-----+-------------+---+                       |
-| 3 | Bolt | 15    | 2   | =B3*C3      |   |      F1:I8.json       |
-|---+------+-------+-----+-------------+---+                       |
-| 4 | Cog  | 4     | 10  | =B4*C4      |   |   layer(bar, text)←   |
-|---+------+-------+-----+-------------+---+                       |
-| 5 | Sum  |       |     | =SUM(D2:D4) |   |     Orders!A1:D4      |
-|---+------+-------+-----+-------------+---+                       |
-| 6 |      |       |     |             |   |                       |
-|---+------+-------+-----+-------------+---+                       |
-| 7 |      |       |     |             |   |                       |
-|---+------+-------+-----+-------------+---+                       |
-| 8 |      |       |     |             |   |                       |
-+---+------+-------+-----+-------------+---+-----------------------+<!--fsa1:end--></div>
-        <i class="cmdsrc"><!--fsa1:cmd fsa1-cli render Q3/Orders --mode functions--><span class="p">$</span> fsa1-cli render Q3/Orders --mode functions<!--fsa1:end--></i>
+        <i class="cmdsrc"><!--fsa1:cmd fsa1-cli render Q3/Orders--><span class="p">$</span> fsa1-cli render Q3/Orders<!--fsa1:end--></i>
       </div>
 
       <div class="frame">
@@ -1087,7 +1041,7 @@ Edit("Orders/C2:C4", old="10", new="12")</div>
     lstimer = setTimeout(function(){ lsshow(0); }, 5000);
   });
 
-  /* The command line is not a fifth copy of itself: each frame carries the
+  /* The command line is not a third copy of itself: each frame carries the
      prompt it was rendered from in a hidden .cmdsrc, and the caption above
      the window is lifted straight out of it. innerHTML, because the source
      holds the `$` as a span that .cmd .p paints. */
@@ -1099,7 +1053,7 @@ Edit("Orders/C2:C4", old="10", new="12")</div>
     3200,
     function(i){
       cmd.innerHTML = renderframes[i].querySelector(".cmdsrc").innerHTML;
-      renderwin.classList.toggle("doc", i === 3);
+      renderwin.classList.toggle("doc", i === 1);
     }
   );
 
@@ -1125,7 +1079,7 @@ Edit("Orders/C2:C4", old="10", new="12")</div>
          carries a size of its own, and inside the window that draws in half the VIEW —
          halved on the SPEC because that is what moves the layout box fit() measures: a
          CSS transform scales the paint and leaves the box, and the box is what sets the
-         height of the loop this frame shares with three ASCII modes. A mark sized in
+         height of the loop this frame shares with the ASCII one. A mark sized in
          absolute pixels (the arc's radii, the point's `size`) keeps that size. The
          `number` test is what tells the two apart, and it also guards a spec stating no
          view at all, where `undefined/2` is a NaN that makes vegaEmbed reject. */
