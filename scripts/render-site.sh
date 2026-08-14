@@ -8,7 +8,6 @@ cd "$(git rev-parse --show-toplevel)"
 
 PAGE=website/src/index.html
 FIXTURE=website/fixture
-SPEC_TAG='<script class="fsa1-spec" type="application/json">'
 NL='
 '
 
@@ -61,7 +60,7 @@ render_html() {
 
 # Exits 3 when the anchor is absent, 4 when it appears more than once.
 extract() {
-	awk -v mode="$1" -v name="$2" -v tag="$SPEC_TAG" '
+	awk -v mode="$1" '
 	function count(hay, ndl,   c, p) {
 		c = 0
 		while ((p = index(hay, ndl)) > 0) { c++; hay = substr(hay, p + length(ndl)) }
@@ -109,16 +108,6 @@ extract() {
 				out = out "\n" substr(figs, 1, e)
 			}
 			printf "%s", out
-		} else {
-			cap = "data-figure=\"" name "\""
-			n = count(doc, cap)
-			if (n == 0) exit 3
-			if (n > 1) exit 4
-			rest = substr(doc, index(doc, cap))
-			s = index(rest, tag)
-			if (s == 0 || index(substr(rest, 1, s), "</figure>") > 0) exit 3
-			if (index(substr(rest, s), "</script>") == 0) exit 3
-			printf "%s", span(substr(rest, s), tag, "</script>")
 		}
 	}
 	' "$WORK/render.html"
@@ -166,9 +155,9 @@ decorate() {
 }
 
 anchored() {
-	local mode=$1 name=$2 argv=$3 directive=$4 status=0
+	local mode=$1 argv=$2 directive=$3 status=0
 	render_html "$argv" || refuse "exited non-zero: fsa1-cli render $argv --format html" "$directive"
-	payload=$(extract "$mode" "$name") || status=$?
+	payload=$(extract "$mode") || status=$?
 	case $status in
 		0) ;;
 		3) refuse "no $mode anchor in the output of: fsa1-cli render $argv --format html" "$directive" ;;
@@ -232,12 +221,7 @@ while :; do
 			;;
 		doc|style)
 			if [ -z "$args" ]; then refuse 'a verb without argv' "$directive"; fi
-			anchored "$verb" '' "$args" "$directive"
-			;;
-		spec)
-			name=${args%% -- *}
-			if [ "$name" = "$args" ]; then refuse 'a spec region without `<name> -- <argv>`' "$directive"; fi
-			anchored spec "$name" "${args#* -- }" "$directive"
+			anchored "$verb" "$args" "$directive"
 			;;
 		*) refuse "unknown verb: $verb" "$directive" ;;
 	esac
