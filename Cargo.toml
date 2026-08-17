@@ -17,3 +17,8 @@ members = ["crates/fsa1-ast", "crates/fsa1-cli", "crates/fsa1-verbs", "crates/fs
 # job holds this value, `plugin/.claude-plugin/plugin.json` and the tag to each other.
 version = "0.3.1"
 license = "MIT"
+
+# Bounds target/ disk growth
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
