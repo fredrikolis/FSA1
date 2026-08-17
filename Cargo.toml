@@ -7,3 +7,8 @@
 [workspace]
 resolver = "2"
 members = ["charlie-ast", "charlie-cli", "charlie-ingest", "charlie-model", "conformance"]
+
+# Bounds target/ disk growth
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
