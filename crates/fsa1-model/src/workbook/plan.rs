@@ -100,7 +100,8 @@ impl Workbook {
                 continue;
             };
             // The EFFECTIVE expr, so a demanded `SUM(OFFSET(...))` plans the static form it was rewritten to.
-            let deps = self.expr_deps(self.effective_expr(key, expr), sheet);
+            let mut deps = self.expr_deps(self.effective_expr(key, expr), sheet);
+            deps.retain(|&d| self.orders_before(d));
             on_stack.insert(key);
             // Exit first, then the deps in reverse, so popping reproduces the recursive walk's pre-order.
             stack.push(Step::Exit(key));
@@ -136,6 +137,22 @@ impl Workbook {
     fn dep_key(&self, sheet: u32, col: u32, row: u32) -> CellKey {
         self.array_region_anchor(sheet, col, row)
             .unwrap_or((sheet, col, row))
+    }
+
+    /// Whether a dependency ORDERS one: a formula, or any cell of an array region. A literal
+    /// or a gap orders nothing — the walk `continue`s on both — so keeping only these is the
+    /// same graph without the keys. PLAN-local, since the hash digests the authored cone.
+    fn orders_before(&self, key: CellKey) -> bool {
+        let (sheet, col, row) = key;
+        let Some((_, file)) = self.covering(sheet, col, row) else {
+            return false;
+        };
+        file.array_formula
+            || matches!(
+                file.grid
+                    .cell_at(row - file.region.min_row, col - file.region.min_col),
+                GridCell::Formula { .. }
+            )
     }
 
     fn collect_deps(&self, expr: &Expr, home: u32, out: &mut Vec<CellKey>) {

@@ -58,14 +58,14 @@ fn reduce_masked(value_cells: &[Value], mask: &[bool], reduce: Reduce) -> Value 
 /// enforcing that every criteria range shares the first one's shape. Returns the shared shape and
 /// the per-cell mask (true = every criterion matched). An empty pair list is a caller bug (arity
 /// guarantees ≥1 pair), guarded as `#VALUE!` rather than a panic.
-fn build_mask(
-    ctx: &mut EvalCtx,
+fn build_mask<'r>(
+    ctx: &mut EvalCtx<'r>,
     pairs: &[(&Expr, &Expr)],
 ) -> Result<((u32, u32), Vec<bool>), ErrKind> {
     let mut base: Option<(u32, u32)> = None;
     let mut mask: Vec<bool> = Vec::new();
     for (crange, cexpr) in pairs {
-        let (rows, cols, cells) = block(ctx, crange)?;
+        let (rows, cols, cells) = block_cow(ctx, crange)?;
         match base {
             None => {
                 base = Some((rows, cols));
@@ -86,8 +86,8 @@ fn build_mask(
 
 /// Shared body of `SUMIF`/`AVERAGEIF`: a single criterion over `range`, reducing the value range
 /// (`value_range` arg, or `range` itself when omitted) at the matching positions.
-fn single_if(ctx: &mut EvalCtx, args: &[Expr], reduce: Reduce) -> Value {
-    let (rrows, rcols, rcells) = match block(ctx, &args[0]) {
+fn single_if<'r>(ctx: &mut EvalCtx<'r>, args: &[Expr], reduce: Reduce) -> Value {
+    let (rrows, rcols, rcells) = match block_cow(ctx, &args[0]) {
         Ok(t) => t,
         Err(k) => return Value::Error(k),
     };
@@ -96,7 +96,7 @@ fn single_if(ctx: &mut EvalCtx, args: &[Expr], reduce: Reduce) -> Value {
         Err(k) => return Value::Error(k),
     };
     let value_cells = if args.len() == 3 {
-        let (vrows, vcols, vcells) = match block(ctx, &args[2]) {
+        let (vrows, vcols, vcells) = match block_cow(ctx, &args[2]) {
             Ok(t) => t,
             Err(k) => return Value::Error(k),
         };
@@ -114,7 +114,7 @@ fn single_if(ctx: &mut EvalCtx, args: &[Expr], reduce: Reduce) -> Value {
 /// Shared body of `SUMIFS`/`AVERAGEIFS`/`MINIFS`/`MAXIFS`: value range is `args[0]`, then
 /// `(criteria_range, criteria)` pairs. Enforces an odd arity (value + whole pairs) and that the value
 /// range conforms to the criteria ranges' shape.
-fn multi_if(ctx: &mut EvalCtx, args: &[Expr], reduce: Reduce) -> Value {
+fn multi_if<'r>(ctx: &mut EvalCtx<'r>, args: &[Expr], reduce: Reduce) -> Value {
     // args[0] is the value range; the rest must be whole (criteria_range, criteria) pairs.
     if !(args.len() - 1).is_multiple_of(2) {
         return Value::Error(ErrKind::Value);
@@ -124,7 +124,7 @@ fn multi_if(ctx: &mut EvalCtx, args: &[Expr], reduce: Reduce) -> Value {
         Ok(t) => t,
         Err(k) => return Value::Error(k),
     };
-    let (vrows, vcols, vcells) = match block(ctx, &args[0]) {
+    let (vrows, vcols, vcells) = match block_cow(ctx, &args[0]) {
         Ok(t) => t,
         Err(k) => return Value::Error(k),
     };
@@ -165,7 +165,7 @@ pub(crate) fn maxifs(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
 }
 
 pub(crate) fn countif(ctx: &mut EvalCtx, args: &[Expr]) -> Value {
-    let (_, _, cells) = match block(ctx, &args[0]) {
+    let (_, _, cells) = match block_cow(ctx, &args[0]) {
         Ok(t) => t,
         Err(k) => return Value::Error(k),
     };

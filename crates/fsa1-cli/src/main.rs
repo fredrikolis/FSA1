@@ -1,6 +1,7 @@
 // Concern: the CLI argv surface — every verb, its flags, and its help text | Non-concern: cell values, path resolution, drawing | IO: (argv) -> stdout + stderr + an exit code
 
 mod guide;
+mod live;
 mod output;
 
 use std::borrow::Cow;
@@ -835,10 +836,15 @@ fn print_help(cmd: Option<&str>) {
     print!("{text}");
 }
 
-/// The terse index's one hole, filled exactly as [`unpack_help`] fills `--help`'s, so a new policy
-/// cannot reach the surface while EITHER text still names the old set.
+/// The static guide, its `{DECOMPOSITIONS}` hole filled exactly as [`unpack_help`] fills `--help`'s
+/// so a new policy cannot reach one surface while the other names the old set, plus
+/// [`live::transcript`] — five verbs RUN against a throwaway workbook rather than quoted.
 fn guide_text() -> String {
-    guide::GUIDE.replace("{DECOMPOSITIONS}", &decomposition_choices())
+    format!(
+        "{}\n{}",
+        guide::GUIDE.replace("{DECOMPOSITIONS}", &decomposition_choices()),
+        live::transcript()
+    )
 }
 
 /// The one help text with holes in it: its account of the fidelity report is [`SECTIONS`] rendered

@@ -56,6 +56,7 @@ use stats_desc::*;
 use stats_dist::*;
 use stats_rank::*;
 use stats_reg::*;
+use std::borrow::Cow;
 use subtotal::*;
 use text::*;
 use text_format::*;

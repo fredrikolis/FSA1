@@ -2,6 +2,21 @@
 
 use super::*;
 
+/// [`block`] that BORROWS a bare range instead of copying it: every `*IF`/`*IFS` call reads its
+/// ranges to scan them, never to keep them. Anything else falls through to [`block`]. The fast
+/// path skips [`EvalCtx::eval`] and so takes no depth guard — a bare range is a leaf, and the
+/// two paths yield the same cells.
+pub(crate) fn block_cow<'r>(
+    ctx: &mut EvalCtx<'r>,
+    e: &Expr,
+) -> Result<(u32, u32, Cow<'r, [Value]>), ErrKind> {
+    if let Some((shape, cells)) = ctx.range_cells(e) {
+        return Ok((shape.rows, shape.cols, Cow::Borrowed(cells)));
+    }
+    let (rows, cols, cells) = block(ctx, e)?;
+    Ok((rows, cols, Cow::Owned(cells)))
+}
+
 /// A bare scalar presents as a 1x1 block, so a cell, a range and a literal all look alike here.
 pub(crate) fn block(ctx: &mut EvalCtx, e: &Expr) -> Result<(u32, u32, Vec<Value>), ErrKind> {
     match ctx.eval(e) {

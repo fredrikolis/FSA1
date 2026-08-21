@@ -4,7 +4,7 @@ use crate::expr::{BinOp, Expr, UnOp};
 use crate::func;
 use crate::refs::{RangeNode, RefNode};
 use crate::resolver::Resolver;
-use crate::value::{ErrKind, Value};
+use crate::value::{ErrKind, Shape, Value};
 
 /// Defence in depth for a SYNTHESIZED tree that never met the parser's own nesting bound: such a
 /// tree yields `#NUM!` rather than a stack overflow. Kept above `parser::MAX_DEPTH`.
@@ -96,6 +96,19 @@ impl<'r> EvalCtx<'r> {
             Some(cell) => self.resolver.value(cell),
             None => Value::Error(ErrKind::Ref),
         }
+    }
+
+    /// The BORROWED cells behind a bare range, for a caller that only SCANS them. `None` for
+    /// anything else, including a range that does not resolve; the caller then evaluates.
+    /// This path skips [`EvalCtx::eval`], so it takes no depth guard and no memo — correct only
+    /// because a bare range is a leaf.
+    pub(crate) fn range_cells(&self, e: &Expr) -> Option<(Shape, &'r [Value])> {
+        let Expr::Range(rn) = e else { return None };
+        let res: &'r dyn Resolver = self.resolver;
+        rn.resolve(|name| res.sheet_id(name)).map(|rr| {
+            let view = res.range(rr);
+            (view.shape, view.cells)
+        })
     }
 
     /// The borrowed view is copied into an owned array: a view cannot live in a returned `Value`.
