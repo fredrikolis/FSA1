@@ -51,10 +51,10 @@ require_package_charter = true
 forbid_cycles = true
 # forbid_orphans is ON now that fsa1-model has landed: the `fsa1-model -> fsa1-ast` edge
 # makes an isolated crate a real signal (W0 kept this OFF only because a lone crate is trivially an
-# "orphan" that could not be fixed until a second crate existed — docs/architecture.md §5).
+# "orphan" that could not be fixed until a second crate existed — .githooks/commit-msg).
 forbid_orphans = true
 
-# ARCHITECTURAL FIREWALL (populated as crates land — docs/architecture.md §1, §5 W2+).
+# ARCHITECTURAL FIREWALL (populated as crates land).
 # NOTE: a deny pair naming a crate that does not yet exist is a FATAL `unknown_deny_package`
 # violation, so each edge is added only once BOTH its crates exist. With fsa1-ast + fsa1-model +
 # fsa1-cli present (W4), fsa1-xlsx (the xlsx format crate, SER1) and fsa1-html (the presentation

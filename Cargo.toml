@@ -6,7 +6,7 @@
 # `["fsa1-ast","fsa1-cli"]`, `["fsa1-model","fsa1-cli"]`). fsa1-xlsx has now landed (the
 # WRITE half of the format firewall — SER1), and fsa1-html beside it (the presentation block's
 # renderer); each carries its own three deny edges in `.annotated-tree.toml`
-# — docs/architecture.md §1, §5.
+# — one workspace, one version.
 [workspace]
 resolver = "2"
 members = ["crates/fsa1-ast", "crates/fsa1-cli", "crates/fsa1-verbs", "crates/fsa1-mcp", "crates/fsa1-html", "crates/fsa1-ingest", "crates/fsa1-model", "crates/fsa1-xlsx", "conformance"]

@@ -208,7 +208,7 @@ jobs:
   # string under the export's code as under the source's. fsa1-cli/tests/roundtrip.rs runs in the matrix
   # `test` job on every OS and owns the other half: SER3's refusals, and SER2 through FSA1's own reader,
   # comparing the value, formula source, display-format code and resolved CellStyle a re-unpack of the
-  # export presents at every coordinate. That test compares no file tree — docs/cli-spec.md withdrew SER4
+  # export presents at every coordinate. That test compares no file tree — .githooks/commit-msg withdrew SER4
   # (re-import idempotence) into SER2, and since `pack` writes one <cellXfs> entry per look, the blocks a
   # re-unpack cuts are the decomposition's business rather than the contract's.
   serde-roundtrip:

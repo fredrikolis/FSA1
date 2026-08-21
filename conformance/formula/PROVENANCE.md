@@ -18,7 +18,7 @@ it*).
 
 **Every EXPECTED value was authored INDEPENDENTLY of FSA1** — derived by hand from the documented
 Excel/spreadsheet semantics that `~/.knowledge-base/coding-standards/ast-standards.md` and
-`docs/architecture.md` §3–§4 specify, and cross-checked against Excel's published behavior. **No
+the AST contract specifies, and cross-checked against Excel's published behavior. **No
 expected value was produced by running FSA1** (that would make the engine its own oracle —
 circular; the thing under test can never be its own judge). This purity is an INPUT-side property of
 how the corpus was authored, and it rests on review rather than on a fingerprint (see Integrity).

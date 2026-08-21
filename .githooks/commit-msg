@@ -7,6 +7,22 @@ set -euo pipefail
 
 git agent-verdict --require-version 2.0
 
-git agent-verdict "$1" standards --doc docs/repo-standards.md --path .
-git agent-verdict "$1" annotations --simple --doc docs/annotation-guide.md --path .
-git agent-verdict "$1" prose --simple --doc docs/communication-style.md --path README.md
+git agent-verdict "$1" standards --standard programming --standard testing \
+  --standard cli --path . \
+  --rule "- Every input yields a value, or a refusal naming where the fault is. A fault in one part
+  never denies the rest its value.
+- A value derives from its own content and the values it references. Nothing else.
+- Content enters only by an author writing the tree. fsa1-cli never takes cell content from argv."
+
+git agent-verdict "$1" ast --path crates/fsa1-ast \
+  --rule "- A fact about a node lives in the node only if it is MEANING. Identity and provenance go
+  to id-keyed side-channels. A span in equality is a reject.
+- A round-trip asserts the VALUE survives, not that the output re-parses.
+- Never panic. Well-formed nodes only; a hole is a located refusal beside the tree.
+- Type only what you are sure of, defer the rest. A false-reject is the cardinal sin."
+
+annotated-tree --annotation-guide |
+	git agent-verdict "$1" annotations --simple --rule - --path .
+git agent-verdict "$1" prose --simple --standard human-communication --path README.md \
+  --rule "Check a claim against a binary built from THIS tree (cargo run -p fsa1-cli), never an
+older fsa1-cli on PATH and never a cached build: a stale one asserts against text you already changed."

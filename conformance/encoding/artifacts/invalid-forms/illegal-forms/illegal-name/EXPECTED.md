@@ -2,7 +2,7 @@
 # EXPECTED — illegal-forms: non-canonical filename
 
 **Fixture:** `Sheet/G8-A3`
-**Rule under test:** SPEC.md FS2 (a file's name is a closed range) + the canonical-form policy
+**Rule under test:** .githooks/commit-msg FS1 (a file's name is a closed range) + the canonical-form policy
 (top-left`:`bottom-right).
 
 ## Inputs
@@ -22,5 +22,5 @@ error[non-canonical-range]: a range must be top-left:bottom-right; "G8-A3" shoul
 ```
 
 ## Why (citation)
-SPEC.md FS2: a closed range has inclusive endpoints written top-left`:`bottom-right; `G8:A3`,
+.githooks/commit-msg FS1: a closed range has inclusive endpoints written top-left`:`bottom-right; `G8:A3`,
 `A8:G3`, `G3:A8` are all illegal spellings of `A3:G8`.

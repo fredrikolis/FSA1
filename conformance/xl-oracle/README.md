@@ -2,7 +2,7 @@
 # xl-oracle — the ENG6 differential conformance oracle
 
 **What it is.** A per-formula differential harness that grades FSA1 *cell-for-cell against an
-external Excel reference*, exactly as SPEC.md **ENG6** requires — plus a **whole-workbook** harness
+external Excel reference*, exactly as `.githooks/commit-msg` **ENG6** requires — plus a **whole-workbook** harness
 (`workbook_oracle.py`) that runs the same diff over real, `fsa1-cli unpack`ed `.xlsx` files. The
 reference oracle is the
 [`formulas`](https://pypi.org/project/formulas/) Python library (v1.3.4) — an independent Excel

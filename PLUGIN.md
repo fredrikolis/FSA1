@@ -1,4 +1,4 @@
-<!-- Concern: what enabling the FSA1 Claude plugin gives a user, and how it is released | Non-concern: the CLI's own surface (docs/cli-spec.md), the format (docs/format-spec.md) | IO: none -->
+<!-- Concern: what enabling the FSA1 Claude plugin gives a user, and how it is released | Non-concern: the CLI's own surface (.githooks/commit-msg), the format (.githooks/commit-msg) | IO: none -->
 # FSA1 as a Claude plugin
 
 This repo doubles as a [Claude Code / Cowork plugin](https://code.claude.com/docs/en/plugins-reference).

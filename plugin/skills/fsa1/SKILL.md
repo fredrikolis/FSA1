@@ -12,7 +12,7 @@ description: >
   for a write tool.
 ---
 
-<!-- Concern: teaches an agent how to reach the FSA1 verbs on either host and how to drive them | Non-concern: what a verb computes, the format's invariants (docs/format-spec.md) | IO: none -->
+<!-- Concern: teaches an agent how to reach the FSA1 verbs on either host and how to drive them | Non-concern: what a verb computes, the format's invariants (.githooks/commit-msg) | IO: none -->
 # FSA1
 
 FSA1 is a spreadsheet engine over a **filesystem** representation of a workbook. Six verbs need the

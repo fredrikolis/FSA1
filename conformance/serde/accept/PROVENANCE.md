@@ -10,7 +10,7 @@ and resolved styles, whatever block shape the decomposition cuts them into. A fi
 ranges (SER2 CHART gate). All are graded by `../roundtrip_oracle.py` (value + FORMAT + CHART) and
 `fsa1-cli/tests/roundtrip.rs` (the reopened workbook).
 
-That last leg was written down as **SER4 (re-import idempotence)** until `docs/cli-spec.md` withdrew
+That last leg was written down as **SER4 (re-import idempotence)** until `.githooks/commit-msg` withdrew
 that id into SER2. What SER2 promises a reopened workbook is content, not a file tree, and the tree is
 not the corpus's to freeze anyway: `pack` writes one `<cellXfs>` entry per look, so two distinct xf
 indices that draw alike collapse into one, and the default decomposition cuts blocks by appearance

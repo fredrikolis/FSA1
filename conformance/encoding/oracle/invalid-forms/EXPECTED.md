@@ -15,7 +15,7 @@ REJECT** — the ruler passes iff FSA1 refuses each fixture with the cited reaso
 > — has been **deleted**: under the TSV deserializer every line is just a grid row, so a two-line body
 > in a `1×1` file is simply a GRID4 dimension error, already covered by `shape-mismatch`.
 
-| Fixture | File(s) | Defect (the ONE rule under test) | Diagnostic code | Diagnostic names | SPEC.md |
+| Fixture | File(s) | Defect (the ONE rule under test) | Diagnostic code | Diagnostic names | invariant |
 |---|---|---|---|---|---|
 | shape-mismatch | `Grid/A1-C3` | `2×3` grid does not fill the `3×3` range | `dimension-mismatch` | file, grid 2×3, declared 3×3 | GRID4 |
 | overlap | `Orders/A1-C3` + `Orders/B2-D4` | two files claim intersecting ranges | `overlap` | **both files** + contested `B2:C3` | model overlap rule |

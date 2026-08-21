@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::corpus::Fixture;
 
-/// The v1 core function count (`docs/architecture.md` §4) — the coverage denominator.
+/// The v1 core function count — the coverage denominator.
 pub const V1_FUNCTION_TARGET: usize = 70;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

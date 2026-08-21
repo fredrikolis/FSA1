@@ -2,7 +2,7 @@
 # EXPECTED — illegal-forms: ragged TSV grid
 
 **Fixture:** `Sheet/A1-C2`
-**Rule under test:** SPEC.md GRID2 (the TSV deserializer) — a grid's rows must have equal field counts.
+**Rule under test:** .githooks/commit-msg the encoding (the TSV deserializer) — a grid's rows must have equal field counts.
 
 ## Inputs
 - Filename is canonical/valid, and the whole file content is the grid (GRID1, no annotation line) —
@@ -29,5 +29,5 @@ grid row `n` is file line `n`; there is no annotation line to offset by, so this
 than under the former annotated format.)
 
 ## Why (citation)
-SPEC.md GRID2 / CORE2 (totality): a malformed file yields a located refusal pointing at the offending
+.githooks/commit-msg the encoding / CORE2 (totality): a malformed file yields a located refusal pointing at the offending
 row, never a crash or a silent wrong value.

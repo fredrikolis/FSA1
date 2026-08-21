@@ -1,7 +1,7 @@
 # Concern: the comment-budget + file-size thresholds cargo-lint-extra denies on | Non-concern: the annotation charter rules (.annotated-tree.toml owns those), the judgment standard | IO: none
 #
 # Thresholds are VERBATIM from upstream and are not tuned to this repo. The bound is the detector; a
-# bigger number only hides what it found. Never raise one to pass — see docs/comment-standards.md.
+# bigger number only hides what it found. Never raise one to pass — see .githooks/commit-msg.
 
 [global]
 exclude = ["target"]

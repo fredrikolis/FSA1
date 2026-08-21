@@ -3,7 +3,7 @@
 
 This directory is a **sanctioned graduation** of the W1 encoding corpus into the production repo,
 subsequently **migrated value-preservingly** to the current
-on-disk form. It is a **frozen CONTRACT** graded against the current spec (`SPEC.md`): the fingerprint
+on-disk form. It is a **frozen CONTRACT** graded against the current spec (`.githooks/commit-msg`): the fingerprint
 below (**oracle-input purity**) makes any silent byte change in a fixture or an EXPECTED ledger fail a
 `sha256sum -c` check, exposing a rewrite.
 
@@ -18,7 +18,7 @@ below (**oracle-input purity**) makes any silent byte change in a fixture or an 
 ## The value-preserving migration to the current form
 
 The engine was changed so that a file's name **is** a closed range with **no `.range`/`.cell` ending**
-(SPEC.md FS2), its content deserializes to an **explicit grid** that must fill the range exactly
+(.githooks/commit-msg FS1), its content deserializes to an **explicit grid** that must fill the range exactly
 (GRID1/GRID4) via the **TSV** deserializer (GRID2), and a cell's value derives only from its own content
 (VAL1) — there is **no broadcast/drag-fill**. This corpus was migrated to match, preserving every
 rendered value:
@@ -35,7 +35,7 @@ rendered value:
    unchanged** — proven by the render zero-divergence gate
    (`fsa1-model/tests/render_conformance.rs`), which grades these workbooks against the frozen W1
    value oracle in `conformance/render/` and requires zero divergence.
-3. **The per-file line-1 `# Concern…` annotation was removed.** Under SPEC.md GRID1 a file's content
+3. **The per-file line-1 `# Concern…` annotation was removed.** Under .githooks/commit-msg FS1 a file's content
    is **exactly its grid** — there is no header, annotation, or metadata line, and the first line is
    the first row. Every fixture's former line-1 `# Concern: … | Non-concern: … | IO: …` annotation was
    stripped (byte-exact: line 1 and its trailing newline dropped, the remaining bytes verbatim), so
@@ -48,16 +48,15 @@ rendered value:
    square-disambiguator}` fixtures (which existed only to probe the retired broadcast-conformance
    rule) and `invalid-forms/illegal-forms/dual-body` (the retired "exactly one body form" rule) were
    removed. The surviving edge/invalid fixtures had their `EXPECTED.md` verdicts rewritten to cite
-   SPEC.md's subsystem-scoped invariants and the current diagnostic codes (`dimension-mismatch`, `ragged-grid`,
+   the subsystem-scoped invariants of `.githooks/commit-msg` and the current diagnostic codes (`dimension-mismatch`, `ragged-grid`,
    `non-canonical-range`, `dollar-in-filename`, `degenerate-range`, `overlap`).
-5. **`FORMAT.md`** was replaced by a superseded-pointer to `SPEC.md` + `fsa1-cli --guide` (the former
+5. **`FORMAT.md`** was replaced by a superseded-pointer to `.githooks/commit-msg` + `fsa1-cli --guide` (the former
    `docs/format.md` guide is retired; its rationale now lives in the governing code).
 
 ## Subsequent GROWTH (never a silent rewrite)
 
 - **TSV field escaping** — `conformance-forms/tsv-escaping/` (a tab `Cells` of four 1×1 files plus an
-  `EXPECTED.md`) was ADDED when the deserializer gained field escaping (`\t`, `\n`, `\\`; SPEC.md
-  GRID2 "current deserializer"). It probes an embedded newline (`A1`), an embedded tab (`A2`), a
+  `EXPECTED.md`) was ADDED when the deserializer gained field escaping (`\t`, `\n`, `\\`; .githooks/commit-msg the encoding "current deserializer"). It probes an embedded newline (`A1`), an embedded tab (`A2`), a
   literal backslash (`A3`), and a **malformed escape** (`A4` = `bad\x`) that deserializes to a located
   `#VALUE!` GRID6 error while `A1`–`A3` still load (GRID6 locality). Verified against `fsa1-cli
   render`/`check`; the manifest and pinned digest above were regenerated in the carrying commit. No

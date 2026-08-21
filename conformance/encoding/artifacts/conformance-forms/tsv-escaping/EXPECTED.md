@@ -2,7 +2,7 @@
 # EXPECTED — TSV field escaping (`\t`, `\n`, `\\`) and a malformed escape
 
 **Fixture:** `tsv-escaping/Cells/{A1,A2,A3,A4}`
-**Rule under test:** SPEC.md GRID2 "current deserializer" (field escaping) + GRID6 (error locality) +
+**Rule under test:** .githooks/commit-msg the encoding "current deserializer" (field escaping) + GRID6 (error locality) +
 CORE2 (a malformed cell is a located refusal, never a silent literal).
 
 A field may contain a tab, newline, or backslash, written as the escapes `\t`, `\n`, and `\\`; a
@@ -35,8 +35,8 @@ error[malformed-escape]: malformed escape in field "bad\\x" at byte 3: a backsla
 ```
 
 ## Why (citation)
-SPEC.md GRID2 (the current deserializer): *"A backslash followed by anything else — or a trailing
+.githooks/commit-msg the encoding (the current deserializer): *"A backslash followed by anything else — or a trailing
 backslash — is a malformed cell and deserializes to a located error value (GRID6), never a silent
-literal or a file-level refusal."* SPEC.md GRID6: the error is **located** and **per-cell** — `check`
+literal or a file-level refusal."* .githooks/commit-msg CORE2: the error is **located** and **per-cell** — `check`
 reports it with a non-zero exit and its location while every unrelated cell still yields its value. The
 fix is to write the intended byte as an escape: a literal backslash is `\\`.
